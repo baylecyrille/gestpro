@@ -26,6 +26,15 @@
 <dialog id="modal"></dialog>
 <div id="printarea"></div>
 <div id="toast" hidden></div>
+<script>
+/* filet de sécurité : affiche l'erreur au lieu d'une page vide (fichiers mélangés / en cache) */
+(function(){var shown=0;function show(m){if(shown++)return;var v=document.getElementById('view');if(v&&v.children.length)return;
+ var d=document.createElement('div');d.style.cssText='padding:16px;color:#c62f2f;font:14px system-ui';
+ d.innerHTML='<b>GestPro n\'a pas pu démarrer.</b><br>Cause probable : tous les fichiers ne sont pas à la même version sur GitHub. Déposez à nouveau l\'ensemble des fichiers puis rechargez.<br><small></small>';
+ d.querySelector('small').textContent=m;(v||document.body).appendChild(d);}
+ window.addEventListener('error',function(e){setTimeout(function(){show(e.message||'erreur')},1500)});
+ window.addEventListener('unhandledrejection',function(e){setTimeout(function(){show(String(e.reason&&e.reason.message||e.reason))},1500)});})();
+</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

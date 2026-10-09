@@ -1,6 +1,7 @@
 // Stock : produits, code-barres, zones / emplacements, mouvements, import Excel/CSV.
 import * as db from './db.js';
-import { e, eur, num, dateFr, today, F, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, compressImage, $, $$ } from './util.js';
+import { markPhotosDirty } from './sheets.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -54,11 +55,12 @@ export async function renderStock(el, tab = 'products') {
   const [products, locs, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('contacts')]);
   if (tab === 'locations') return locationsTab(body, products, locs);
   if (tab === 'moves') return movesTab(body, products, locs);
-  return productsTab(body, products, locs, contacts);
+  const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
+  return productsTab(body, products, locs, contacts, photos);
 }
 
 /* ---------- Produits ---------- */
-function productsTab(body, products, locs, contacts) {
+function productsTab(body, products, locs, contacts, photos = {}) {
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   products.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   body.innerHTML = `<div class="row">
@@ -81,7 +83,8 @@ function productsTab(body, products, locs, contacts) {
       const t = total(p);
       const cls = t <= 0 ? 'bad' : t <= (p.min || 0) ? 'warn' : 'ok';
       const chips = Object.entries(p.stock || {}).filter(([, q]) => q).map(([k, q]) => `<span class="chip">${e(locLabel(L[k]))} : ${q}</span>`).join('');
-      return `<div class="item" data-id="${p.id}"><div class="main"><div class="t">${e(p.name)}</div>
+      const th = photos[p.id] ? `<img class="pthumb" src="${photos[p.id]}" alt="">` : '<div class="pthumb ph">▦</div>';
+      return `<div class="item" data-id="${p.id}">${th}<div class="main"><div class="t">${e(p.name)}</div>
         <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}</div>${chips}</div>
         <div class="r"><span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span><div class="s">${eur(p.sell)} HT</div></div></div>`;
     }).join('') : '<div class="empty">Aucun produit. Ajoutez-en un ou importez vos listes Excel.</div>';
@@ -115,17 +118,44 @@ export function productModal(p, locs, contacts, products, preset = {}) {
     ${F('Seuil d\'alerte stock', 'min', p.min ?? '', { type: 'number', step: 'any' })}
     ${F('Fournisseur', 'supplierId', p.supplierId || '', { type: 'select', options: suppliers, cls: 'full' })}
     ${F('Note', 'note', p.note, { type: 'textarea', rows: 2, cls: 'full' })}
+    <div class="full" style="margin-bottom:10px"><span class="muted" style="font-size:12px">Photo (compressée automatiquement)</span>
+      <div class="row" style="margin-top:4px"><div id="pbox" class="pthumb big ph">▦</div>
+        <label class="btn"><input type="file" id="pfile" accept="image/*" hidden>📷 Photo</label><button type="button" class="btn" id="pdel" hidden>Retirer</button></div>
+      <small id="pinfo" class="muted"></small></div>
   </div>${stockHtml}`;
+  let newPhoto; // undefined = inchangée, '' = retirée, texte = nouvelle photo
   modal(isNew ? 'Nouveau produit' : 'Produit', body, async o => {
     const dup = o.barcode && products.find(x => x.barcode === o.barcode && x.id !== p.id);
     if (dup) throw new Error(`Ce code-barres est déjà utilisé par « ${dup.name} ».`);
     Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), min: num(o.min), supplierId: o.supplierId, note: o.note });
     const saved = await db.put('products', p);
+    if (newPhoto !== undefined) {
+      const v = Date.now();
+      await db.put('photos', { id: saved.id, data: newPhoto, v });
+      saved.photoV = v; await db.put('products', saved); markPhotosDirty();
+    }
     if (isNew && num(o.initQty) > 0) await recordMove(saved, { type: 'in', to: o.initLoc, qty: num(o.initQty), note: 'Stock initial' });
     refresh();
   }, {
     del: isNew ? null : async () => { await db.del('products', p.id); refresh(); },
     onOpen: f => {
+      const showPhoto = data => {
+        const box = $('#pbox', f);
+        if (data) { box.className = 'pthumb big'; box.innerHTML = `<img src="${data}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:10px">`; }
+        else { box.className = 'pthumb big ph'; box.textContent = '▦'; }
+        $('#pdel', f).hidden = !data;
+      };
+      if (!isNew) db.get('photos', p.id).then(r => { if (r?.data && newPhoto === undefined) { showPhoto(r.data); $('#pinfo', f).textContent = `${Math.round(r.data.length * 0.75 / 1024)} Ko`; } });
+      $('#pfile', f).onchange = async ev => {
+        const file = ev.target.files[0]; if (!file) return;
+        try {
+          const data = await compressImage(file, { mode: 'photo', maxChars: 30000 });
+          if (data.length > 45000) throw new Error('Photo trop détaillée : essayez une autre prise de vue.');
+          newPhoto = data; showPhoto(data);
+          $('#pinfo', f).textContent = `${Math.round(file.size / 1024)} Ko → ${Math.round(data.length * 0.75 / 1024)} Ko après compression`;
+        } catch (err) { alert(err.message); }
+      };
+      $('#pdel', f).onclick = () => { newPhoto = ''; showPhoto(''); $('#pinfo', f).textContent = 'Photo retirée à l\'enregistrement'; };
       f.querySelector('[data-scan]').onclick = () => scan(c => { f.elements.barcode.value = c; });
       f.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => { closeModal(); moveModal(products, locs, { product: p.id, type: b.dataset.mv }); });
     }
@@ -149,13 +179,14 @@ export function lookupScan() {
 // Sélecteur de produit (recherche + scan) utilisé par les devis/factures
 export async function pickProduct(cb) {
   const products = (await db.all('products')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
   const body = `<div class="row"><input class="search" id="pq" type="search" placeholder="Rechercher un produit…"><button type="button" class="btn" id="ps">▦</button></div><div id="pl"></div>`;
   modal('Ajouter un produit', body, null, {
     onOpen: f => {
       const draw = () => {
         const q = $('#pq', f).value.toLowerCase();
         const rows = products.filter(p => !q || [p.name, p.ref, p.barcode].join(' ').toLowerCase().includes(q)).slice(0, 60);
-        $('#pl', f).innerHTML = rows.map(p => `<div class="item" data-id="${p.id}"><div class="main"><div class="t">${e(p.name)}</div><div class="s">${e(p.ref || '')} · stock ${total(p)} ${e(p.unit)}</div></div><div class="r">${eur(p.sell)}</div></div>`).join('') || '<div class="empty">Aucun résultat</div>';
+        $('#pl', f).innerHTML = rows.map(p => `<div class="item" data-id="${p.id}">${photos[p.id] ? `<img class="pthumb" src="${photos[p.id]}" alt="">` : '<div class="pthumb ph">▦</div>'}<div class="main"><div class="t">${e(p.name)}</div><div class="s">${e(p.ref || '')} · stock ${total(p)} ${e(p.unit)}</div></div><div class="r">${eur(p.sell)}</div></div>`).join('') || '<div class="empty">Aucun résultat</div>';
       };
       draw();
       $('#pq', f).oninput = draw;

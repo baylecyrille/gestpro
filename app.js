@@ -1,11 +1,18 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
-import { DEFAULTS, getS } from './defaults.js';
-import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, shrinkImage, scan, savedCamera, resetCamera, $, $$ } from './util.js';
+import { DEFAULTS, getS, logoSrc } from './defaults.js';
+import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import * as sheets from './sheets.js';
+
+/* ---------- Fond d'écran (logo) ---------- */
+export function applyWallpaper(S) {
+  const r = document.documentElement.style;
+  if (S.wallpaper === false) { r.setProperty('--logo', 'none'); return; }
+  r.setProperty('--logo', `url("${logoSrc(S)}")`);
+}
 
 /* ---------- Contacts ---------- */
 export function contactModal(c, kind, onSaved) {
@@ -45,7 +52,7 @@ async function renderContacts(el, tab = 'client') {
 
 /* ---------- Tableau de bord ---------- */
 async function renderDashboard(el) {
-  const [products, docs, payments, posts, locs] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('locations')]);
+  const [products, docs, payments, posts, contacts, S] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS()]);
   const month = today().slice(0, 7);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
@@ -55,6 +62,20 @@ async function renderDashboard(el) {
   const cashMonth = payments.filter(p => p.date.startsWith(month)).reduce((a, p) => a + num(p.amount), 0);
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent');
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
+  // « Pour démarrer » : disparaît tout seul quand toutes les étapes sont faites (ou via « Masquer »)
+  const steps = [
+    ['Compléter l\'entreprise (IBAN, BIC, logo) dans Réglages', !!S.iban, '#/settings'],
+    ['Connecter Google Sheets (stockage des données)', sheets.configured(), '#/settings'],
+    ['Ajouter ou importer vos produits', products.length > 0, '#/stock/products'],
+    ['Ajouter un premier client', contacts.some(c => c.kind === 'client'), '#/contacts/client'],
+    ['Créer un premier devis', docs.some(d => d.type === 'quote'), '#/doc/new/quote']
+  ];
+  const left = steps.filter(x => !x[1]).length;
+  const startCard = left && localStorage.getItem('gp_hide_start') !== '1'
+    ? `<div class="card start"><b>Pour démarrer</b> <span class="muted">· ${steps.length - left}/${steps.length} étapes faites</span>
+        <div class="bar" style="margin:6px 0"><i style="width:${(steps.length - left) / steps.length * 100}%"></i></div>
+        ${steps.map(([l, ok, h]) => `<div>${ok ? '✅' : '⬜'} ${ok ? `<s class="muted">${e(l)}</s>` : `<a href="${h}">${e(l)}</a>`}</div>`).join('')}
+        <div class="row" style="margin:8px 0 0"><button class="btn sm" id="hidestart">Masquer</button></div></div>` : '';
   el.innerHTML = `<h2>Bonjour 👋</h2>
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/facebook/post">f Publier</a></div>
     <div class="grid">
@@ -66,7 +87,8 @@ async function renderDashboard(el) {
       <div class="kpi ok"><small>Encaissé ce mois</small><b>${eur(cashMonth)}</b></div>
       <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>
     ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
-    ${!products.length && !docs.length ? '<div class="card"><b>Pour démarrer :</b> complétez vos <a href="#/settings">réglages</a> (logo, IBAN), importez vos produits depuis <a href="#/stock/products">Stock → Importer</a>, puis créez un devis.</div>' : ''}`;
+    ${startCard}`;
+  $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
 }
 
 /* ---------- Réglages ---------- */
@@ -84,8 +106,9 @@ async function renderSettings(el) {
     ${F('Forme juridique / capital', 'legal', S.legal)}${F('SIRET', 'siret', S.siret)}
     ${F('N° RGE', 'rge', S.rge)}${F('Assurance (n° contrat)', 'insurance', S.insurance)}
     ${F('IBAN', 'iban', S.iban)}${F('BIC', 'bic', S.bic)}
-    <label class="f full"><span>Logo (image)</span><input type="file" id="logo" accept="image/*"></label>
-    ${S.logo ? `<div class="full"><img src="${S.logo}" alt="" style="max-height:70px"> <button type="button" class="btn sm" id="nologo">Retirer</button></div>` : ''}
+    <label class="f full"><span>Logo (image – compressé automatiquement ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
+    <div class="full"><img src="${logoSrc(S)}" alt="" style="max-height:70px"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
+    <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
     <h3 class="full">Devis &amp; factures</h3>
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
@@ -154,14 +177,22 @@ async function renderSettings(el) {
   $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
   $('#camreset', el).onclick = () => { resetCamera(); toast('Caméra automatique rétablie'); camInfo(); };
   let logo = S.logo;
-  $('#logo', el).onchange = async ev => { if (ev.target.files[0]) { logo = await shrinkImage(ev.target.files[0], 500); toast('Logo prêt – enregistrez'); } };
+  $('#logo', el).onchange = async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    try {
+      logo = await compressImage(f, { mode: 'logo', maxChars: 30000 });
+      if (logo.length > 40000) throw new Error('Logo trop détaillé : utilisez une image plus simple.');
+      toast(`Logo compressé (${Math.round(logo.length * 0.75 / 1024)} Ko) – enregistrez`);
+    } catch (err) { logo = S.logo; alert(err.message); }
+  };
   $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez'); });
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
     ['quoteNext', 'invNext', 'pad', 'tva'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
-    await db.saveSettings({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
+    o.wallpaper = !!o.wallpaper;
+    await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
   $('#imp', el).onchange = async ev => {
@@ -208,6 +239,7 @@ sheets.setOnPulled(() => {
 
 (async () => {
   await ensureDefaultLocation();
+  getS().then(applyWallpaper);
   sheets.init();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   route();

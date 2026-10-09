@@ -18,6 +18,7 @@ export const DEFAULTS = {
   iban: '',
   bic: '',
   logo: '',
+  wallpaper: true,
   tva: 10,
   intro: 'Fourniture et pose :',
   note: 'Suivant prise de cotes sur place.',
@@ -31,3 +32,6 @@ export const DEFAULTS = {
 };
 
 export const getS = () => db.getSettings(DEFAULTS);
+
+// Logo utilisé (personnalisé dans Réglages, sinon logo par défaut du dépôt)
+export const logoSrc = S => S.logo || 'logo.png';

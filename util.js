@@ -100,6 +100,39 @@ export function shrinkImage(file, max = 600) {
   });
 }
 
+// Compression d'image : redimensionne puis réencode jusqu'à tenir sous `maxChars` (texte base64).
+// mode « photo » : JPEG fond blanc (très léger) ; mode « logo » : WebP/PNG avec transparence.
+async function loadBitmap(file) {
+  if (window.createImageBitmap) { try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* repli */ } }
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => rej(new Error('Image illisible'));
+    img.src = url;
+  });
+}
+export async function compressImage(file, { mode = 'photo', maxChars = 30000 } = {}) {
+  const bmp = await loadBitmap(file);
+  const bw = bmp.width || bmp.naturalWidth, bh = bmp.height || bmp.naturalHeight;
+  const sizes = mode === 'photo' ? [480, 400, 320, 260, 200, 160] : [480, 400, 320, 260, 200, 160];
+  let out = '';
+  for (const max of sizes) {
+    const k = Math.min(1, max / Math.max(bw, bh));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bw * k)); c.height = Math.max(1, Math.round(bh * k));
+    const ctx = c.getContext('2d');
+    if (mode === 'photo') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); }
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    if (mode === 'photo') {
+      for (const q of [0.72, 0.6, 0.5, 0.4]) { out = c.toDataURL('image/jpeg', q); if (out.length <= maxChars) return out; }
+    } else {
+      for (const q of [0.85, 0.7]) { const w = c.toDataURL('image/webp', q); if (w.startsWith('data:image/webp') && w.length <= maxChars) return w; }
+      out = c.toDataURL('image/png'); if (out.length <= maxChars) return out;
+    }
+  }
+  return out; // le plus petit obtenu
+}
+
 // Scanner de codes-barres : caméra (BarcodeDetector ou ZXing) ou saisie / douchette USB.
 // La caméra choisie est mémorisée sur l'appareil (utile quand le téléphone a plusieurs objectifs
 // et que celui par défaut ne fait pas la mise au point).
