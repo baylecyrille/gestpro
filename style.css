@@ -106,3 +106,7 @@ dialog::backdrop{background:#0006}
 .cloud{font:inherit;font-size:12px;border:0;border-radius:99px;padding:3px 10px;background:#ffffff33;color:#fff;cursor:pointer}
 .cloud.ok{background:#1b8a4b}.cloud.err,.cloud.auth{background:#c77700}
 .steps li{margin-bottom:6px}
+
+.scanner .ctl{display:flex;gap:6px;padding:8px 10px;background:#111;flex-wrap:wrap;align-items:center}
+.scanner .ctl select{width:auto;max-width:100%;flex:1;min-width:140px;padding:5px}
+.scanner .ctl input[type=range]{flex:1;min-width:120px;padding:0}

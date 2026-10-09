@@ -1,7 +1,7 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
 import { DEFAULTS, getS } from './defaults.js';
-import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, shrinkImage, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, shrinkImage, scan, savedCamera, resetCamera, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
@@ -94,6 +94,9 @@ async function renderSettings(el) {
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
     <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
   </div><button class="btn primary">Enregistrer</button></form>
+  <div class="card"><h3 style="margin-top:0">Scanner de codes-barres</h3>
+    <p class="muted">Si l'image est floue, ouvrez le scanner et changez de caméra (⟳ ou liste) : le choix est mémorisé sur cet appareil. Le bouton ◎ relance la mise au point, le curseur règle le zoom.</p>
+    <p id="camstat"></p><div class="row"><button type="button" class="btn primary" id="camtest">Tester / choisir la caméra</button><button type="button" class="btn" id="camreset">Caméra automatique</button></div></div>
   <div class="card" id="gcard"><h3 style="margin-top:0">Google Sheets (stockage des données)</h3>
     <p class="muted">Toutes vos données sont enregistrées dans un classeur Google Sheets « GestPro – Données » de votre Drive (un onglet par type), et synchronisées entre vos appareils. Sans réseau, l'appli continue de fonctionner et se resynchronise ensuite.</p>
     <p id="gstat"></p>
@@ -146,6 +149,10 @@ async function renderSettings(el) {
   $('#gsync', el)?.addEventListener('click', guard(async () => { const r = await sheets.sync({ interactive: true }); toast(r.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); }));
   $('#gout', el)?.addEventListener('click', () => { sheets.disconnect(); refresh(); });
   $('#gforget', el)?.addEventListener('click', () => { if (confirm('Dissocier ce classeur ? Les données locales sont conservées.')) { sheets.disconnect(true); refresh(); } });
+  const camInfo = () => ($('#camstat', el).textContent = savedCamera() ? 'Caméra enregistrée sur cet appareil.' : 'Caméra automatique (arrière par défaut).');
+  camInfo();
+  $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
+  $('#camreset', el).onclick = () => { resetCamera(); toast('Caméra automatique rétablie'); camInfo(); };
   let logo = S.logo;
   $('#logo', el).onchange = async ev => { if (ev.target.files[0]) { logo = await shrinkImage(ev.target.files[0], 500); toast('Logo prêt – enregistrez'); } };
   $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez'); });

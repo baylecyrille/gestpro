@@ -100,46 +100,124 @@ export function shrinkImage(file, max = 600) {
   });
 }
 
-// Scanner de codes-barres : caméra (BarcodeDetector ou ZXing) ou saisie / douchette USB
+// Scanner de codes-barres : caméra (BarcodeDetector ou ZXing) ou saisie / douchette USB.
+// La caméra choisie est mémorisée sur l'appareil (utile quand le téléphone a plusieurs objectifs
+// et que celui par défaut ne fait pas la mise au point).
 const ZX = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+const CAM_KEY = 'gp_camera', ZOOM_KEY = 'gp_zoom';
+const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
+const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
+const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* ignore */ } };
+export const savedCamera = () => lsGet(CAM_KEY);
+export const resetCamera = () => { lsSet(CAM_KEY, ''); lsSet(ZOOM_KEY, ''); };
+
+async function openStream(deviceId) {
+  const base = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  const video = deviceId ? { ...base, deviceId: { exact: deviceId } } : { ...base, facingMode: { ideal: 'environment' } };
+  try { return await navigator.mediaDevices.getUserMedia({ video }); }
+  catch (err) {
+    if (deviceId) { lsSet(CAM_KEY, ''); return openStream(''); } // caméra mémorisée introuvable : retour à l'automatique
+    throw err;
+  }
+}
+
 export async function scan(onCode) {
   const ov = document.createElement('div');
   ov.className = 'scanner';
   ov.innerHTML = `<video playsinline muted></video><div class="frame"></div><p class="hint">Visez le code-barres</p>
-    <div class="sbar"><input placeholder="ou saisir / douchette…" inputmode="text" autocomplete="off"><button class="btn primary" data-ok>OK</button><button class="btn" data-x>Fermer</button></div>`;
+    <div class="ctl"><select data-cam title="Caméra" hidden></select>
+      <button class="btn sm" data-next hidden>⟳ Caméra suivante</button>
+      <button class="btn sm" data-focus>◎ Point</button>
+      <button class="btn sm" data-torch hidden>🔦</button>
+      <input type="range" data-zoom hidden title="Zoom"></div>
+    <div class="sbar"><input data-code placeholder="ou saisir / douchette…" inputmode="text" autocomplete="off"><button class="btn primary" data-ok>OK</button><button class="btn" data-x>Fermer</button></div>`;
   document.body.append(ov);
-  let stream, stopped = false, reader;
-  const close = () => {
-    stopped = true;
-    stream?.getTracks().forEach(t => t.stop());
-    try { reader?.reset(); } catch { /* ignore */ }
-    ov.remove();
-  };
+  let stream, stopped = false, reader, caps = {}, torchOn = false, detectorStarted = false;
+  const video = $('video', ov), hint = $('.hint', ov), sel = $('[data-cam]', ov);
+  const stopStream = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };
+  const close = () => { stopped = true; stopStream(); try { reader?.reset(); } catch { /* ignore */ } ov.remove(); };
   const done = c => { if (stopped) return; close(); onCode(String(c).trim()); };
-  const inp = $('input', ov);
+  const inp = $('[data-code]', ov);
   $('[data-x]', ov).onclick = close;
   $('[data-ok]', ov).onclick = () => { if (inp.value.trim()) done(inp.value); };
   inp.addEventListener('keydown', ev => { if (ev.key === 'Enter' && inp.value.trim()) done(inp.value); });
-  const video = $('video', ov);
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    video.srcObject = stream;
-    await video.play();
+
+  const focus = async () => {
+    const t = stream?.getVideoTracks()[0]; if (!t) return;
+    const modes = caps.focusMode || [];
+    try {
+      if (modes.includes('single-shot')) { await t.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); setTimeout(() => modes.includes('continuous') && t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {}), 1200); }
+      else if (modes.includes('continuous')) await t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      else hint.textContent = 'Pas de réglage de mise au point : reculez de 10–20 cm ou changez de caméra (⟳).';
+    } catch { /* ignore */ }
+  };
+  $('[data-focus]', ov).onclick = focus;
+  video.onclick = focus;
+
+  const startDecoding = async () => {
     if ('BarcodeDetector' in window) {
-      const det = new BarcodeDetector();
+      if (detectorStarted) return; detectorStarted = true;
+      let formats = FORMATS;
+      try { const sup = await BarcodeDetector.getSupportedFormats?.(); if (sup) formats = FORMATS.filter(f => sup.includes(f)); } catch { /* ignore */ }
+      const det = new BarcodeDetector(formats.length ? { formats } : undefined);
       const loop = async () => {
         if (stopped) return;
-        try { const r = await det.detect(video); if (r.length) return done(r[0].rawValue); } catch { /* ignore */ }
+        try { if (video.readyState >= 2) { const r = await det.detect(video); if (r.length) return done(r[0].rawValue); } } catch { /* ignore */ }
         setTimeout(loop, 180);
       };
       loop();
     } else {
       await loadScript(ZX);
+      try { reader?.reset(); } catch { /* ignore */ }
       reader = new ZXing.BrowserMultiFormatReader();
       reader.decodeFromVideoElement(video, res => { if (res) done(res.getText()); });
     }
-  } catch (err) {
-    $('.hint', ov).textContent = 'Caméra indisponible : saisissez le code ou utilisez une douchette USB/Bluetooth.';
+  };
+
+  const start = async deviceId => {
+    stopStream(); torchOn = false;
+    stream = await openStream(deviceId);
+    if (stopped) { stopStream(); return; }
+    video.srcObject = stream;
+    await video.play();
+    const track = stream.getVideoTracks()[0];
+    caps = track.getCapabilities?.() || {};
+    // mise au point continue + zoom mémorisé + lampe
+    if ((caps.focusMode || []).includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    const z = $('[data-zoom]', ov);
+    if (caps.zoom) {
+      z.min = caps.zoom.min; z.max = caps.zoom.max; z.step = caps.zoom.step || 0.1;
+      const want = parseFloat(lsGet(ZOOM_KEY)) || caps.zoom.min;
+      z.value = Math.min(caps.zoom.max, Math.max(caps.zoom.min, want)); z.hidden = false;
+      track.applyConstraints({ advanced: [{ zoom: +z.value }] }).catch(() => {});
+      z.oninput = () => { lsSet(ZOOM_KEY, z.value); track.applyConstraints({ advanced: [{ zoom: +z.value }] }).catch(() => {}); };
+    } else z.hidden = true;
+    const tb = $('[data-torch]', ov);
+    tb.hidden = !caps.torch;
+    tb.onclick = () => { torchOn = !torchOn; track.applyConstraints({ advanced: [{ torch: torchOn }] }).catch(() => {}); tb.classList.toggle('primary', torchOn); };
+    // liste des caméras (les noms ne sont disponibles qu'après l'autorisation)
+    try {
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      const cur = track.getSettings?.().deviceId;
+      sel.innerHTML = cams.map((d, i) => `<option value="${e(d.deviceId)}" ${d.deviceId === cur ? 'selected' : ''}>${e(d.label || 'Caméra ' + (i + 1))}</option>`).join('');
+      sel.hidden = cams.length < 2; $('[data-next]', ov).hidden = cams.length < 2;
+    } catch { /* ignore */ }
+    startDecoding();
+  };
+
+  const choose = async id => {
+    lsSet(CAM_KEY, id); // préférence enregistrée
+    try { await start(id); hint.textContent = 'Caméra enregistrée comme préférence'; } catch { hint.textContent = 'Cette caméra ne peut pas être ouverte.'; }
+  };
+  sel.onchange = () => choose(sel.value);
+  $('[data-next]', ov).onclick = () => {
+    const opts = [...sel.options]; if (opts.length < 2) return;
+    sel.selectedIndex = (sel.selectedIndex + 1) % opts.length; choose(sel.value);
+  };
+
+  try { await start(lsGet(CAM_KEY)); }
+  catch (err) {
+    hint.textContent = 'Caméra indisponible : saisissez le code ou utilisez une douchette USB/Bluetooth.';
     inp.focus();
   }
 }
