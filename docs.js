@@ -46,13 +46,20 @@ async function syncInvStatus(docId) {
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
 async function makeInvoice(q) {
-  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
   q.status = 'invoiced'; q.invoiceId = inv.id; await db.put('documents', q);
-  await syncInvStatus(inv.id);
+  await syncInvStatus(inv.id); await bumpSite(q);
   return inv;
+}
+
+/* Un devis accepté/facturé fait passer son chantier de « Nouveau » à « Signé » */
+async function bumpSite(d) {
+  if (!d.siteId || d.type !== 'quote' || !['accepted', 'invoiced'].includes(d.status)) return;
+  const st = await db.get('sites', d.siteId);
+  if (st && st.status === 'new') { st.status = 'signed'; await db.put('sites', st); }
 }
 
 async function nextNumber(type) {
@@ -67,7 +74,7 @@ async function nextNumber(type) {
 
 export async function newDoc(type, extra = {}) {
   const S = await getS();
-  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: '', ...extra };
+  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: '', siteId: '', ...extra };
 }
 
 /* ---------- Liste ---------- */
@@ -95,11 +102,17 @@ export async function renderDocs(el, tab = 'quote') {
 /* ---------- Éditeur ---------- */
 export async function renderDoc(el, id, arg) {
   let cur, isNew = false;
-  if (id === 'new') { cur = await newDoc(arg === 'invoice' ? 'invoice' : 'quote'); if (cur.type === 'invoice') cur.status = 'pending'; isNew = true; }
+  if (id === 'new') {
+    const [ty, sid] = String(arg || '').split('-'); // « quote-<id chantier> » : créé depuis la fiche chantier
+    cur = await newDoc(ty === 'invoice' ? 'invoice' : 'quote'); if (cur.type === 'invoice') cur.status = 'pending'; isNew = true;
+    const st = sid && await db.get('sites', sid);
+    if (st) Object.assign(cur, { siteId: st.id, clientId: st.clientId, siteRef: st.name, siteAddr: st.address });
+  }
   else cur = await db.get('documents', id);
   if (!cur) { el.innerHTML = '<div class="empty">Document introuvable.</div>'; return; }
   normStatus(cur);
-  const [contacts, S, allPay] = await Promise.all([db.all('contacts'), getS(), db.all('payments')]);
+  const [contacts, S, allPay, sites] = await Promise.all([db.all('contacts'), getS(), db.all('payments'), db.all('sites')]);
+  sites.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const isQ = cur.type === 'quote';
   let payments = allPay.filter(p => p.docId === cur.id);
@@ -114,11 +127,12 @@ export async function renderDoc(el, id, arg) {
 
   const draw = () => {
     const t = totals(cur);
-    el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a><span class="sp"></span>
+    el.innerHTML = `<div class="row"><a class="btn ghost" href="${cur.siteId && sites.some(x => x.id === cur.siteId) ? '#/site/' + cur.siteId : '#/docs/' + cur.type}">← Retour</a><span class="sp"></span>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <h2>${isQ ? 'Devis' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>
     <div class="card"><div class="cols">
       <label class="f full"><span>Client</span><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(c.name)}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
+      <label class="f full"><span>Chantier</span><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(x.name)}</option>`).join('')}</select></label>
       ${F('Date', 'date', cur.date, { type: 'date' })}
       ${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : F('N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}
       ${F('Réf. chantier', 'siteRef', cur.siteRef, { cls: 'full' })}
@@ -158,7 +172,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const readHeader = () => {
-    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number'].includes(i.name)) cur[i.name] = i.value; });
+    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId'].includes(i.name)) cur[i.name] = i.value; });
     cur.tva = num(cur.tva);
   };
 
@@ -172,6 +186,7 @@ export async function renderDoc(el, id, arg) {
       if (cur.invoiceId = (await makeInvoice(cur)).id) { toast('Facture créée à partir du devis'); go('#/doc/' + cur.invoiceId); return true; }
     }
     if (!isQ) await syncInvStatus(cur.id);
+    await bumpSite(cur);
     if (isNew) { toast('Enregistré'); location.hash = '#/doc/' + cur.id; } else { toast('Enregistré'); refresh(); }
     return true;
   };
@@ -192,6 +207,11 @@ export async function renderDoc(el, id, arg) {
     $('#addl', el).onclick = () => { readHeader(); cur.lines.push({ desig: '', qty: 1, unit: 'u', pu: 0 }); draw(); };
     $('#addp', el).onclick = () => { readHeader(); pickProduct(p => { cur.lines.push({ pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }); draw(); }); };
     $('#newc', el).onclick = () => { readHeader(); import('./app.js').then(m => m.contactModal(null, 'client', c => { clients.push(c); cur.clientId = c.id; draw(); })); };
+    $('[name=siteId]', el).onchange = () => {
+      const prev = cur.siteId; readHeader(); const st = sites.find(x => x.id === cur.siteId);
+      if (st) { if (!cur.clientId) cur.clientId = st.clientId || ''; if (!cur.siteRef || sites.find(x => x.id === prev)?.name === cur.siteRef) cur.siteRef = st.name; if (!cur.siteAddr) cur.siteAddr = st.address || ''; }
+      draw();
+    };
     $('#save', el).onclick = save;
     if (isNew) return;
     $('#print', el).onclick = async () => { readHeader(); await db.put('documents', cur); printDoc(cur); };
@@ -219,7 +239,7 @@ export async function renderDoc(el, id, arg) {
     $('#rest', el).onclick = () => payModal(null, Math.max(0, round2(t.ttc - paid)));
     $$('[data-pay]', el).forEach(n => n.onclick = () => payModal(payments.find(p => p.id === n.dataset.pay)));
     if (isQ) {
-      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); toast('Devis accepté'); refresh(); });
+      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); });
       $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();

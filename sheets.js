@@ -24,6 +24,7 @@ const ht = d => Math.round((d.lines || []).reduce((a, l) => a + (+l.qty || 0) * 
 
 export const TABS = [
   { store: 'products', name: 'Produits', cols: [['Référence', r => r.ref], ['Désignation', r => r.name], ['Code-barres', r => r.barcode], ['Catégorie', r => r.category], ['Unité', r => r.unit], ['Prix achat HT', r => r.buy], ['Prix vente HT', r => r.sell], ['TVA %', r => r.tva], ['Seuil alerte', r => r.min], ['Stock total', r => sum(r.stock)]] },
+  { store: 'sites', name: 'Chantiers', cols: [['Nom', r => r.name], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Adresse', r => r.address], ['Statut', r => ({ new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Payé', lost: 'Perdu' })[r.status] || r.status], ['Début', r => r.start], ['Fin', r => r.end], ['Note', r => r.note]] },
   { store: 'locations', name: 'Emplacements', cols: [['Zone', r => r.zone], ['Lieu', r => r.place], ['Note', r => r.note]] },
   { store: 'contacts', name: 'Contacts', cols: [['Type', r => (r.kind === 'supplier' ? 'Fournisseur' : 'Client')], ['Nom', r => r.name], ['Contact', r => r.company], ['Adresse', r => r.address], ['CP', r => r.zip], ['Ville', r => r.city], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['SIRET', r => r.siret], ['Note', r => r.note]] },
   { store: 'documents', name: 'Devis_Factures', cols: [['Type', r => (r.type === 'quote' ? 'Devis' : 'Facture')], ['Numéro', r => r.number], ['Date', r => r.date], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Réf chantier', r => r.siteRef], ['Statut', r => ({ draft: 'Brouillon', sent: r.type === 'quote' ? 'Envoyé' : 'Envoyée', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé', pending: 'En attente', issued: 'En attente', paid: 'Réglée' })[r.status] || r.status], ['Total HT', r => ht(r)], ['TVA %', r => r.tva], ['Total TTC', r => ttc(r)]] },
@@ -254,8 +255,8 @@ export async function sync({ interactive = false } = {}) {
     }
 
     if (dirty.size) {
-      const ctx = { contacts: {}, documents: {}, products: {} };
-      for (const [k, s] of [['contacts', 'contacts'], ['documents', 'documents'], ['products', 'products']]) (await db.all(s)).forEach(o => (ctx[k][o.id] = o));
+      const ctx = { contacts: {}, documents: {}, products: {}, sites: {} };
+      for (const [k, s] of [['contacts', 'contacts'], ['documents', 'documents'], ['products', 'products'], ['sites', 'sites']]) (await db.all(s)).forEach(o => (ctx[k][o.id] = o));
       const tabs = TABS.filter(t => dirty.has(t.store));
       const data = [];
       for (const t of tabs) {

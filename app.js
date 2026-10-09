@@ -5,6 +5,7 @@ import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFil
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
+import { renderSites, renderSite } from './sites.js';
 import * as sheets from './sheets.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
@@ -205,13 +206,13 @@ async function renderSettings(el) {
 
 /* ---------- Routeur ---------- */
 const routes = {
-  dashboard: renderDashboard, stock: renderStock, docs: renderDocs, doc: renderDoc,
+  dashboard: renderDashboard, sites: renderSites, site: renderSite, stock: renderStock, docs: renderDocs, doc: renderDoc,
   contacts: renderContacts, facebook: renderFacebook, settings: renderSettings
 };
 
 async function route() {
   const [, name = 'dashboard', a, b] = location.hash.split('/');
-  const key = name === 'doc' ? 'docs' : name;
+  const key = name === 'doc' ? 'docs' : name === 'site' ? 'sites' : name;
   $$('#nav a').forEach(x => x.classList.toggle('on', x.dataset.r === key));
   const el = $('#view');
   try { await (routes[name] || routes.dashboard)(el, a, b); }
@@ -233,7 +234,7 @@ sheets.onStatus(st => {
 });
 cloud.onclick = () => sheets.sync({ interactive: true }).then(r => r?.pulled && toast(`${r.pulled} élément(s) reçus`)).catch(err => toast(err.message));
 sheets.setOnPulled(() => {
-  const editing = $('#modal').open || location.hash.startsWith('#/doc/') || $('.scanner') || $('#view :focus');
+  const editing = $('#modal').open || location.hash.startsWith('#/doc/') || location.hash.startsWith('#/site/') || $('.scanner') || $('#view :focus');
   if (!editing) refresh(); else toast('Nouvelles données reçues');
 });
 

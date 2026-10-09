@@ -2,8 +2,8 @@
 // et les suppressions laissent une « pierre tombale » `_d` afin que la synchronisation Google Sheets
 // puisse fusionner plusieurs appareils (le plus récent gagne).
 const DB_NAME = 'gestpro';
-const VER = 2;
-export const STORES = ['products', 'locations', 'contacts', 'documents', 'payments', 'moves', 'fbposts', 'fbstats', 'settings', 'photos'];
+const VER = 3;
+export const STORES = ['products', 'locations', 'contacts', 'documents', 'payments', 'moves', 'fbposts', 'fbstats', 'settings', 'photos', 'sites', 'members', 'tasks'];
 let dbp;
 let changeCb = () => {};
 export const onChange = fn => { changeCb = fn; };
