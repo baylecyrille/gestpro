@@ -8,6 +8,12 @@
  * Après toute modification de ce code : Déployer > Gérer les déploiements > Modifier > Nouvelle version.
  */
 const SHEET_ID = 'COLLEZ_ICI_L_ID_DU_CLASSEUR';
+// Accepte l'identifiant seul OU l'adresse complète du classeur
+function sheetId_() {
+  const m = String(SHEET_ID).match(/\/d\/([\w-]+)/);
+  return m ? m[1] : String(SHEET_ID).trim();
+}
+
 const SECRET = 'CHANGEZ-MOI-PHRASE-SECRETE-LONGUE';
 
 function doGet() {
@@ -20,7 +26,7 @@ function doPost(e) {
     lock.waitLock(25000);
     const req = JSON.parse(e.postData.contents);
     if (req.key !== SECRET) return out_({ error: 'Clé secrète incorrecte' });
-    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const ss = SpreadsheetApp.openById(sheetId_());
 
     if (req.action === 'read') {
       const tabs = {};
