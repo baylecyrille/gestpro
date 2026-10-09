@@ -1,0 +1,22 @@
+{
+  "name": "GestPro – Stock, devis, factures",
+  "short_name": "GestPro",
+  "description": "Gestion de stock avec codes-barres, clients/fournisseurs, devis, factures, règlements et page Facebook.",
+  "lang": "fr",
+  "start_url": "./index.html#/dashboard",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f6fb",
+  "theme_color": "#1e5aa8",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Scanner un produit", "url": "./index.html#/stock/scan"},
+    {"name": "Nouveau devis", "url": "./index.html#/doc/new/quote"},
+    {"name": "Publier sur Facebook", "url": "./index.html#/facebook/post"}
+  ]
+}
