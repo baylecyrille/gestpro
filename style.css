@@ -128,3 +128,4 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--logo)
 .emogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:4px}
 .emogrid button{font-size:24px;line-height:1;border:0;background:none;border-radius:8px;padding:6px 0;cursor:pointer}
 .emogrid button:active,.emogrid button:hover{background:#eaf1fb}
+.chq[hidden]{display:none}.cols .chq{grid-column:1/-1}

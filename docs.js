@@ -144,7 +144,7 @@ export async function renderDoc(el, id, arg) {
     return `<div class="card"><h3 style="margin-top:0">Règlements &amp; acomptes</h3>
       <div class="bar"><i style="width:${t.ttc ? Math.min(100, paid / t.ttc * 100) : 0}%"></i></div>
       <p>Encaissé <b>${eur(paid)}</b> sur ${eur(t.ttc)} · reste <b>${eur(left)}</b></p>
-      ${pays.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div class="item" data-pay="${p.id}"><div class="main"><div class="t">${eur(p.amount)}</div><div class="s">${dateFr(p.date)} · ${e(METHODS.find(m => m[0] === p.method)?.[1] || '')}${p.note ? ' · ' + e(p.note) : ''}</div></div><span class="chip">${e(p.kind === 'acompte' ? 'Acompte' : 'Règlement')}</span></div>`).join('')}
+      ${pays.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div class="item" data-pay="${p.id}"><div class="main"><div class="t">${eur(p.amount)}</div><div class="s">${dateFr(p.date)} · ${e(METHODS.find(m => m[0] === p.method)?.[1] || '')}${p.chequeNo ? ' n° ' + e(p.chequeNo) : ''}${p.bank ? ' · ' + e(p.bank) : ''}${p.note ? ' · ' + e(p.note) : ''}</div></div><span class="chip">${e(p.kind === 'acompte' ? 'Acompte' : 'Règlement')}</span></div>`).join('')}
       <div class="row"><span class="muted">Encaisser :</span><button class="btn primary" data-m="especes">💶 Espèces</button><button class="btn primary" data-m="cheque">🧾 Chèque</button><button class="btn primary" data-m="cb">💳 Carte bleue</button><button class="btn" id="addpay">Autre…</button></div>
       <div class="row"><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
   };
@@ -205,9 +205,11 @@ export async function renderDoc(el, id, arg) {
       modal(isNewP ? 'Encaissement' : 'Règlement',
         `<div class="cols">${F('Montant TTC (€)', 'amount', p.amount ?? amount, { type: 'number', step: '0.01', req: true })}${F('Date', 'date', p.date, { type: 'date' })}
         ${F('Mode', 'method', p.method, { type: 'select', options: METHODS })}${F('Nature', 'kind', p.kind, { type: 'select', options: [['acompte', 'Acompte'], ['solde', 'Règlement / solde']] })}
-        ${F('Note (n° chèque, banque, ticket CB…)', 'note', p.note, { cls: 'full' })}</div>`,
-        async o => { Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
-        { del: isNewP ? null : async () => { await db.del('payments', p.id); await syncInvStatus(cur.id); refresh(); } });
+        <div class="full chq" ${p.method === 'cheque' ? '' : 'hidden'}><div class="cols">${F('N° du chèque', 'chequeNo', p.chequeNo, {})}${F('Banque', 'bank', p.bank, {})}</div></div>
+        ${F('Note (ticket CB, remarque…)', 'note', p.note, { cls: 'full' })}</div>`,
+        async o => { if (o.method !== 'cheque') { o.chequeNo = ''; o.bank = ''; } Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
+        { del: isNewP ? null : async () => { await db.del('payments', p.id); await syncInvStatus(cur.id); refresh(); },
+          onOpen: f => { const m = f.querySelector('[name=method]'), c = f.querySelector('.chq'); m.onchange = () => { c.hidden = m.value !== 'cheque'; }; } });
     };
     const t = totals(cur), paid = paidOf(payments, cur.id);
     const left = Math.max(0, round2(t.ttc - paid));
