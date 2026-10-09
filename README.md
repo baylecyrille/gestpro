@@ -35,7 +35,19 @@ La caméra exige HTTPS (fourni par GitHub Pages).
 > ni vos données : tout cela reste dans l'appareil. Si vous préférez ne pas publier le nom/SIRET, créez un dépôt privé
 > (Pages sur dépôt privé nécessite un plan GitHub payant) ou modifiez `js/defaults.js`.
 
-## Configurer Google Sheets (une seule fois)
+## Configurer Google Sheets – méthode Apps Script (recommandée)
+
+1. Créez un classeur Google Sheets (ex. « GestPro – Données ») et notez son identifiant : `https://docs.google.com/spreadsheets/d/<ID>/edit`.
+2. Dans <https://script.google.com>, projet « GestPro » : collez `apps-script/Code.gs`, remplacez `SHEET_ID` (l'ID ci-dessus) et `SECRET` (une longue phrase de passe).
+3. **Déployer → Nouveau déploiement → Application Web** : *Exécuter en tant que : Moi* ; *Qui a accès : Tout le monde*. Autorisez l'accès à votre feuille quand Google le demande.
+4. Copiez l'URL qui se termine par `/exec`.
+5. Dans l'appli : *Réglages → Google Sheets* : collez l'URL et la clé secrète, **Connecter et synchroniser**. Les onglets sont créés automatiquement.
+6. Autre appareil : même URL + même clé.
+
+Sécurité : l'URL de déploiement est publique mais toute requête sans la clé secrète est refusée ; ne partagez ni l'URL ni la clé.
+Après toute modification de `Code.gs` : *Déployer → Gérer les déploiements → Modifier → Nouvelle version*.
+
+## Autre méthode : OAuth Google (sans Apps Script, avancé – nécessite un projet Google Cloud)
 
 1. <https://console.cloud.google.com> → nouveau projet « GestPro ».
 2. *API et services → Bibliothèque* : activer **Google Sheets API**.
@@ -61,11 +73,12 @@ python3 -m http.server 8080   # puis http://localhost:8080
 | Fichier | Rôle |
 |---|---|
 | `index.html`, `css/style.css` | coque de l'appli, styles, mise en page d'impression |
-| `js/app.js` | routeur, accueil, contacts, réglages, sauvegarde |
+| `app.js` | routeur, accueil, contacts, réglages, sauvegarde |
 | `js/stock.js` | produits, emplacements, mouvements, scan, import |
 | `js/docs.js` | devis/factures, règlements, conversion, impression |
 | `js/facebook.js` | publication, calendrier, tableau de bord |
-| `js/sheets.js` | connexion Google, création du classeur, synchronisation bidirectionnelle |
+| `apps-script/Code.gs` | passerelle Apps Script à coller dans votre projet Google |
+| `js/sheets.js` | connexion Google (Apps Script ou OAuth), création du classeur, synchronisation bidirectionnelle |
 | `js/db.js`, `js/util.js`, `js/defaults.js` | cache IndexedDB, utilitaires/scanner, réglages par défaut |
 | `sw.js`, `manifest.webmanifest` | hors ligne et installation |
 
