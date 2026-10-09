@@ -330,7 +330,7 @@ export async function renderDoc(el, id, arg) {
     } else {
       $('#stockout', el)?.addEventListener('click', async () => {
         if (!confirm('Déduire du stock les produits de cette facture ?')) return;
-        const n = await autoOut(cur.lines, cur.number); cur.stockOut = true; await db.put('documents', cur);
+        const n = await autoOut(cur.lines, cur.number, cur.siteId || ''); cur.stockOut = true; await db.put('documents', cur);
         toast(n ? 'Stock mis à jour' : 'Aucune ligne liée au stock'); refresh();
       });
     }

@@ -3,6 +3,7 @@ import * as db from './db.js';
 import { e, eur, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
+import { siteMargin } from './finance.js';
 
 export const SS = { new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Payé', lost: 'Perdu' };
 export const SCOL = { new: '', signed: 'warn', progress: 'warn', paid: 'ok', lost: 'bad' };
@@ -63,7 +64,8 @@ export async function renderSite(el, id) {
   if (id === 'new') { await renderSites(el, 'open'); return siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: '#2f7ad6' }, clients, true); }
   const site = await db.get('sites', id);
   if (!site) { el.innerHTML = '<div class="empty">Chantier introuvable.</div>'; return; }
-  const [docs, payments, tasks, members] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members')]);
+  const [docs, payments, tasks, members, moves] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members'), db.all('moves')]);
+  const mg = siteMargin(site.id, docs, moves, tasks, members);
   const client = contacts.find(c => c.id === site.clientId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
@@ -87,6 +89,12 @@ export async function renderSite(el, id) {
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}
     ${siteTeamHtml(site.id, tasks, members)}
+    <h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">
+      <div><span>${mg.previsionnel ? 'Marché signé HT (rien de facturé)' : 'Facturé HT (net des avoirs)'}</span><b>${eur(mg.base)}</b></div>
+      <div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>
+      <div><span>− Main-d'œuvre (${mg.hours} h × coût horaire)</span><b>${eur(mg.mo)}</b></div>
+      <div class="big"><span>Marge ${mg.previsionnel ? 'prévisionnelle' : ''}</span><span style="color:${mg.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(mg.marge)}${mg.pct !== null ? ` (${mg.pct} %)` : ''}</span></div></div>
+      <p class="muted" style="margin-bottom:0">Les matières viennent des sorties de stock rattachées à ce chantier (« Déduire du stock » depuis une facture, ou sortie manuelle avec chantier).</p></div>
     <div class="card" style="margin-top:14px"><button class="btn danger" id="del">Supprimer le chantier</button></div>`;
   $('#stat', el).onchange = async ev => { site.status = ev.target.value; await db.put('sites', site); toast('Statut mis à jour'); refresh(); };
   $('#assign', el).onclick = () => assignModal(null, { siteId: site.id });

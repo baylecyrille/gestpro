@@ -31,7 +31,7 @@ export const TABS = [
   { store: 'contacts', name: 'Contacts', cols: [['Type', r => (r.kind === 'supplier' ? 'Fournisseur' : 'Client')], ['Nom', r => r.name], ['Contact', r => r.company], ['Adresse', r => r.address], ['CP', r => r.zip], ['Ville', r => r.city], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['SIRET', r => r.siret], ['Note', r => r.note]] },
   { store: 'documents', name: 'Devis_Factures', cols: [['Type', r => ({ quote: 'Devis', credit: 'Avoir' })[r.type] || 'Facture'], ['Numéro', r => r.number], ['Date', r => r.date], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Réf chantier', r => r.siteRef], ['Statut', r => ({ draft: 'Brouillon', sent: r.type === 'quote' ? 'Envoyé' : 'Envoyée', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé', pending: 'En attente', issued: r.type === 'credit' ? 'Émis' : 'En attente', paid: 'Réglée' })[r.status] || r.status], ['Total HT', r => ht(r)], ['TVA %', r => r.tva], ['Total TTC', r => ttc(r)]] },
   { store: 'payments', name: 'Reglements', cols: [['Date', r => r.date], ['Document', (r, c) => c.documents[r.docId]?.number], ['Client', (r, c) => c.contacts[c.documents[r.docId]?.clientId]?.name], ['Montant TTC', r => r.amount], ['Mode', r => ({ especes: 'Espèces', cheque: 'Chèque', cb: 'Carte bleue', virement: 'Virement', autre: 'Autre', avoir: 'Avoir' })[r.method] || r.method], ['N° chèque', r => r.chequeNo], ['Banque', r => r.bank], ['Nature', r => ({ acompte: 'Acompte', avoir: 'Déduction d\'avoir', remboursement: 'Remboursement' })[r.kind] || 'Règlement'], ['Note', r => r.note]] },
-  { store: 'moves', name: 'Mouvements_stock', cols: [['Date', r => (r.date || '').slice(0, 16).replace('T', ' ')], ['Produit', (r, c) => c.products[r.productId]?.name], ['Type', r => r.type], ['Quantité', r => r.qty], ['Note', r => r.note]] },
+  { store: 'moves', name: 'Mouvements_stock', cols: [['Date', r => (r.date || '').slice(0, 16).replace('T', ' ')], ['Produit', (r, c) => c.products[r.productId]?.name], ['Type', r => r.type], ['Quantité', r => r.qty], ['Prix unitaire HT', r => r.unit], ['Chantier', (r, c) => c.sites[r.siteId]?.name], ['Note', r => r.note]] },
   { store: 'fbposts', name: 'Facebook_publications', cols: [['Date prévue', r => r.date], ['Statut', r => r.status], ['Texte', r => (r.text || '').slice(0, 300)]] },
   { store: 'fbstats', name: 'Facebook_stats', cols: [['Date', r => r.date], ['Abonnés', r => r.followers], ['Portée', r => r.reach], ['Interactions', r => r.engage]] },
   { store: 'settings', name: 'Reglages', cols: [['Entreprise', r => r.value?.company], ['SIRET', r => r.value?.siret], ['Prochain n° devis', r => r.value?.quoteNext], ['Prochain n° facture', r => r.value?.invNext]] }
@@ -230,9 +230,12 @@ export async function sync({ interactive = false } = {}) {
     const cutoff = Date.now() - TOMB_DAYS * 864e5;
 
     for (let i = 0; i < TABS.length; i++) {
-      const t = TABS[i], n = t.cols.length;
+      const t = TABS[i];
       const rows = tabRows[i];
-      if (!rows.length || String(rows[0][n] ?? '') !== 'id') dirty.add(t.store); // en-têtes absents : à écrire
+      // la colonne « id » est repérée dans l'en-tête : une feuille écrite avec une ancienne disposition reste lisible
+      const found = rows.length ? rows[0].map(String).indexOf('id') : -1;
+      const n = found >= 0 ? found : t.cols.length;
+      if (found !== t.cols.length) dirty.add(t.store); // en-têtes absents ou ancienne disposition : à (ré)écrire
       const remote = new Map();
       rows.slice(1).forEach(r => {
         const rid = String(r[n] ?? ''); if (!rid) return;

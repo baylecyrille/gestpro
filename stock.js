@@ -30,7 +30,7 @@ export async function recordMove(p, m) {
 }
 
 // Sortie automatique du stock pour les lignes d'une facture (emplacements les plus fournis d'abord)
-export async function autoOut(lines, ref) {
+export async function autoOut(lines, ref, siteId = '') {
   let n = 0;
   for (const ln of lines) {
     if (!ln.pid) continue;
@@ -41,7 +41,7 @@ export async function autoOut(lines, ref) {
     for (const [lid, q] of locs) {
       if (need <= 0) break;
       const take = Math.min(q, need);
-      await recordMove(p, { type: 'out', from: lid, qty: take, note: `Facture ${ref}` });
+      await recordMove(p, { type: 'out', from: lid, qty: take, note: `Facture ${ref}`, unit: num(p.buy), siteId });
       need -= take; n++;
     }
   }
@@ -197,7 +197,8 @@ export async function pickProduct(cb) {
 }
 
 /* ---------- Mouvements ---------- */
-export function moveModal(products, locs, preset = {}) {
+export async function moveModal(products, locs, preset = {}) {
+  const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const lopt = locs.map(l => [l.id, locLabel(l)]);
   const popt = products.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => [p.id, `${p.name}${p.ref ? ' (' + p.ref + ')' : ''}`]);
   if (!popt.length) return alert('Créez d\'abord un produit.');
@@ -206,6 +207,8 @@ export function moveModal(products, locs, preset = {}) {
   ${F('Quantité', 'qty', '', { type: 'number', step: 'any', req: true })}
   <div id="fromw">${F('Depuis', 'from', locs[0]?.id, { type: 'select', options: lopt })}</div>
   <div id="tow">${F('Vers', 'to', locs[0]?.id, { type: 'select', options: lopt })}</div>
+  <div id="unitw">${F('Prix d\'achat unitaire HT (€) – pour les achats et la TVA déductible', 'unit', '', { type: 'number', step: '0.01' })}</div>
+  <div id="sitew"><label class="f"><span>Chantier concerné (facultatif – pour la rentabilité)</span><select name="siteId"><option value="">— aucun —</option>${sites.map(s => `<option value="${s.id}">${e(s.name)}</option>`).join('')}</select></label></div>
   ${F('Note / n° bon de livraison', 'note', '')}`;
   modal('Mouvement de stock', body, async o => {
     const p = products.find(x => x.id === o.productId);
@@ -213,11 +216,14 @@ export function moveModal(products, locs, preset = {}) {
     if (o.type !== 'adjust' && qty <= 0) throw new Error('Quantité invalide');
     if (o.type === 'transfer' && o.from === o.to) throw new Error('Emplacements identiques');
     if ((o.type === 'out' || o.type === 'transfer') && (p.stock?.[o.from] || 0) < qty) throw new Error(`Stock insuffisant à cet emplacement (${p.stock?.[o.from] || 0}).`);
-    await recordMove(p, { type: o.type, qty, from: o.from, to: o.to, note: o.note });
+    const mv = { type: o.type, qty, from: o.from, to: o.to, note: o.note };
+    if (o.type === 'in') Object.assign(mv, { purchase: true, unit: o.unit === '' ? num(p.buy) : num(o.unit) }); // réception = achat
+    if (o.type === 'out') Object.assign(mv, { unit: num(p.buy), siteId: o.siteId || '' });
+    await recordMove(p, mv);
     toast('Mouvement enregistré'); refresh();
   }, {
     onOpen: f => {
-      const upd = () => { const t = f.elements.type.value; $('#fromw', f).hidden = !(t === 'out' || t === 'transfer'); $('#tow', f).hidden = !(t === 'in' || t === 'transfer' || t === 'adjust'); };
+      const upd = () => { const t = f.elements.type.value; $('#fromw', f).hidden = !(t === 'out' || t === 'transfer'); $('#tow', f).hidden = !(t === 'in' || t === 'transfer' || t === 'adjust'); $('#unitw', f).hidden = t !== 'in'; $('#sitew', f).hidden = t !== 'out'; };
       f.elements.type.onchange = upd; upd();
       $('[data-scan]', f).onclick = () => scan(c => { const p = products.find(x => x.barcode === c || x.ref === c); if (p) f.elements.productId.value = p.id; else toast('Code inconnu'); });
     }

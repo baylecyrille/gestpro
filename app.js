@@ -5,8 +5,9 @@ import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFil
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
-import { renderSites, renderSite } from './sites.js';
-import { renderPlanning } from './team.js';
+import { renderSites, renderSite, siteStats, SS } from './sites.js';
+import { renderPlanning, covers, habState } from './team.js';
+import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
@@ -54,17 +55,19 @@ async function renderContacts(el, tab = 'client') {
 
 /* ---------- Tableau de bord ---------- */
 async function renderDashboard(el) {
-  const [products, docs, payments, posts, contacts, S] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS()]);
-  const month = today().slice(0, 7);
+  const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves')]);
+  let per = 'month'; try { per = localStorage.getItem('gp_period') || 'month'; } catch { /* ignore */ }
+  if (!PERIODS.some(p => p[0] === per)) per = 'month';
+  const sm = summary(periodRange(per), docs, payments, moves, products);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
   const invoices = docs.filter(d => d.type === 'invoice' && d.status !== 'draft');
-  const credits = docs.filter(d => d.type === 'credit' && d.status !== 'draft');
-  const unpaid = invoices.reduce((a, d) => a + Math.max(0, totals(d).ttc - paidOf(payments, d.id)), 0);
-  const caMonth = invoices.filter(d => d.date.startsWith(month)).reduce((a, d) => a + totals(d).ht, 0) - credits.filter(d => d.date.startsWith(month)).reduce((a, d) => a + totals(d).ht, 0);
-  const cashMonth = payments.filter(p => p.date.startsWith(month) && p.method !== 'avoir').reduce((a, p) => a + (p.kind === 'remboursement' ? -1 : 1) * num(p.amount), 0);
+  const unpaidList = invoices.map(d => ({ d, left: Math.max(0, totals(d).ttc - paidOf(payments, d.id)) })).filter(x => x.left > 0.005).sort((a, b) => a.d.date.localeCompare(b.d.date));
+  const unpaid = unpaidList.reduce((a, x) => a + x.left, 0);
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent');
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
+  const C = Object.fromEntries(contacts.map(c => [c.id, c]));
+  const SI = Object.fromEntries(sites.map(x => [x.id, x]));
   // « Pour démarrer » : disparaît tout seul quand toutes les étapes sont faites (ou via « Masquer »)
   const steps = [
     ['Compléter l\'entreprise (IBAN, BIC, logo) dans Réglages', !!S.iban, '#/settings'],
@@ -79,18 +82,65 @@ async function renderDashboard(el) {
         <div class="bar" style="margin:6px 0"><i style="width:${(steps.length - left) / steps.length * 100}%"></i></div>
         ${steps.map(([l, ok, h]) => `<div>${ok ? '✅' : '⬜'} ${ok ? `<s class="muted">${e(l)}</s>` : `<a href="${h}">${e(l)}</a>`}</div>`).join('')}
         <div class="row" style="margin:8px 0 0"><button class="btn sm" id="hidestart">Masquer</button></div></div>` : '';
+
+  // courbe 12 mois (CA et achats HT)
+  const ser = monthly(docs, moves, products);
+  const max = Math.max(1, ...ser.map(o => Math.max(o.ca, o.achats)));
+  const bw = 600 / ser.length, H = 130;
+  const MI = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+  const chart = `<svg viewBox="0 0 600 ${H + 22}" style="width:100%;height:auto" role="img" aria-label="Chiffre d'affaires et achats sur 12 mois">
+    ${ser.map((o, i) => { const x = i * bw, h1 = Math.max(0, o.ca) / max * H, h2 = o.achats / max * H;
+      return `<rect x="${x + 4}" y="${H - h1}" width="${bw / 2 - 5}" height="${h1}" rx="2" fill="var(--p)"><title>${o.ym} · CA ${eur(o.ca)}</title></rect><rect x="${x + bw / 2}" y="${H - h2}" width="${bw / 2 - 5}" height="${h2}" rx="2" fill="var(--warn)"><title>${o.ym} · achats ${eur(o.achats)}</title></rect>
+      <text x="${x + bw / 2}" y="${H + 14}" font-size="11" text-anchor="middle" fill="var(--mut)">${MI[+o.ym.slice(5) - 1]}</text>`; }).join('')}
+    <line x1="0" x2="600" y1="${H}" y2="${H}" stroke="var(--bd)"/></svg>`;
+
+  // chantiers ouverts avec marge
+  const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
+  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members); const st = siteStats(x.id, docs, payments);
+    return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div></div>
+      <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
+
+  // planning des 7 prochains jours
+  const days = weekDays(today());
+  const JN = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+  const planRows = days.map(d => {
+    const l = tasks.filter(t => covers(t, d) && SI[t.siteId] && members.some(m => m.id === t.memberId));
+    if (!l.length) return '';
+    const by = {}; l.forEach(t => (by[t.siteId] ||= []).push(members.find(m => m.id === t.memberId).name.split(' ')[0]));
+    return `<div class="item" style="cursor:default"><div class="main"><div class="t">${JN[new Date(d + 'T12:00').getDay()]} ${dateFr(d).slice(0, 5)}${d === today() ? ' · aujourd\'hui' : ''}</div>
+      <div class="s">${Object.entries(by).map(([sid, n]) => `<span class="dot" style="background:${e(SI[sid].color || '#2f7ad6')}"></span> ${e(SI[sid].name)} : ${e(n.join(', '))}`).join(' &nbsp; ')}</div></div></div>`; }).join('');
+
+  // alertes : habilitations, factures en attente
+  const habAlerts = [];
+  members.filter(m => m.active !== false).forEach(m => (m.habs || []).forEach(h => { const st = habState(h); if (st) habAlerts.push({ m, h, st }); }));
+  habAlerts.sort((a, b) => (a.h.expiry || '').localeCompare(b.h.expiry || ''));
+  const lateDays = d => Math.floor((Date.parse(today()) - Date.parse(d)) / 864e5);
+
   el.innerHTML = `<h2>Bonjour 👋</h2>
-    <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/facebook/post">f Publier</a></div>
+    <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
     <div class="grid">
-      <a class="kpi" href="#/stock/products"><small>Produits</small><b>${products.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
-      <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b></a>
       <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC</small></a>
-      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser</small><b>${eur(unpaid)}</b></a>
-      <div class="kpi"><small>CA facturé du mois (HT)</small><b>${eur(caMonth)}</b></div>
-      <div class="kpi ok"><small>Encaissé ce mois</small><b>${eur(cashMonth)}</b></div>
+      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a>
+      <a class="kpi" href="#/sites"><small>Chantiers ouverts</small><b>${sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).length}</b></a>
+      <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
       <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>
+    <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="grid">
+      <div class="kpi"><small>CA facturé HT (net d'avoirs)</small><b>${eur(sm.ca)}</b><small>${sm.nbFact} facture(s)</small></div>
+      <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b></div>
+      <div class="kpi"><small>Achats HT (réceptions de stock)</small><b>${eur(sm.achats)}</b></div>
+      <div class="kpi"><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div>
+      <div class="kpi"><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div>
+      <div class="kpi ${sm.tvaDue > 0 ? 'warn' : 'ok'}"><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b>${eur(Math.abs(sm.tvaDue))}</b></div></div>
+    <p class="muted" style="margin:4px 0">TVA calculée sur les factures émises (et avoirs) et sur les achats de stock reçus au prix d'achat saisi.</p>
+    <div class="card"><b>12 derniers mois</b> <span class="muted" style="font-size:12px"><span style="color:var(--p)">■</span> CA HT &nbsp;<span style="color:var(--warn)">■</span> Achats HT</span>${chart}</div>
+    ${open.length ? `<h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a>` : ''}
+    <h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a>
+    ${habAlerts.length ? `<h3>Habilitations à renouveler</h3>${habAlerts.map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.m.name)}</div><div class="s">${e(x.h.label)}</div></div><span class="chip ${x.st}">${x.st === 'bad' ? 'expirée le ' : 'expire le '}${dateFr(x.h.expiry)}</span></div>`).join('')}` : ''}
+    ${unpaidList.length ? `<h3>Factures à encaisser</h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
     ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
     ${startCard}`;
+  $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
   $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
 }
 
