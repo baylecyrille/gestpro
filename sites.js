@@ -20,12 +20,16 @@ export function siteStats(siteId, docs, payments) {
   const marcheHT = sum(signed, 'ht'), marcheTTC = sum(signed, 'ttc');
   const factureHT = round2(sum(invoices, 'ht') - sum(credits, 'ht'));
   const factureTTC = round2(sum(invoices, 'ttc') - sum(credits, 'ttc'));
-  const encaisse = round2(invoices.reduce((a, d) => a + paidOf(payments, d.id), 0));
+  const invIds = new Set(invoices.map(d => d.id)), crIds = new Set(credits.map(d => d.id));
+  const cash = round2(payments.filter(p => invIds.has(p.docId) && p.method !== 'avoir').reduce((a, p) => a + num(p.amount), 0));
+  const rembourse = round2(payments.filter(p => crIds.has(p.docId) && p.kind === 'remboursement').reduce((a, p) => a + num(p.amount), 0));
+  const encaisse = round2(cash - rembourse);
   return {
     marcheHT, marcheTTC, factureHT, factureTTC, encaisse,
     enAttenteTTC: sum(pending.filter(q => q.status === 'sent'), 'ttc'),
     resteFacturer: Math.max(0, round2(marcheTTC - factureTTC)),
     resteAPayer: Math.max(0, round2(factureTTC - encaisse)),
+    aRembourser: Math.max(0, round2(encaisse - factureTTC)),
     nbDevis: quotes.length, nbFactures: invoices.length, nbAvoirs: credits.length
   };
 }
@@ -79,7 +83,7 @@ export async function renderSite(el, id) {
       <div class="kpi"><small>Marché signé (TTC)</small><b>${eur(st.marcheTTC)}</b><small>${eur(st.marcheHT)} HT${st.enAttenteTTC ? ` · ${eur(st.enAttenteTTC)} en attente` : ''}</small></div>
       <div class="kpi"><small>Facturé (TTC)</small><b>${eur(st.factureTTC)}</b><small>reste à facturer ${eur(st.resteFacturer)}</small></div>
       <div class="kpi ok"><small>Encaissé</small><b>${eur(st.encaisse)}</b></div>
-      <div class="kpi ${st.resteAPayer ? 'warn' : ''}"><small>Reste à payer</small><b>${eur(st.resteAPayer)}</b></div>
+      <div class="kpi ${st.resteAPayer ? 'warn' : ''}"><small>Reste à payer</small><b>${eur(st.resteAPayer)}</b>${st.aRembourser ? `<small>à rembourser au client : ${eur(st.aRembourser)}</small>` : ''}</div>
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}
     ${siteTeamHtml(site.id, tasks, members)}

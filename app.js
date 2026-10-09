@@ -59,9 +59,10 @@ async function renderDashboard(el) {
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
   const invoices = docs.filter(d => d.type === 'invoice' && d.status !== 'draft');
+  const credits = docs.filter(d => d.type === 'credit' && d.status !== 'draft');
   const unpaid = invoices.reduce((a, d) => a + Math.max(0, totals(d).ttc - paidOf(payments, d.id)), 0);
-  const caMonth = invoices.filter(d => d.date.startsWith(month)).reduce((a, d) => a + totals(d).ht, 0);
-  const cashMonth = payments.filter(p => p.date.startsWith(month)).reduce((a, p) => a + num(p.amount), 0);
+  const caMonth = invoices.filter(d => d.date.startsWith(month)).reduce((a, d) => a + totals(d).ht, 0) - credits.filter(d => d.date.startsWith(month)).reduce((a, d) => a + totals(d).ht, 0);
+  const cashMonth = payments.filter(p => p.date.startsWith(month) && p.method !== 'avoir').reduce((a, p) => a + (p.kind === 'remboursement' ? -1 : 1) * num(p.amount), 0);
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent');
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
   // « Pour démarrer » : disparaît tout seul quand toutes les étapes sont faites (ou via « Masquer »)
@@ -114,6 +115,7 @@ async function renderSettings(el) {
     <h3 class="full">Devis &amp; factures</h3>
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
+    ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}
     ${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
@@ -191,7 +193,7 @@ async function renderSettings(el) {
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'pad', 'tva'].forEach(k => (o[k] = num(o[k])));
+    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();

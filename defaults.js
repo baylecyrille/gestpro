@@ -24,7 +24,7 @@ export const DEFAULTS = {
   note: 'Suivant prise de cotes sur place.',
   terms: "30% à la signature devis\n30% au commencement des travaux\n40% à la réception chantier à régler au plus tard un mois après la date de facturation. En outre une indemnité forfaitaire de frais de recouvrement de 40 Euros sera ajoutée ainsi des pénalités de retard de 10% par mois\nPas d'escompte en cas de règlement anticipé.",
   quotePrefix: 'DEV-2026-', quoteNext: 1,
-  invPrefix: 'FAC-2026-', invNext: 1, pad: 4,
+  invPrefix: 'FAC-2026-', invNext: 1, creditPrefix: 'AV-2026-', creditNext: 1, pad: 4,
   validity: 30,
   fbPage: '', fbId: '', fbToken: '',
   googleClientId: '',

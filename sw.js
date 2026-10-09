@@ -1,4 +1,4 @@
-const CACHE = 'gestpro-v5';
+const CACHE = 'gestpro-v6';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
   './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './facebook.js',
