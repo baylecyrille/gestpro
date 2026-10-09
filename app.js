@@ -6,6 +6,7 @@ import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite } from './sites.js';
+import { renderPlanning } from './team.js';
 import * as sheets from './sheets.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
@@ -206,7 +207,7 @@ async function renderSettings(el) {
 
 /* ---------- Routeur ---------- */
 const routes = {
-  dashboard: renderDashboard, sites: renderSites, site: renderSite, stock: renderStock, docs: renderDocs, doc: renderDoc,
+  dashboard: renderDashboard, sites: renderSites, site: renderSite, planning: renderPlanning, stock: renderStock, docs: renderDocs, doc: renderDoc,
   contacts: renderContacts, facebook: renderFacebook, settings: renderSettings
 };
 

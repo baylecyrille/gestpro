@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import { e, eur, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
+import { siteTeamHtml, assignModal } from './team.js';
 
 export const SS = { new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Payé', lost: 'Perdu' };
 export const SCOL = { new: '', signed: 'warn', progress: 'warn', paid: 'ok', lost: 'bad' };
@@ -58,7 +59,7 @@ export async function renderSite(el, id) {
   if (id === 'new') { await renderSites(el, 'open'); return siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: '#2f7ad6' }, clients, true); }
   const site = await db.get('sites', id);
   if (!site) { el.innerHTML = '<div class="empty">Chantier introuvable.</div>'; return; }
-  const [docs, payments] = await Promise.all([db.all('documents'), db.all('payments')]);
+  const [docs, payments, tasks, members] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members')]);
   const client = contacts.find(c => c.id === site.clientId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
@@ -81,12 +82,16 @@ export async function renderSite(el, id) {
       <div class="kpi ${st.resteAPayer ? 'warn' : ''}"><small>Reste à payer</small><b>${eur(st.resteAPayer)}</b></div>
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}
+    ${siteTeamHtml(site.id, tasks, members)}
     <div class="card" style="margin-top:14px"><button class="btn danger" id="del">Supprimer le chantier</button></div>`;
   $('#stat', el).onchange = async ev => { site.status = ev.target.value; await db.put('sites', site); toast('Statut mis à jour'); refresh(); };
+  $('#assign', el).onclick = () => assignModal(null, { siteId: site.id });
+  $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
   $('#edit', el).onclick = () => siteModal(site, clients, false);
   $('#del', el).onclick = async () => {
-    if (!confirm('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien).')) return;
+    if (!confirm('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien) ; le planning de ce chantier est supprimé.')) return;
     for (const d of mine) { d.siteId = ''; await db.put('documents', d); }
+    for (const t of tasks.filter(x => x.siteId === site.id)) await db.del('tasks', t.id);
     await db.del('sites', site.id); go('#/sites');
   };
 }
