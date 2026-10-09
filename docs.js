@@ -1,13 +1,14 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
-import { getS } from './defaults.js';
+import { getS, logoSrc } from './defaults.js';
 import { e, eur, num, round2, dateFr, today, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 
 const QS = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' };
-const IS = { draft: 'Brouillon', issued: 'Émise' };
-const METHODS = [['virement', 'Virement'], ['cheque', 'Chèque'], ['especes', 'Espèces'], ['cb', 'Carte bancaire'], ['autre', 'Autre']];
+const IS = { draft: 'Brouillon', pending: 'En attente', sent: 'Envoyée', paid: 'Réglée' };
+const normStatus = d => { if (d.type === 'invoice' && d.status === 'issued') d.status = 'pending'; return d; };
+const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte bleue (terminal externe)'], ['virement', 'Virement'], ['autre', 'Autre']];
 const TVAS = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
 
 export function totals(doc) {
@@ -21,6 +22,37 @@ export function payState(doc, payments) {
   if (t > 0 && p >= t - 0.005) return ['Payée', 'ok'];
   if (p > 0) return ['Partielle', 'warn'];
   return ['À régler', 'bad'];
+}
+
+/* Pastille d'état d'une facture : état choisi + règlements encaissés */
+export function invBadge(doc, payments) {
+  normStatus(doc);
+  if (doc.status === 'draft') return '<span class="chip">Brouillon</span>';
+  const t = totals(doc).ttc, p = paidOf(payments, doc.id);
+  if (doc.status === 'paid' || (t > 0 && p >= t - 0.005)) return '<span class="chip ok">Réglée</span>';
+  const part = p > 0 ? '<span class="chip warn">Partielle</span>' : '';
+  return `<span class="chip ${doc.status === 'sent' ? 'warn' : 'bad'}">${IS[doc.status] || 'En attente'}</span>${part}`;
+}
+/* Met l'état de la facture en cohérence avec les règlements (réglée / plus réglée) */
+async function syncInvStatus(docId) {
+  const d = await db.get('documents', docId);
+  if (!d || d.type !== 'invoice') return;
+  normStatus(d);
+  if (d.status === 'draft') return;
+  const t = totals(d).ttc, full = t > 0 && paidOf(await db.all('payments'), docId) >= t - 0.005;
+  const ns = full ? 'paid' : d.status === 'paid' ? 'sent' : d.status;
+  if (ns !== d.status) { d.status = ns; await db.put('documents', d); }
+}
+
+/* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
+async function makeInvoice(q) {
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  inv.number = await nextNumber('invoice');
+  await db.put('documents', inv);
+  for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
+  q.status = 'invoiced'; q.invoiceId = inv.id; await db.put('documents', q);
+  await syncInvStatus(inv.id);
+  return inv;
 }
 
 async function nextNumber(type) {
@@ -51,8 +83,8 @@ export async function renderDocs(el, tab = 'quote') {
     $('#list', el).innerHTML = rows.map(d => {
       const t = totals(d);
       let badge;
-      if (d.type === 'invoice') { const [l, c] = payState(d, payments); badge = d.status === 'draft' ? '<span class="chip">Brouillon</span>' : `<span class="chip ${c}">${l}</span>`; }
-      else badge = `<span class="chip ${d.status === 'accepted' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status]}</span>`;
+      if (d.type === 'invoice') badge = invBadge(d, payments);
+      else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
       return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(C[d.clientId]?.name || 'Sans client')}</div>
         <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
     }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : 'facture'} pour le moment.</div>`;
@@ -63,9 +95,10 @@ export async function renderDocs(el, tab = 'quote') {
 /* ---------- Éditeur ---------- */
 export async function renderDoc(el, id, arg) {
   let cur, isNew = false;
-  if (id === 'new') { cur = await newDoc(arg === 'invoice' ? 'invoice' : 'quote'); if (cur.type === 'invoice') cur.status = 'issued'; isNew = true; }
+  if (id === 'new') { cur = await newDoc(arg === 'invoice' ? 'invoice' : 'quote'); if (cur.type === 'invoice') cur.status = 'pending'; isNew = true; }
   else cur = await db.get('documents', id);
   if (!cur) { el.innerHTML = '<div class="empty">Document introuvable.</div>'; return; }
+  normStatus(cur);
   const [contacts, S, allPay] = await Promise.all([db.all('contacts'), getS(), db.all('payments')]);
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const isQ = cur.type === 'quote';
@@ -112,7 +145,8 @@ export async function renderDoc(el, id, arg) {
       <div class="bar"><i style="width:${t.ttc ? Math.min(100, paid / t.ttc * 100) : 0}%"></i></div>
       <p>Encaissé <b>${eur(paid)}</b> sur ${eur(t.ttc)} · reste <b>${eur(left)}</b></p>
       ${pays.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div class="item" data-pay="${p.id}"><div class="main"><div class="t">${eur(p.amount)}</div><div class="s">${dateFr(p.date)} · ${e(METHODS.find(m => m[0] === p.method)?.[1] || '')}${p.note ? ' · ' + e(p.note) : ''}</div></div><span class="chip">${e(p.kind === 'acompte' ? 'Acompte' : 'Règlement')}</span></div>`).join('')}
-      <div class="row"><button class="btn primary" id="addpay">+ Encaisser</button><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
+      <div class="row"><span class="muted">Encaisser :</span><button class="btn primary" data-m="especes">💶 Espèces</button><button class="btn primary" data-m="cheque">🧾 Chèque</button><button class="btn primary" data-m="cb">💳 Carte bleue</button><button class="btn" id="addpay">Autre…</button></div>
+      <div class="row"><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
   };
   const actionsHtml = () => `<div class="card"><div class="row">
       ${isQ ? `<button class="btn primary" id="toinv">Transformer en facture</button>${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
@@ -134,6 +168,10 @@ export async function renderDoc(el, id, arg) {
     if (!cur.number && (cur.type === 'quote' || cur.status !== 'draft')) cur.number = await nextNumber(cur.type);
     cur.lines = cur.lines.filter(l => l.desig || num(l.pu));
     await db.put('documents', cur);
+    if (isQ && cur.status === 'invoiced' && !cur.invoiceId) { // devis passé à « Facturé » : la facture est créée automatiquement
+      if (cur.invoiceId = (await makeInvoice(cur)).id) { toast('Facture créée à partir du devis'); go('#/doc/' + cur.invoiceId); return true; }
+    }
+    if (!isQ) await syncInvStatus(cur.id);
     if (isNew) { toast('Enregistré'); location.hash = '#/doc/' + cur.id; } else { toast('Enregistré'); refresh(); }
     return true;
   };
@@ -162,17 +200,19 @@ export async function renderDoc(el, id, arg) {
       for (const p of payments) await db.del('payments', p.id);
       await db.del('documents', cur.id); go('#/docs/' + cur.type);
     };
-    const payModal = (p, amount = '') => {
-      const isNewP = !p; p = p || { docId: cur.id, date: today(), method: 'virement', kind: 'acompte' };
+    const payModal = (p, amount = '', method = 'virement') => {
+      const isNewP = !p; p = p || { docId: cur.id, date: today(), method, kind: amount !== '' && round2(amount) >= round2(totals(cur).ttc - paidOf(payments, cur.id)) - 0.005 ? 'solde' : 'acompte' };
       modal(isNewP ? 'Encaissement' : 'Règlement',
         `<div class="cols">${F('Montant TTC (€)', 'amount', p.amount ?? amount, { type: 'number', step: '0.01', req: true })}${F('Date', 'date', p.date, { type: 'date' })}
         ${F('Mode', 'method', p.method, { type: 'select', options: METHODS })}${F('Nature', 'kind', p.kind, { type: 'select', options: [['acompte', 'Acompte'], ['solde', 'Règlement / solde']] })}
-        ${F('Note (n° chèque…)', 'note', p.note, { cls: 'full' })}</div>`,
-        async o => { Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); refresh(); },
-        { del: isNewP ? null : async () => { await db.del('payments', p.id); refresh(); } });
+        ${F('Note (n° chèque, banque, ticket CB…)', 'note', p.note, { cls: 'full' })}</div>`,
+        async o => { Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
+        { del: isNewP ? null : async () => { await db.del('payments', p.id); await syncInvStatus(cur.id); refresh(); } });
     };
     const t = totals(cur), paid = paidOf(payments, cur.id);
+    const left = Math.max(0, round2(t.ttc - paid));
     $('#addpay', el).onclick = () => payModal();
+    $$('[data-m]', el).forEach(b => b.onclick = () => payModal(null, left || '', b.dataset.m));
     $$('[data-pct]', el).forEach(b => b.onclick = () => payModal(null, round2(t.ttc * +b.dataset.pct / 100)));
     $('#rest', el).onclick = () => payModal(null, Math.max(0, round2(t.ttc - paid)));
     $$('[data-pay]', el).forEach(n => n.onclick = () => payModal(payments.find(p => p.id === n.dataset.pay)));
@@ -181,11 +221,8 @@ export async function renderDoc(el, id, arg) {
       $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
-        const inv = await newDoc('invoice', { clientId: cur.clientId, siteRef: cur.siteRef, siteAddr: cur.siteAddr, intro: cur.intro, note: cur.note, tva: cur.tva, terms: cur.terms, lines: JSON.parse(JSON.stringify(cur.lines)), fromQuote: cur.id, fromQuoteNumber: cur.number, status: 'issued' });
-        inv.number = await nextNumber('invoice');
-        await db.put('documents', inv);
-        for (const p of payments) { p.docId = inv.id; p.fromQuote = cur.id; await db.put('payments', p); }
-        cur.status = 'invoiced'; cur.invoiceId = inv.id; await db.put('documents', cur);
+        if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
+        const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);
       };
       if (cur.invoiceId) $('#toinv', el).insertAdjacentHTML('afterend', `<a class="btn" href="#/doc/${cur.invoiceId}">Voir la facture</a>`);
@@ -208,7 +245,7 @@ async function printDoc(doc) {
   const isQ = doc.type === 'quote';
   const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
   $('#printarea').innerHTML = `<div class="sheet">
-    <div class="hd"><div class="co">${S.logo ? `<img src="${S.logo}" alt="">` : ''}<div class="nm">${e(S.sub || S.company)}</div>
+    <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${e(S.sub || S.company)}</div>
       <p><b>${e(S.owner)}</b><br>${e(S.address).replace(/\n/g, '<br>')}<br>${e(S.phone)}<br>${e(S.legal)}<br>${e(S.email)}<br>${e(S.web)}<br>N°SIRET : ${e(S.siret)}</p></div>
       <div><p class="small" style="margin-top:0">${S.rge ? `<b>RGE</b> Numéro ${e(S.rge)}<br>` : ''}${S.insurance ? `Assurance Responsabilité Travaux ${e(S.insurance)}<br>Assurance Responsabilité Civile ${e(S.insurance)}` : ''}</p>
       <div class="cl">${e(c.name || '')}${c.company ? '\n' + e(c.company) : ''}\n${e(addr)}</div>
@@ -226,5 +263,6 @@ async function printDoc(doc) {
     <div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>
     <div class="sig"><div><b>${isQ ? 'Bon pour accord – date et signature du client' : 'Signature Entrepreneur'}</b><div style="height:60px"></div></div>
     <div>${S.iban ? `<b><u>Vous pouvez régler cette facture par virement</u></b><br><b>${e(S.company)}</b><br><b>IBAN</b> : ${e(S.iban)}<br><b>Code BIC</b> : ${e(S.bic)}` : ''}</div></div></div>`;
+  await Promise.all([...$('#printarea').querySelectorAll('img')].map(i => (i.decode ? i.decode().catch(() => {}) : null)));
   setTimeout(() => window.print(), 60);
 }

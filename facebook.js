@@ -33,6 +33,7 @@ async function postTab(body, S, editId) {
     <label class="f"><span>Texte de la publication <b id="cc" class="muted"></b></span><textarea id="txt" rows="9" placeholder="Rédigez ou choisissez un modèle…">${e(post.text)}</textarea></label>
     <div class="row"><select id="prod" style="flex:1"><option value="">Insérer un produit du stock…</option>${products.map(p => `<option value="${p.id}">${e(p.name)} – ${eur(p.sell)}</option>`).join('')}</select>
       <button class="btn sm" id="tags">+ Hashtags</button><button class="btn sm" id="emo">😊</button></div>
+    <div id="emopanel" class="emo" hidden></div>
     <div class="row"><label class="btn"><input type="file" id="img" accept="image/*" hidden>📷 Photo</label><span id="imgname" class="muted">${post.image ? 'photo jointe' : ''}</span></div>
     <img id="prev" alt="" style="max-width:100%;max-height:240px;border-radius:10px;${post.image ? '' : 'display:none'}" src="${post.image || ''}">
     <label class="f" style="margin-top:8px"><span>Planifier un rappel (date de publication prévue)</span><input type="date" id="when" value="${e(post.date)}"></label>
@@ -51,7 +52,27 @@ async function postTab(body, S, editId) {
     ev.target.value = ''; cc();
   };
   $('#tags', body).onclick = () => { txt.value = txt.value.trimEnd() + '\n\n' + S.hashtags; cc(); };
-  $('#emo', body).onclick = () => { txt.value += ['✅', '🔨', '🪵', '🏠', '📞', '📍', '⭐', '🔥'][Math.floor(Math.random() * 8)]; cc(); };
+  const EMO = {
+    'Atelier': ['🔨','🪚','🪵','🛠️','🔧','🪛','📐','📏','⚙️','🧰','🪜','🏗️','🚧','🧱','🪟','🚪','🛋️','🪑','🛏️','🌳'],
+    'Maison': ['🏠','🏡','🏘️','🏢','🔑','🛁','🚿','🍳','🛋️','🪴','💡','🔥','❄️','☀️','🌿','🧹','🎨','🖌️','🪞','📦'],
+    'Pub': ['✅','✔️','⭐','🌟','✨','🔥','💥','🎉','🎁','💯','👍','👏','🙌','💪','👌','❤️','😍','🤩','📣','📢'],
+    'Contact': ['📞','📱','📧','💬','📍','🗺️','🕘','📅','🗓️','⏰','🌐','➡️','👉','👇','⬇️','🔗','📸','🎥','💰','🏷️'],
+    'Visages': ['😀','😃','😄','😁','😊','🙂','😉','😎','🤝','🙏','🤗','😅','😂','🥰','😇','🤔','👷','👨‍🔧','👩‍🔧','🧑‍🎨']
+  };
+  const panel = $('#emopanel', body);
+  let cat = Object.keys(EMO)[0];
+  const drawEmo = () => {
+    panel.innerHTML = `<div class="row" style="margin-bottom:6px">${Object.keys(EMO).map(k => `<button type="button" class="btn sm${k === cat ? ' primary' : ''}" data-cat="${k}">${k}</button>`).join('')}</div>
+      <div class="emogrid">${EMO[cat].map(m => `<button type="button" data-e="${m}">${m}</button>`).join('')}</div>`;
+  };
+  panel.onclick = ev => {
+    const c = ev.target.closest('[data-cat]'); if (c) { cat = c.dataset.cat; drawEmo(); return; }
+    const m = ev.target.closest('[data-e]'); if (!m) return;
+    const a = txt.selectionStart ?? txt.value.length, b = txt.selectionEnd ?? a;
+    txt.value = txt.value.slice(0, a) + m.dataset.e + txt.value.slice(b);
+    const pos = a + m.dataset.e.length; txt.focus(); txt.setSelectionRange(pos, pos); cc();
+  };
+  $('#emo', body).onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) drawEmo(); };
   let file = null;
   $('#img', body).onchange = async ev => {
     file = ev.target.files[0]; if (!file) return;

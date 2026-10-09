@@ -1,8 +1,8 @@
-const CACHE = 'gestpro-v1';
+const CACHE = 'gestpro-v3';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
   './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './facebook.js',
-  './icon-192.png', './icon-512.png'
+  './logo.png', './icon-192.png', './icon-512.png'
 ];
 
 self.addEventListener('install', e => {

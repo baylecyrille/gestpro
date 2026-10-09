@@ -9,8 +9,10 @@ import { loadScript } from './util.js';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const GSI = 'https://accounts.google.com/gsi/client';
-const K = { id: 'gp_sheet_id', tok: 'gp_gtoken', exp: 'gp_gexp', last: 'gp_lastsync', url: 'gp_script_url', skey: 'gp_script_key' };
-const LOCAL_ONLY = ['logo', 'fbToken', 'googleClientId']; // jamais envoyés dans le classeur
+const K = { photo: 'gp_photo_pending', id: 'gp_sheet_id', tok: 'gp_gtoken', exp: 'gp_gexp', last: 'gp_lastsync', url: 'gp_script_url', skey: 'gp_script_key' };
+const LOCAL_ONLY = ['fbToken', 'googleClientId']; // jamais envoyés dans le classeur
+const PHOTO_TAB = 'Photos';
+const PHOTO_MAX = 45000; // limite d'une cellule Google Sheets : 50 000 caractères
 const META = ['id', 'maj', 'supprime', 'json'];
 const TOMB_DAYS = 60;
 
@@ -24,7 +26,7 @@ export const TABS = [
   { store: 'products', name: 'Produits', cols: [['Référence', r => r.ref], ['Désignation', r => r.name], ['Code-barres', r => r.barcode], ['Catégorie', r => r.category], ['Unité', r => r.unit], ['Prix achat HT', r => r.buy], ['Prix vente HT', r => r.sell], ['TVA %', r => r.tva], ['Seuil alerte', r => r.min], ['Stock total', r => sum(r.stock)]] },
   { store: 'locations', name: 'Emplacements', cols: [['Zone', r => r.zone], ['Lieu', r => r.place], ['Note', r => r.note]] },
   { store: 'contacts', name: 'Contacts', cols: [['Type', r => (r.kind === 'supplier' ? 'Fournisseur' : 'Client')], ['Nom', r => r.name], ['Contact', r => r.company], ['Adresse', r => r.address], ['CP', r => r.zip], ['Ville', r => r.city], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['SIRET', r => r.siret], ['Note', r => r.note]] },
-  { store: 'documents', name: 'Devis_Factures', cols: [['Type', r => (r.type === 'quote' ? 'Devis' : 'Facture')], ['Numéro', r => r.number], ['Date', r => r.date], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Réf chantier', r => r.siteRef], ['Statut', r => r.status], ['Total HT', r => ht(r)], ['TVA %', r => r.tva], ['Total TTC', r => ttc(r)]] },
+  { store: 'documents', name: 'Devis_Factures', cols: [['Type', r => (r.type === 'quote' ? 'Devis' : 'Facture')], ['Numéro', r => r.number], ['Date', r => r.date], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Réf chantier', r => r.siteRef], ['Statut', r => ({ draft: 'Brouillon', sent: r.type === 'quote' ? 'Envoyé' : 'Envoyée', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé', pending: 'En attente', issued: 'En attente', paid: 'Réglée' })[r.status] || r.status], ['Total HT', r => ht(r)], ['TVA %', r => r.tva], ['Total TTC', r => ttc(r)]] },
   { store: 'payments', name: 'Reglements', cols: [['Date', r => r.date], ['Document', (r, c) => c.documents[r.docId]?.number], ['Client', (r, c) => c.contacts[c.documents[r.docId]?.clientId]?.name], ['Montant TTC', r => r.amount], ['Mode', r => r.method], ['Nature', r => r.kind], ['Note', r => r.note]] },
   { store: 'moves', name: 'Mouvements_stock', cols: [['Date', r => (r.date || '').slice(0, 16).replace('T', ' ')], ['Produit', (r, c) => c.products[r.productId]?.name], ['Type', r => r.type], ['Quantité', r => r.qty], ['Note', r => r.note]] },
   { store: 'fbposts', name: 'Facebook_publications', cols: [['Date prévue', r => r.date], ['Statut', r => r.status], ['Texte', r => (r.text || '').slice(0, 300)]] },
@@ -131,7 +133,7 @@ async function api(path, opts = {}, interactive = false) {
 export async function createSheet() {
   const j = await api('', {
     method: 'POST',
-    body: JSON.stringify({ properties: { title: 'GestPro – Données', locale: 'fr_FR' }, sheets: TABS.map(t => ({ properties: { title: t.name, gridProperties: { frozenRowCount: 1 } } })) })
+    body: JSON.stringify({ properties: { title: 'GestPro – Données', locale: 'fr_FR' }, sheets: [...TABS.map(t => t.name), PHOTO_TAB].map(n => ({ properties: { title: n, gridProperties: { frozenRowCount: 1 } } })) })
   }, true);
   localStorage.setItem(K.id, j.spreadsheetId);
   return j.spreadsheetId;
@@ -144,8 +146,8 @@ export async function useSheet(input) {
   localStorage.setItem(K.id, id);
   const info = await api(`/${id}?fields=sheets.properties.title`, {}, true);
   const have = new Set(info.sheets.map(s => s.properties.title));
-  const missing = TABS.filter(t => !have.has(t.name));
-  if (missing.length) await api(`/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: missing.map(t => ({ addSheet: { properties: { title: t.name, gridProperties: { frozenRowCount: 1 } } } })) }) }, true);
+  const missing = [...TABS.map(t => t.name), PHOTO_TAB].filter(n => !have.has(n));
+  if (missing.length) await api(`/${id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: missing.map(n => ({ addSheet: { properties: { title: n, gridProperties: { frozenRowCount: 1 } } } })) }) }, true);
   return id;
 }
 
@@ -153,9 +155,62 @@ export async function useSheet(input) {
 const clean = (store, rec) => {
   const { _u, _d, ...r } = rec;
   if (store === 'fbposts') delete r.image;
-  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); }
+  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); if ((r.value.logo || '').length > 40000) delete r.value.logo; }
   return r;
 };
+
+
+export const markPhotosDirty = () => localStorage.setItem(K.photo, '1');
+
+async function readOne(name, interactive) {
+  if (scriptMode()) { const j = await scriptCall({ action: 'read', tabs: [name] }); return j.tabs[name] || []; }
+  try {
+    const j = await api(`/${sheetId()}/values/${encodeURIComponent(`'${name}'!A:D`)}?valueRenderOption=UNFORMATTED_VALUE`, {}, interactive);
+    return j.values || [];
+  } catch (err) {
+    if (!/parse range|Unable to parse/i.test(err.message)) throw err;
+    await api(`/${sheetId()}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: name, gridProperties: { frozenRowCount: 1 } } } }] }) }, interactive);
+    return [];
+  }
+}
+
+// Les photos vivent dans un onglet à part (id, maj, supprime, données) et ne sont lues / écrites que si nécessaire :
+// - lecture : un produit annonce une photo plus récente (photoV) que celle de l'appareil
+// - écriture : une photo a été ajoutée / modifiée / retirée sur cet appareil
+async function syncPhotos(interactive) {
+  const products = await db.all('products');
+  const local = new Map((await db.allRaw('photos')).filter(o => !o._d).map(o => [o.id, o]));
+  const lv = id => local.get(id)?.v || 0;
+  const needPull = products.some(p => (p.photoV || 0) > lv(p.id));
+  const pending = localStorage.getItem(K.photo) === '1';
+  if (!needPull && !pending) return 0;
+
+  const rows = await readOne(PHOTO_TAB, interactive);
+  const remote = new Map();
+  rows.slice(1).forEach(r => {
+    const id = String(r[0] ?? ''); if (!id) return;
+    remote.set(id, { id, v: Number(r[1]) || 0, data: r[2] ? '' : String(r[3] ?? '') });
+  });
+  let pulled = 0, rewrite = !rows.length || String(rows[0][0] ?? '') !== 'id';
+  for (const id of new Set([...local.keys(), ...remote.keys()])) {
+    const l = local.get(id), m = remote.get(id);
+    if (m && m.v > (l?.v || 0)) { await db.putRaw('photos', { id, data: m.data, v: m.v, _u: Date.now() }); local.set(id, { id, data: m.data, v: m.v }); pulled++; }
+    else if (l && (l.v || 0) > (m?.v || 0)) rewrite = true;
+  }
+  if (rewrite) {
+    const alive = new Set(products.map(p => p.id));
+    const values = [['id', 'maj', 'supprime', 'json']];
+    for (const [id, o] of local) {
+      if (!alive.has(id)) continue;
+      if (!o.data) { values.push([id, o.v || 0, 1, '']); continue; }
+      if (o.data.length > PHOTO_MAX) continue; // trop lourde pour une cellule : reste locale
+      values.push([id, o.v || 0, '', o.data]);
+    }
+    await writeTabs([{ name: PHOTO_TAB, range: `'${PHOTO_TAB}'!A1`, values }], interactive);
+  }
+  localStorage.removeItem(K.photo);
+  return pulled;
+}
 
 let syncing = false, pending = false, lastRun = 0, timer;
 export const lastRunAt = () => lastRun;
@@ -190,6 +245,7 @@ export async function sync({ interactive = false } = {}) {
           if (!m._d && t.store === 'fbposts' && l?.image) rec = { ...m, image: l.image };
           if (!m._d && t.store === 'settings') {
             const keep = {}; LOCAL_ONLY.forEach(k => { if (l?.value?.[k] !== undefined) keep[k] = l.value[k]; });
+            if (m.value.logo === undefined && l?.value?.logo) keep.logo = l.value.logo;
             rec = { ...m, value: { ...m.value, ...keep } };
           }
           await db.putRaw(t.store, rec); pulled++;
@@ -215,6 +271,7 @@ export async function sync({ interactive = false } = {}) {
       }
       await writeTabs(data, interactive);
     }
+    pulled += await syncPhotos(interactive);
     localStorage.setItem(K.last, String(Date.now()));
     setStatus('ok');
     if (pulled) onPulled(pulled);
