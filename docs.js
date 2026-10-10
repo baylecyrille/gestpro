@@ -4,6 +4,9 @@ import { getS, logoSrc } from './defaults.js';
 import { e, eur, num, round2, dateFr, today, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
+import * as auth from './auth.js';
+
+const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
 
 const QS = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' };
 const IS = { draft: 'Brouillon', pending: 'En attente', sent: 'Envoyée', paid: 'Réglée' };
@@ -89,10 +92,12 @@ export async function newDoc(type, extra = {}) {
 
 /* ---------- Liste ---------- */
 export async function renderDocs(el, tab = 'quote') {
+  const allowed = ['quote', 'invoice', 'credit'].filter(t => auth.can(TYPE_RIGHT[t]));
+  if (!allowed.includes(tab)) return go('#/docs/' + (allowed[0] || 'quote'));
   const [docs, contacts, payments] = await Promise.all([db.all('documents'), db.all('contacts'), db.all('payments')]);
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
-  const list = docs.filter(d => d.type === tab).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
-  el.innerHTML = `<h2>Devis &amp; factures</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']], tab)}
+  const list = docs.filter(d => d.type === tab && auth.canDoc(d)).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
+  el.innerHTML = `<h2>Devis &amp; factures</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div><div id="list"></div>`;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
@@ -121,6 +126,9 @@ export async function renderDoc(el, id, arg) {
   else cur = await db.get('documents', id);
   if (!cur) { el.innerHTML = '<div class="empty">Document introuvable.</div>'; return; }
   normStatus(cur);
+  if (isNew && !cur.by) cur.by = auth.currentUser()?.id || '';
+  if (!auth.canDoc(cur)) { el.innerHTML = '<div class="empty">Vous n\'avez pas accès à ce document.</div>'; return; }
+  const canPay = auth.can('invoices'), canInv = auth.can('invoices');
   const [contacts, S, allPay, sites, allDocs] = await Promise.all([db.all('contacts'), getS(), db.all('payments'), db.all('sites'), db.all('documents')]);
   sites.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -150,7 +158,7 @@ export async function renderDoc(el, id, arg) {
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
       ${F('Intitulé', 'intro', cur.intro, { cls: 'full' })}
       ${F(isC ? 'Motif de l\'avoir' : 'Remarque', 'note', cur.note, { cls: 'full' })}
-      ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? QS : isC ? CS : IS) })}
+      ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></div>
     <div class="card lines"><div class="ln h"><span>Désignation</span><span>Qté</span><span>Unité</span><span>P.U. HT</span><span></span></div>
@@ -158,7 +166,7 @@ export async function renderDoc(el, id, arg) {
       <div class="row"><button type="button" class="btn" id="addp">+ Produit (stock / code-barres)</button><button type="button" class="btn" id="addl">+ Ligne libre</button></div>
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
-    ${!isNew ? (isC ? creditUseHtml(t) : paymentsHtml(t, payments)) : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
+    ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew ? actionsHtml() : ''}`;
     bind();
   };
@@ -186,7 +194,7 @@ export async function renderDoc(el, id, arg) {
   const actionsHtml = () => `<div class="card"><div class="row">
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
-      ${isQ ? `<button class="btn primary" id="toinv">Transformer en facture</button>${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
       <button class="btn danger" id="delete">Supprimer</button></div>${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
   const refreshTotals = () => {
@@ -312,21 +320,23 @@ export async function renderDoc(el, id, arg) {
     const left = Math.max(0, round2(t.ttc - paid));
     if (isC) return bindCredit(t);
     $('#tocredit', el)?.addEventListener('click', () => creditModal());
-    $('#addpay', el).onclick = () => payModal();
-    $$('[data-m]', el).forEach(b => b.onclick = () => payModal(null, left || '', b.dataset.m));
-    $$('[data-pct]', el).forEach(b => b.onclick = () => payModal(null, round2(t.ttc * +b.dataset.pct / 100)));
-    $('#rest', el).onclick = () => payModal(null, Math.max(0, round2(t.ttc - paid)));
-    $$('[data-pay]', el).forEach(n => n.onclick = () => { const p = payments.find(x => x.id === n.dataset.pay); if (p.creditId) go('#/doc/' + p.creditId); else payModal(p); });
+    if (canPay) {
+      $('#addpay', el).onclick = () => payModal();
+      $$('[data-m]', el).forEach(b => b.onclick = () => payModal(null, left || '', b.dataset.m));
+      $$('[data-pct]', el).forEach(b => b.onclick = () => payModal(null, round2(t.ttc * +b.dataset.pct / 100)));
+      $('#rest', el).onclick = () => payModal(null, Math.max(0, round2(t.ttc - paid)));
+      $$('[data-pay]', el).forEach(n => n.onclick = () => { const p = payments.find(x => x.id === n.dataset.pay); if (p.creditId) go('#/doc/' + p.creditId); else payModal(p); });
+    }
     if (isQ) {
       $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); });
-      $('#toinv', el).onclick = async () => {
+      if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
         if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
         const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);
       };
-      if (cur.invoiceId) $('#toinv', el).insertAdjacentHTML('afterend', `<a class="btn" href="#/doc/${cur.invoiceId}">Voir la facture</a>`);
+      if (cur.invoiceId && canInv) $('#toinv', el).insertAdjacentHTML('afterend', `<a class="btn" href="#/doc/${cur.invoiceId}">Voir la facture</a>`);
     } else {
       $('#stockout', el)?.addEventListener('click', async () => {
         if (!confirm('Déduire du stock les produits de cette facture ?')) return;

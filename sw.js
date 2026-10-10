@@ -1,7 +1,7 @@
-const CACHE = 'gestpro-v7';
+const CACHE = 'gestpro-v8';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
-  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './facebook.js',
+  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './facebook.js',
   './logo.png', './icon-192.png', './icon-512.png'
 ];
 

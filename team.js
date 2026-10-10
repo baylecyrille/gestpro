@@ -1,6 +1,7 @@
 // Équipe (membres, habilitations) et planning : affectation de membres à des chantiers avec heures prévues / réalisées.
 import * as db from './db.js';
 import { e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import * as auth from './auth.js';
 
 export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
 const ROLE = Object.fromEntries(ROLES);
@@ -63,22 +64,39 @@ export function memberModal(m) {
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
     ${F('Coût horaire (€/h) – facultatif', 'rate', m.rate, { type: 'number', step: '0.01' })}
     ${F('Statut', 'active', m.active === false ? '0' : '1', { type: 'select', options: [['1', 'Actif'], ['0', 'Inactif']] })}
+    ${F('Profil d\'accès à l\'appli', 'access', m.access || '', { type: 'select', options: auth.PROFILE_OPTIONS })}
+    ${F(m.pinHash ? 'Nouveau code PIN (vide = inchangé)' : 'Code PIN (4 à 6 chiffres)', 'pin', '', { type: 'password', extra: 'inputmode="numeric" maxlength="6" autocomplete="new-password"' })}
+    <p class="muted full" id="accdesc" style="margin-top:-4px"></p>
     <div class="full"><span class="muted" style="font-size:12px">Habilitations / certificats (avec date d'expiration)</span><div id="habs">${(m.habs || []).map(habRow).join('')}</div>
       <button type="button" class="btn sm" id="addh">+ Habilitation</button><datalist id="habl">${HABS.map(h => `<option value="${e(h)}">`).join('')}</datalist></div>
     ${F('Note', 'note', m.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>`,
     async (o, f) => {
+      const pin = (o.pin || '').trim(); delete o.pin;
+      if (o.access && !m.pinHash && !pin) { alert('Définissez un code PIN pour donner un accès à ce membre.'); return false; }
+      if (pin && !/^\d{4,6}$/.test(pin)) { alert('Le code PIN doit comporter 4 à 6 chiffres.'); return false; }
+      m.id = m.id || db.uid();
+      const others = (await db.all('members')).filter(x => x.id !== m.id);
+      if (auth.isActive() && !others.some(x => x.access === 'admin' && x.pinHash && x.active !== false) && !(o.access === 'admin' && o.active !== '0')) { alert('Il doit rester au moins un administrateur actif avec un code PIN.'); return false; }
+      const firstAdmin = !auth.isActive() && o.access === 'admin';
+      if (o.access && pin) m.pinHash = await auth.hashPin(pin, m.id);
+      if (!o.access) delete m.pinHash;
       const habs = $$('.hab', f).map(r => ({ label: $('[data-h=label]', r).value.trim(), expiry: $('[data-h=expiry]', r).value })).filter(h => h.label);
       Object.assign(m, o, { habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate) });
-      await db.put('members', m); toast('Membre enregistré'); refresh();
+      await db.put('members', m);
+      if (firstAdmin && m.pinHash) auth.setUser(m.id); // active la protection sans verrouiller son auteur
+      toast('Membre enregistré'); refresh();
     },
     {
       del: isNew ? null : async () => {
+        if (auth.isActive() && m.access === 'admin' && !(await db.all('members')).some(x => x.id !== m.id && x.access === 'admin' && x.pinHash && x.active !== false)) { alert('Impossible : c\'est le seul administrateur.'); return; }
         const tasks = await db.all('tasks');
         if (tasks.some(t => t.memberId === m.id)) { m.active = false; await db.put('members', m); alert('Ce membre a des affectations : il est passé en « inactif » au lieu d\'être supprimé.'); }
         else await db.del('members', m.id);
         refresh();
       },
       onOpen: f => {
+        const ad = () => { const k = f.querySelector('[name=access]').value; $('#accdesc', f).textContent = k ? auth.PROFILES[k].desc : 'Ce membre n\'a pas d\'accès : il apparaît seulement dans le planning.'; };
+        f.querySelector('[name=access]').onchange = ad; ad();
         $('#addh', f).onclick = () => { $('#habs', f).insertAdjacentHTML('beforeend', habRow({})); };
         f.addEventListener('click', ev => ev.target.closest('[data-rmh]')?.closest('.hab').remove());
       }
@@ -139,15 +157,20 @@ function conflicts(rec, others) {
 
 /* ---------- Page Planning (semaine / mois / équipe) ---------- */
 export async function renderPlanning(el, tab = 'week', arg) {
-  const [sites, members, tasks] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks')]);
+  const [sites, members, tasks0] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks')]);
   const S = Object.fromEntries(sites.map(s => [s.id, s]));
-  const head = `<h2>Planning</h2>${tabs('#/planning', [['week', 'Semaine'], ['month', 'Mois'], ['team', 'Équipe']], tab)}`;
+  const seeAll = auth.can('planning.all'), edit = auth.can('planning.edit'), hoursOk = auth.can('planning.hours'), me = auth.currentUser();
+  const tasks = seeAll ? tasks0 : tasks0.filter(t => t.memberId === me?.id); // un compagnon ne voit que son planning
+  const TABS_ = [['week', 'Semaine'], ['month', 'Mois'], ...(auth.can('team') ? [['team', 'Équipe']] : [])];
+  const head = `<h2>${seeAll ? 'Planning' : 'Mon planning'}</h2>${tabs('#/planning', TABS_, tab)}`;
+  const hoursModal = t => modal('Mes heures', `<p><b>${e(S[t.siteId]?.name || '')}</b> · ${dateFr(t.start)}${t.end && t.end !== t.start ? ' → ' + dateFr(t.end) : ''} · ${plannedHours(t)} h prévues</p>${F('Heures réalisées (total)', 'done', t.done, { type: 'number', step: '0.25' })}`,
+    async o => { t.done = o.done === '' ? '' : num(o.done); await db.put('tasks', t); toast('Heures enregistrées'); refresh(); });
   const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}">${e(s.name)}<small>${num(t.hours)} h</small></button>` : ''; };
-  const act = members.filter(m => m.active !== false).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const act = members.filter(m => m.active !== false && (seeAll || m.id === me?.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 
   if (tab === 'team') {
     const soon = h => habState(h);
-    el.innerHTML = `${head}<div class="row"><span class="muted">${act.length} membre(s) actif(s)</span><span class="sp"></span><button class="btn primary" id="addm">+ Membre</button></div>
+    el.innerHTML = `${head}<div class="row"><span class="muted">${act.length} membre(s) actif(s)</span><span class="sp"></span>${auth.can('team.edit') ? '<button class="btn primary" id="addm">+ Membre</button>' : ''}</div>
       ${members.sort((a, b) => (b.active !== false) - (a.active !== false) || a.name.localeCompare(b.name, 'fr')).map(m => {
         const done = round2(tasks.filter(t => t.memberId === m.id && (t.start || '').slice(0, 7) === today().slice(0, 7)).reduce((a, t) => a + num(t.done), 0));
         return `<div class="item" data-m="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}><span class="avatar" style="background:${e(m.color)}">${e(initials(m.name))}</span><div class="main"><div class="t">${e(m.name)} <small class="muted">${e(ROLE[m.role] || '')}${m.active === false ? ' · inactif' : ''}</small></div>
@@ -155,8 +178,10 @@ export async function renderPlanning(el, tab = 'week', arg) {
           <div>${(m.habs || []).map(h => `<span class="chip ${soon(h)}">${e(h.label)}${h.expiry ? ' · ' + dateFr(h.expiry) : ''}</span>`).join('')}</div></div>
           <div class="r"><div class="s">ce mois</div><b>${done} h</b></div></div>`;
       }).join('') || '<div class="empty">Ajoutez les membres de l\'équipe (vous-même, ouvriers, apprentis, sous-traitants).</div>'}`;
-    $('#addm', el).onclick = () => memberModal();
-    $$('[data-m]', el).forEach(n => n.onclick = () => memberModal(members.find(m => m.id === n.dataset.m)));
+    if (auth.can('team.edit')) {
+      $('#addm', el).onclick = () => memberModal();
+      $$('[data-m]', el).forEach(n => n.onclick = () => memberModal(members.find(m => m.id === n.dataset.m)));
+    }
     return;
   }
 
@@ -167,13 +192,13 @@ export async function renderPlanning(el, tab = 'week', arg) {
     const nextM = ymd(new Date(y, mo, 1)).slice(0, 7), prevM = ymd(new Date(y, mo - 2, 1)).slice(0, 7);
     const cells = [];
     for (let i = 0; i < 42; i++) { const d = addDays(gridStart, i); if (i >= 35 && d.slice(0, 7) !== base) break; cells.push(d); }
-    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a><button class="btn primary" id="add">+ Affecter</button></div>
+    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a>${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>
       <div class="mgrid">${JOURS.map(j => `<div class="mh">${j}</div>`).join('')}${cells.map(d => {
         const day = tasks.filter(t => covers(t, d) && members.find(m => m.id === t.memberId));
         const bySite = {}; day.forEach(t => (bySite[t.siteId] ||= []).push(t));
         return `<div class="mc ${d.slice(0, 7) !== base ? 'out' : ''} ${d === today() ? 'today' : ''}" data-d="${d}"><div class="dn">${+d.slice(8)}</div>${Object.entries(bySite).map(([sid, l]) => S[sid] ? `<div class="mchip" style="background:${e(S[sid].color || '#2f7ad6')}" title="${e(S[sid].name)}">${e(S[sid].name)} <small>${l.map(t => initials(members.find(m => m.id === t.memberId)?.name)).join(' ')}</small></div>` : '').join('')}</div>`;
       }).join('')}</div>`;
-    $('#add', el).onclick = () => assignModal(null);
+    if (edit) $('#add', el).onclick = () => assignModal(null);
     $$('[data-d]', el).forEach(c => c.onclick = () => go(`#/planning/week/${c.dataset.d}`));
     return;
   }
@@ -183,7 +208,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(w0, i));
   const wn = Math.ceil(((parse(days[3]) - new Date(parse(days[3]).getFullYear(), 0, 1)) / 864e5 + 1) / 7);
   el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/week/${addDays(w0, -7)}">‹</a><b style="flex:1;text-align:center">Semaine ${wn} · ${dateFr(days[0])} – ${dateFr(days[6])}</b><a class="btn" href="#/planning/week/${addDays(w0, 7)}">›</a>
-    <a class="btn" href="#/planning/week">Aujourd'hui</a><button class="btn primary" id="add">+ Affecter</button></div>
+    <a class="btn" href="#/planning/week">Aujourd'hui</a>${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>
     ${act.length ? `<div class="wscroll"><table class="wtab"><thead><tr><th></th>${days.map((d, i) => `<th class="${d === today() ? 'today' : ''}">${JOURS[i]} ${+d.slice(8)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
       ${act.map(m => {
         let tot = 0;
@@ -192,21 +217,23 @@ export async function renderPlanning(el, tab = 'week', arg) {
           return `<td data-m="${m.id}" data-d="${d}" class="${h > DAY_MAX ? 'over' : ''}">${l.map(chip).join('')}${h > DAY_MAX ? '<span title="Plus de ' + DAY_MAX + ' h ce jour">⚠</span>' : ''}</td>`;
         }).join('');
         return `<tr><th class="who"><span class="avatar sm" style="background:${e(m.color)}">${e(initials(m.name))}</span> ${e(m.name)}</th>${tds}<td class="tot">${round2(tot)} h</td></tr>`;
-      }).join('')}</tbody></table></div><p class="muted">Touchez une case vide pour affecter, une pastille pour modifier / saisir les heures réalisées.</p>`
+      }).join('')}</tbody></table></div><p class="muted">${edit ? 'Touchez une case vide pour affecter, une pastille pour modifier / saisir les heures réalisées.' : hoursOk ? 'Touchez une de vos pastilles pour saisir vos heures réalisées.' : ''}</p>`
       : '<div class="empty">Aucun membre actif. <a href="#/planning/team">Ajouter l\'équipe</a></div>'}`;
-  $('#add', el).onclick = () => assignModal(null);
+  if (edit) $('#add', el).onclick = () => assignModal(null);
   $$('td[data-m]', el).forEach(td => td.onclick = ev => {
     const c = ev.target.closest('[data-t]');
-    if (c) assignModal(tasks.find(t => t.id === c.dataset.t)); else assignModal(null, { memberId: td.dataset.m, date: td.dataset.d });
+    const t = c && tasks.find(x => x.id === c.dataset.t);
+    if (t) { if (edit) assignModal(t); else if (hoursOk && t.memberId === me?.id) hoursModal(t); }
+    else if (edit) assignModal(null, { memberId: td.dataset.m, date: td.dataset.d });
   });
 }
 
 /* ---------- Bloc « Équipe & heures » d'une fiche chantier ---------- */
-export function siteTeamHtml(siteId, tasks, members) {
+export function siteTeamHtml(siteId, tasks, members, { edit = true, money = true } = {}) {
   const h = siteHours(siteId, tasks, members);
   return `<h3>Équipe &amp; heures</h3>
     ${h.rows.map(r => `<div class="item" data-mem="${r.member.id}"><span class="avatar sm" style="background:${e(r.member.color)}">${e(initials(r.member.name))}</span><div class="main"><div class="t">${e(r.member.name)}</div><div class="s">${e(ROLE[r.member.role] || '')}</div></div>
       <div class="r"><div>${r.done} h <small class="muted">/ ${r.planned} h prévues</small></div></div></div>`).join('') || '<p class="muted">Personne n\'est encore affecté.</p>'}
-    ${h.rows.length ? `<p class="muted">Total : <b>${h.done} h</b> réalisées sur ${h.planned} h prévues${h.cost ? ` · coût main-d'œuvre ${h.cost.toFixed(2).replace('.', ',')} €` : ''}</p>` : ''}
-    <button class="btn sm" id="assign">+ Affecter des membres</button> <a class="btn sm" href="#/planning/week">Voir le planning</a>`;
+    ${h.rows.length ? `<p class="muted">Total : <b>${h.done} h</b> réalisées sur ${h.planned} h prévues${h.cost && money ? ` · coût main-d'œuvre ${h.cost.toFixed(2).replace('.', ',')} €` : ''}</p>` : ''}
+    ${edit ? '<button class="btn sm" id="assign">+ Affecter des membres</button> ' : ''}${auth.can('planning') ? '<a class="btn sm" href="#/planning/week">Voir le planning</a>' : ''}`;
 }

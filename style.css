@@ -151,3 +151,6 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--logo)
 .mc .dn{font-size:11px;color:var(--mut);text-align:right}
 .mchip{border-radius:4px;color:#fff;font-size:10px;line-height:1.2;padding:1px 3px;margin-bottom:2px;overflow:hidden}
 .mchip small{opacity:.85}
+
+body.locked nav#nav{display:none}
+nav#nav a[hidden]{display:none}

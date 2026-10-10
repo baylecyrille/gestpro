@@ -9,6 +9,7 @@ import { renderSites, renderSite, siteStats, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
+import * as auth from './auth.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -171,6 +172,10 @@ async function renderSettings(el) {
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
     <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
   </div><button class="btn primary">Enregistrer</button></form>
+  <div class="card"><h3 style="margin-top:0">Accès des membres</h3>
+    <p>${auth.isActive() ? `Protection <b>active</b> : l'appli demande un nom et un code PIN. Connecté : <b>${e(auth.currentUser()?.name || '')}</b> (${e(auth.PROFILES[auth.currentUser()?.access]?.label || '')}).` : 'Protection <b>inactive</b> : tout le monde a tous les droits sur cet appareil.'}</p>
+    <p class="muted">Donnez un profil et un code PIN à chaque membre dans <a href="#/planning/team">Planning › Équipe</a>. La protection démarre dès qu'un administrateur a un code PIN. C'est un verrouillage d'usage : il masque ce qui n'est pas autorisé, mais ne protège pas un accès direct à votre feuille Google Sheets.</p>
+    ${auth.isActive() ? '<div class="row"><button class="btn" id="logout">Changer d\'utilisateur</button><button class="btn danger" id="noauth">Désactiver la protection</button></div>' : ''}</div>
   <div class="card"><h3 style="margin-top:0">Scanner de codes-barres</h3>
     <p class="muted">Si l'image est floue, ouvrez le scanner et changez de caméra (⟳ ou liste) : le choix est mémorisé sur cet appareil. Le bouton ◎ relance la mise au point, le curseur règle le zoom.</p>
     <p id="camstat"></p><div class="row"><button type="button" class="btn primary" id="camtest">Tester / choisir la caméra</button><button type="button" class="btn" id="camreset">Caméra automatique</button></div></div>
@@ -255,6 +260,12 @@ async function renderSettings(el) {
     try { await db.importAll(JSON.parse(await readFileText(f))); toast('Données restaurées'); refresh(); } catch (err) { alert(err.message); }
   };
   $('#inst', el)?.addEventListener('click', () => installEvt.prompt());
+  $('#logout', el)?.addEventListener('click', () => { auth.logout(); location.hash = '#/dashboard'; route(); });
+  $('#noauth', el)?.addEventListener('click', async () => {
+    if (!confirm('Désactiver les profils et codes PIN pour tous les membres ? Les fiches sont conservées.')) return;
+    for (const m of await db.all('members')) { delete m.pinHash; m.access = ''; await db.put('members', m); }
+    toast('Protection désactivée'); route();
+  });
 }
 
 /* ---------- Routeur ---------- */
@@ -263,8 +274,51 @@ const routes = {
   contacts: renderContacts, facebook: renderFacebook, settings: renderSettings
 };
 
+/* ---------- Accès : écran de connexion, menus selon le profil ---------- */
+function showLogin() {
+  const el = $('#view');
+  const cands = auth.loginCandidates();
+  const initials = n => n.split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase();
+  el.innerHTML = `<div class="card" style="max-width:420px;margin:30px auto"><h2 style="margin-top:0">Qui êtes-vous ?</h2>
+    <div id="who">${cands.map(m => `<button class="item" data-id="${m.id}" style="width:100%;text-align:left;font:inherit"><span class="avatar" style="background:${e(m.color || '#2f7ad6')}">${e(initials(m.name))}</span><div class="main"><div class="t">${e(m.name)}</div><div class="s">${e(auth.PROFILES[m.access]?.label || '')}</div></div></button>`).join('')}</div>
+    <form id="pinf" hidden><p><b id="pname"></b></p><label class="f"><span>Code PIN</span><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" required></label>
+      <div class="row"><button class="btn primary">Entrer</button><button type="button" class="btn ghost" id="back">Changer</button></div><p id="perr" class="muted" style="color:var(--bad)"></p></form>
+    <p class="muted" style="margin-bottom:0"><a href="#" id="forgot">Code oublié ?</a></p></div>`;
+  let sel = null;
+  $('#who', el).onclick = ev => {
+    const b = ev.target.closest('[data-id]'); if (!b) return;
+    sel = b.dataset.id; $('#who', el).hidden = true; $('#pinf', el).hidden = false; $('#pname', el).textContent = cands.find(m => m.id === sel).name; $('#pin', el).focus();
+  };
+  $('#back', el).onclick = () => { $('#pinf', el).hidden = true; $('#who', el).hidden = false; $('#pin', el).value = ''; $('#perr', el).textContent = ''; };
+  $('#pinf', el).onsubmit = async ev => {
+    ev.preventDefault();
+    if (await auth.login(sel, $('#pin', el).value.trim())) { location.hash = auth.home(); route(); }
+    else { $('#perr', el).textContent = 'Code incorrect.'; $('#pin', el).value = ''; }
+  };
+  $('#forgot', el).onclick = async ev => {
+    ev.preventDefault();
+    if (prompt('Cela désactive TOUS les accès par profil et codes PIN (les fiches membres sont conservées). Tapez REINITIALISER pour confirmer :') !== 'REINITIALISER') return;
+    for (const m of await db.all('members')) { delete m.pinHash; m.access = ''; await db.put('members', m); }
+    toast('Accès réinitialisés'); route();
+  };
+}
+
+function applyAccess() {
+  const ok = { dashboard: auth.can('dashboard'), sites: auth.can('sites'), planning: auth.can('planning'), stock: auth.can('stock'), docs: auth.can('quotes') || auth.can('invoices') || auth.can('credits'), contacts: auth.can('contacts'), facebook: auth.can('facebook'), settings: auth.can('settings') };
+  $$('#nav a').forEach(a => (a.hidden = ok[a.dataset.r] === false));
+  const u = $('#user'), me = auth.currentUser();
+  u.hidden = !me; if (me) u.textContent = '👤 ' + me.name.split(' ')[0];
+}
+$('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.logout(); route(); } };
+
 async function route() {
+  const { active, user } = await auth.load();
+  document.body.classList.toggle('locked', active && !user);
+  if (active && !user) { $('#user').hidden = true; return showLogin(); }
+  applyAccess();
   const [, name = 'dashboard', a, b] = location.hash.split('/');
+  const redirect = auth.guard(name, a);
+  if (redirect) { location.hash = redirect; return; }
   const key = name === 'doc' ? 'docs' : name === 'site' ? 'sites' : name;
   $$('#nav a').forEach(x => x.classList.toggle('on', x.dataset.r === key));
   const el = $('#view');
