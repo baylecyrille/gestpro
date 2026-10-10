@@ -1,6 +1,6 @@
 // Équipe (membres, habilitations) et planning : affectation de membres à des chantiers avec heures prévues / réalisées.
 import * as db from './db.js';
-import { e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import { e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import * as auth from './auth.js';
 
 export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
@@ -60,7 +60,7 @@ export function memberModal(m) {
   modal(isNew ? 'Nouveau membre' : 'Fiche membre',
     `<div class="cols">${F('Nom et prénom', 'name', m.name, { req: true, cls: 'full' })}
     ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
-    <label class="f"><span>Couleur (planning)</span><select name="color">${COLORS.map(c => `<option value="${c}" ${c === m.color ? 'selected' : ''} style="color:${c}">● ${c}</option>`).join('')}</select></label>
+    ${colorField('Couleur (planning)', 'color', m.color, 'full')}
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
     ${F('Coût horaire (€/h) – facultatif', 'rate', m.rate, { type: 'number', step: '0.01' })}
     ${F('Statut', 'active', m.active === false ? '0' : '1', { type: 'select', options: [['1', 'Actif'], ['0', 'Inactif']] })}
@@ -95,6 +95,7 @@ export function memberModal(m) {
         refresh();
       },
       onOpen: f => {
+        bindColors(f);
         const ad = () => { const k = f.querySelector('[name=access]').value; $('#accdesc', f).textContent = k ? auth.PROFILES[k].desc : 'Ce membre n\'a pas d\'accès : il apparaît seulement dans le planning.'; };
         f.querySelector('[name=access]').onchange = ad; ad();
         $('#addh', f).onclick = () => { $('#habs', f).insertAdjacentHTML('beforeend', habRow({})); };

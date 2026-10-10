@@ -1,6 +1,6 @@
 // Chantiers : fiche centrale qui relie client, devis, factures, avoirs et règlements.
 import * as db from './db.js';
-import { e, eur, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
@@ -127,7 +127,7 @@ function siteModal(site, clients, isNew) {
     ${F('Adresse des travaux', 'address', site.address, { type: 'textarea', rows: 2, cls: 'full' })}
     ${F('Début', 'start', site.start, { type: 'date' })}${F('Fin prévue', 'end', site.end, { type: 'date' })}
     ${F('Statut', 'status', site.status, { type: 'select', options: Object.entries(SS) })}
-    <label class="f"><span>Couleur (planning)</span><select name="color">${COLORS.map(c => `<option value="${c}" ${c === site.color ? 'selected' : ''} style="color:${c}">● ${c}</option>`).join('')}</select></label>
+    ${colorField('Couleur (planning)', 'color', site.color)}
     ${F('Notes', 'note', site.note, { type: 'textarea', rows: 3, cls: 'full' })}</div>
     ${clients.length ? '' : '<p class="muted">Aucun client : créez-en un dans Contacts, ou directement depuis un devis.</p>'}`,
     async o => {
@@ -135,5 +135,6 @@ function siteModal(site, clients, isNew) {
       Object.assign(site, o); const saved = await db.put('sites', site);
       toast('Chantier enregistré'); isNew ? go('#/site/' + saved.id) : refresh();
     });
+  bindColors($('#modal'));
   if (isNew) $('#modal').addEventListener('close', () => { if (location.hash === '#/site/new') go('#/sites'); }, { once: true });
 }

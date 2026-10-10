@@ -254,3 +254,25 @@ export async function scan(onCode) {
     inp.focus();
   }
 }
+
+/* Sélecteur de couleur : pastilles nommées + couleur personnalisée */
+export const COLOR_NAMES = [['#2f7ad6', 'Bleu'], ['#0f9aa8', 'Turquoise'], ['#1b8a4b', 'Vert'], ['#8bc34a', 'Vert clair'], ['#f2c200', 'Jaune'], ['#c77700', 'Orange'], ['#c62f2f', 'Rouge'], ['#d6479b', 'Rose'], ['#7b4fd0', 'Violet'], ['#8d5a3b', 'Marron'], ['#555d6b', 'Gris'], ['#111827', 'Noir']];
+export const colorName = c => (COLOR_NAMES.find(x => x[0].toLowerCase() === String(c).toLowerCase()) || [0, 'Personnalisée'])[1];
+export function colorField(label, name, val, cls = '') {
+  val = val || COLOR_NAMES[0][0];
+  return `<div class="f ${cls} colorf"><span>${label} : <b data-cname>${e(colorName(val))}</b></span><input type="hidden" name="${name}" value="${e(val)}">
+    <div class="swatches">${COLOR_NAMES.map(([c, n]) => `<button type="button" class="sw ${c.toLowerCase() === val.toLowerCase() ? 'on' : ''}" data-c="${c}" title="${n}" aria-label="${n}" style="background:${c}"></button>`).join('')}
+    <label class="sw custom ${COLOR_NAMES.some(x => x[0].toLowerCase() === val.toLowerCase()) ? '' : 'on'}" title="Couleur personnalisée" style="${COLOR_NAMES.some(x => x[0].toLowerCase() === val.toLowerCase()) ? '' : 'background:' + e(val)}"><input type="color" value="${e(val)}" aria-label="Couleur personnalisée"><i>+</i></label></div></div>`;
+}
+export function bindColors(f) {
+  $$('.colorf', f).forEach(box => {
+    const hid = $('input[type=hidden]', box), pick = $('input[type=color]', box), custom = $('.custom', box);
+    const set = (c, isCustom) => {
+      hid.value = c; $('[data-cname]', box).textContent = colorName(c);
+      $$('.sw', box).forEach(b => b.classList.remove('on'));
+      if (isCustom) { custom.classList.add('on'); custom.style.background = c; } else $(`.sw[data-c="${c}"]`, box)?.classList.add('on');
+    };
+    box.addEventListener('click', ev => { const b = ev.target.closest('button.sw'); if (b) { set(b.dataset.c, false); pick.value = b.dataset.c; } });
+    pick.addEventListener('input', () => set(pick.value, true));
+  });
+}
