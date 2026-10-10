@@ -79,6 +79,11 @@ export async function renderSite(el, id) {
   const client = contacts.find(c => c.id === site.clientId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
+  const prods = await db.all('products');
+  const outs = {};
+  for (const m of moves) if (m.siteId === site.id && m.type === 'out') outs[m.productId] = (outs[m.productId] || 0) + num(m.qty);
+  const matRows = Object.entries(outs).map(([pid, q]) => { const p = prods.find(x => x.id === pid); return `<div class="item"><div class="main"><div class="t">${e(p?.name || 'Produit supprimé')}</div></div><div class="r"><b>${q} ${e(p?.unit || '')}</b></div></div>`; });
+  const matHtml = auth.can('stock') || money ? `<h3>Matériel sorti du stock</h3>${matRows.join('') || '<p class="muted">Aucune sortie pour ce chantier.</p>'}${auth.can('stock') ? '<a class="btn sm" href="#/stock/moves">🏗 Sortie / mouvements</a>' : ''}` : '';
   const row = d => {
     const t = totals(d);
     const badge = d.type === 'invoice' || d.type === 'credit' ? invBadge(d, payments) : `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${{ draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' }[d.status] || ''}</span>`;
@@ -99,6 +104,7 @@ export async function renderSite(el, id) {
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}` : ''}
     ${siteTeamHtml(site.id, tasks, members, { edit: canAssign, money })}
+    ${matHtml}
     ${money ? `<h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">
       <div><span>${mg.previsionnel ? 'Marché signé HT (rien de facturé)' : 'Facturé HT (net des avoirs)'}</span><b>${eur(mg.base)}</b></div>
       <div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>

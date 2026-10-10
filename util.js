@@ -164,7 +164,7 @@ export async function scan(onCode) {
       <button class="btn sm" data-torch hidden>🔦</button>
       <input type="range" data-zoom hidden title="Zoom"></div>
     <div class="sbar"><input data-code placeholder="ou saisir / douchette…" inputmode="text" autocomplete="off"><button class="btn primary" data-ok>OK</button><button class="btn" data-x>Fermer</button></div>`;
-  document.body.append(ov);
+  (document.querySelector('dialog[open]') || document.body).append(ov); // dans la fenêtre ouverte, sinon elle masquerait le scanner
   let stream, stopped = false, reader, caps = {}, torchOn = false, detectorStarted = false;
   const video = $('video', ov), hint = $('.hint', ov), sel = $('[data-cam]', ov);
   const stopStream = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };

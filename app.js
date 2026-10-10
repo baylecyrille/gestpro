@@ -348,6 +348,13 @@ sheets.setOnPulled(() => {
 (async () => {
   await ensureDefaultLocation();
   getS().then(applyWallpaper);
+  // Nouvel appareil : sans membres locaux, on récupère d'abord les profils (6 s max) pour ne pas afficher l'appli non protégée
+  try {
+    if (sheets.configured() && navigator.onLine && !(await db.all('members')).length) {
+      $('#view').innerHTML = '<div class="card">Chargement…</div>';
+      await Promise.race([sheets.sync().catch(() => {}), new Promise(r => setTimeout(r, 6000))]);
+    }
+  } catch { /* ignore */ }
   sheets.init();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   route();

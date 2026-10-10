@@ -68,6 +68,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     <button class="btn primary" id="scanb">▦ Scanner</button>
     <button class="btn" id="add">+ Produit</button>
     <button class="btn" id="imp">Importer</button></div>
+    <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button></div>
     <label class="row"><input type="checkbox" id="low"> <span>Seulement stock bas / épuisé</span></label>
     <div id="list"></div>`;
   const list = $('#list', body);
@@ -95,6 +96,8 @@ function productsTab(body, products, locs, contacts, photos = {}) {
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);
   $('#scanb', body).onclick = lookupScan;
+  $('#recv', body).onclick = () => receptionModal(products, locs);
+  $('#sout', body).onclick = () => siteOutModal(products, locs);
 }
 
 export function productModal(p, locs, contacts, products, preset = {}) {
@@ -231,15 +234,18 @@ export async function moveModal(products, locs, preset = {}) {
 }
 
 async function movesTab(body, products, locs) {
+  const SN = Object.fromEntries((await db.all('sites')).map(x => [x.id, x.name]));
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   const moves = (await db.all('moves')).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 150);
   const lbl = { in: 'Entrée', out: 'Sortie', transfer: 'Transfert', adjust: 'Inventaire' };
-  body.innerHTML = `<div class="row"><button class="btn primary" id="nm">+ Mouvement</button></div>` +
+  body.innerHTML = `<div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="nm">+ Mouvement</button></div>` +
     (moves.map(m => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(P[m.productId]?.name || '(produit supprimé)')}</div>
-      <div class="s">${dateFr(m.date)} · ${lbl[m.type]} ${m.type === 'transfer' ? e(locLabel(L[m.from])) + ' → ' + e(locLabel(L[m.to])) : e(locLabel(L[m.to || m.from]))}${m.note ? ' · ' + e(m.note) : ''}</div></div>
+      <div class="s">${dateFr(m.date)} · ${lbl[m.type]} ${m.type === 'transfer' ? e(locLabel(L[m.from])) + ' → ' + e(locLabel(L[m.to])) : e(locLabel(L[m.to || m.from]))}${m.siteId && SN[m.siteId] ? ' · chantier ' + e(SN[m.siteId]) : ''}${m.note ? ' · ' + e(m.note) : ''}</div></div>
       <div class="r"><span class="chip ${m.type === 'out' ? 'warn' : 'ok'}">${m.type === 'out' ? '−' : m.type === 'in' ? '+' : ''}${m.qty}</span></div></div>`).join('') || '<div class="empty">Aucun mouvement.</div>');
   $('#nm', body).onclick = () => moveModal(products, locs);
+  $('#recv', body).onclick = () => receptionModal(products, locs);
+  $('#sout', body).onclick = () => siteOutModal(products, locs);
 }
 
 /* ---------- Emplacements ---------- */
@@ -345,4 +351,106 @@ export function importModal(products) {
       };
     }
   });
+}
+
+/* ---------- Réception de colis et sorties pour un chantier ---------- */
+/* Éditeur de lignes (produit + quantité [+ prix]) avec ajout par scan */
+function lineEditor(f, products, lines, { price = false } = {}) {
+  const P = Object.fromEntries(products.map(p => [p.id, p]));
+  const box = $('#ll', f);
+  const draw = () => {
+    box.innerHTML = lines.map((l, i) => `<div class="row ll" data-i="${i}" style="margin-bottom:6px">
+      <select data-k="pid" style="flex:3;min-width:150px"><option value="">— produit —</option>${[...products].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => `<option value="${p.id}" ${p.id === l.pid ? 'selected' : ''}>${e(p.name)}</option>`).join('')}</select>
+      <input data-k="qty" type="number" step="any" inputmode="decimal" value="${l.qty ?? ''}" placeholder="Qté" style="flex:1;min-width:70px">
+      ${price ? `<input data-k="price" type="number" step="0.01" inputmode="decimal" value="${l.price ?? ''}" placeholder="Prix HT" style="flex:1;min-width:80px">` : ''}
+      <button type="button" class="btn sm" data-rm>✕</button>
+      ${l.pid && P[l.pid] ? `<small class="muted" style="flex-basis:100%">${e(P[l.pid].unit || 'u')} · en stock : ${total(P[l.pid])}${l.note ? ' · ' + e(l.note) : ''}</small>` : ''}</div>`).join('') || '<p class="muted">Aucune ligne : scannez un produit ou ajoutez une ligne.</p>';
+  };
+  box.addEventListener('input', ev => { const r = ev.target.closest('.ll'); if (r && ev.target.dataset.k !== 'pid') lines[+r.dataset.i][ev.target.dataset.k] = ev.target.value; });
+  box.addEventListener('change', ev => {
+    const r = ev.target.closest('.ll'); if (!r || ev.target.dataset.k !== 'pid') return;
+    const l = lines[+r.dataset.i]; l.pid = ev.target.value; if (price && P[l.pid]) l.price = P[l.pid].buy ?? ''; draw();
+  });
+  box.addEventListener('click', ev => { const b = ev.target.closest('[data-rm]'); if (b) { lines.splice(+b.closest('.ll').dataset.i, 1); draw(); } });
+  const add = (p, qty = 1) => {
+    const ex = lines.find(l => l.pid === p.id);
+    if (ex) ex.qty = num(ex.qty) + qty; else lines.push({ pid: p.id, qty, price: price ? (p.buy ?? '') : undefined });
+    draw();
+  };
+  $('[data-addl]', f).onclick = () => { lines.push({ pid: '', qty: '', price: price ? '' : undefined }); draw(); };
+  $('[data-scanl]', f).onclick = () => scan(c => { const p = products.find(x => x.barcode === c || x.ref === c); if (p) { add(p); toast(`${p.name} ajouté`); } else toast('Code inconnu'); });
+  draw();
+  return { draw, add };
+}
+
+export async function receptionModal(products, locs) {
+  if (!products.length) return alert('Créez d\'abord des produits (ou importez-les).');
+  const lines = [];
+  const lopt = locs.map(l => [l.id, locLabel(l)]);
+  modal('📦 Réception de colis',
+    `<div class="cols">${F('Fournisseur / n° de bon de livraison', 'bl', '', { cls: 'full', ph: 'ex : Point P – BL 45872' })}
+    ${F('Ranger dans', 'to', locs[0]?.id, { type: 'select', options: lopt, cls: 'full' })}</div>
+    <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button></div>
+    <div id="ll"></div>
+    <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible).</p>`,
+    async o => {
+      const ok = lines.filter(l => l.pid && num(l.qty) > 0);
+      if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
+      for (const l of ok) {
+        const p = products.find(x => x.id === l.pid);
+        await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, unit: l.price === '' || l.price === undefined ? num(p.buy) : num(l.price) });
+      }
+      toast(`${ok.length} produit(s) reçu(s)`); refresh();
+    }, { wide: true, submitLabel: 'Valider la réception', onOpen: f => lineEditor(f, products, lines, { price: true }) });
+}
+
+export async function siteOutModal(products, locs, preset = {}) {
+  const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  if (!sites.length) { toast('Créez d\'abord un chantier'); return go('#/sites'); }
+  if (!products.length) return alert('Aucun produit en stock.');
+  const [docs, moves] = await Promise.all([db.all('documents'), db.all('moves')]);
+  const lines = [];
+  modal('🏗 Sortie pour un chantier',
+    `<div class="cols"><label class="f full"><span>Chantier</span><select name="siteId">${sites.map(s => `<option value="${s.id}" ${s.id === preset.siteId ? 'selected' : ''}>${e(s.name)}</option>`).join('')}</select></label>
+    ${F('Note (facultatif)', 'note', '', { cls: 'full', ph: 'ex : pour la pose de la terrasse' })}</div>
+    <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button><button type="button" class="btn" id="needs">Reprendre les besoins du devis</button></div>
+    <div id="ll"></div>
+    <p class="muted">La sortie est prélevée automatiquement sur les emplacements les mieux fournis.</p>`,
+    async (o, f) => {
+      const ok = lines.filter(l => l.pid && num(l.qty) > 0);
+      if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
+      const need = {}; ok.forEach(l => (need[l.pid] = (need[l.pid] || 0) + num(l.qty)));
+      for (const [pid, q] of Object.entries(need)) {
+        const p = products.find(x => x.id === pid);
+        if (total(p) < q - 1e-9) { alert(`Stock insuffisant pour « ${p.name} » : ${total(p)} en stock, ${q} demandé(s).`); return false; }
+      }
+      const sname = sites.find(s => s.id === o.siteId)?.name || '';
+      let n = 0;
+      for (const l of ok) {
+        const p = products.find(x => x.id === l.pid); let rest = num(l.qty);
+        for (const [lid, q] of Object.entries(p.stock || {}).filter(([, q]) => q > 0).sort((a, b) => b[1] - a[1])) {
+          if (rest <= 1e-9) break;
+          const take = Math.min(q, rest);
+          await recordMove(p, { type: 'out', from: lid, qty: take, unit: num(p.buy), siteId: o.siteId, note: o.note || `Chantier ${sname}` }); rest -= take; n++;
+        }
+      }
+      toast(`${ok.length} produit(s) sorti(s) pour ${sname}`); refresh();
+    }, {
+      wide: true, submitLabel: 'Valider la sortie',
+      onOpen: f => {
+        const ed = lineEditor(f, products, lines);
+        // besoins = lignes (liées au stock) des devis acceptés / facturés du chantier, moins ce qui est déjà sorti
+        $('#needs', f).onclick = () => {
+          const sid = f.elements.siteId.value, want = {};
+          docs.filter(d => d.type === 'quote' && d.siteId === sid && ['accepted', 'invoiced'].includes(d.status)).forEach(d => d.lines.forEach(l => { if (l.pid) want[l.pid] = (want[l.pid] || 0) + num(l.qty); }));
+          moves.filter(m => m.siteId === sid && m.type === 'out').forEach(m => { if (want[m.productId] !== undefined) want[m.productId] -= num(m.qty); });
+          let n = 0;
+          for (const [pid, q] of Object.entries(want)) {
+            const p = products.find(x => x.id === pid);
+            if (p && q > 1e-9 && !lines.some(l => l.pid === pid)) { lines.push({ pid, qty: q, note: 'selon devis' }); n++; }
+          }
+          ed.draw(); toast(n ? `${n} besoin(s) repris du devis` : 'Aucun besoin restant (ou devis sans produit du stock)');
+        };
+      }
+    });
 }

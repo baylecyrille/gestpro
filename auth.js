@@ -34,7 +34,7 @@ export async function hashPin(pin, salt) {
 export async function load() {
   members = await db.all('members');
   active = members.some(m => m.access === 'admin' && m.pinHash && m.active !== false);
-  let id = ''; try { id = localStorage.getItem(KEY) || ''; } catch { /* ignore */ }
+  const id = getId();
   user = active ? members.find(m => m.id === id && m.access && m.pinHash && m.active !== false) || null : null;
   return { active, user };
 }
@@ -46,8 +46,11 @@ export function can(f) {
   const k = profileKey(); if (!k) return false;
   const c = PROFILES[k]?.can; return c === '*' || (Array.isArray(c) && c.includes(f));
 }
-export const setUser = id => { try { localStorage.setItem(KEY, id); } catch { /* ignore */ } };
-export const logout = () => { try { localStorage.removeItem(KEY); } catch { /* ignore */ } user = null; };
+/* Session : propre à l'onglet / au lancement de l'appli (sessionStorage), donc l'écran de connexion revient à chaque ouverture */
+let memId = '';
+function getId() { try { return sessionStorage.getItem(KEY) || memId; } catch { return memId; } }
+export const setUser = id => { memId = id; try { sessionStorage.setItem(KEY, id); } catch { /* ignore */ } };
+export const logout = () => { memId = ''; try { sessionStorage.removeItem(KEY); localStorage.removeItem(KEY); } catch { /* ignore */ } user = null; };
 
 export async function login(id, pin) {
   const m = members.find(x => x.id === id);
