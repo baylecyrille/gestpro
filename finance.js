@@ -3,9 +3,14 @@ import { num, round2, today } from './util.js';
 import { totals } from './docs.js';
 import { addDays } from './team.js';
 
-export const PERIODS = [['month', 'Ce mois'], ['quarter', 'Ce trimestre'], ['year', 'Cette année'], ['lastyear', 'Année dernière']];
+export const PERIODS = [['d30', '30 derniers jours'], ['m3', '3 derniers mois'], ['y1', '1 an (12 derniers mois)'], ['custom', 'Date à date…'], ['month', 'Ce mois'], ['quarter', 'Ce trimestre'], ['year', 'Cette année'], ['lastyear', 'Année dernière']];
 
-export function periodRange(key, ref = today()) {
+const shift = (iso, dd, dm, dy) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() + dy); d.setUTCMonth(d.getUTCMonth() + dm); d.setUTCDate(d.getUTCDate() + dd); return d.toISOString().slice(0, 10); };
+export function periodRange(key, ref = today(), custom = {}) {
+  if (key === 'd30') return { from: shift(ref, -29, 0, 0), to: ref };
+  if (key === 'm3') return { from: shift(ref, 1, -3, 0), to: ref };
+  if (key === 'y1') return { from: shift(ref, 1, 0, -1), to: ref };
+  if (key === 'custom') return { from: custom.from || '1900-01-01', to: custom.to || ref };
   const y = +ref.slice(0, 4), m = +ref.slice(5, 7), p = n => String(n).padStart(2, '0');
   if (key === 'quarter') { const q0 = Math.floor((m - 1) / 3) * 3 + 1; return { from: `${y}-${p(q0)}-01`, to: `${y}-${p(q0 + 2)}-31` }; }
   if (key === 'year') return { from: `${y}-01-01`, to: `${y}-12-31` };

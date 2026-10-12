@@ -13,7 +13,7 @@ const QS = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused:
 const IS = { draft: 'Brouillon', pending: 'En attente', sent: 'Envoyée', paid: 'Réglée' };
 const normStatus = d => { if (d.type === 'invoice' && d.status === 'issued') d.status = 'pending'; return d; };
 const CS = { draft: 'Brouillon', issued: 'Émis' };
-const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte bleue (terminal externe)'], ['virement', 'Virement'], ['autre', 'Autre'], ['avoir', 'Avoir (imputation)']];
+const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte bleue'], ['virement', 'Virement'], ['autre', 'Autre'], ['avoir', 'Avoir (imputation)']];
 const REAL_METHODS = METHODS.filter(m => m[0] !== 'avoir');
 const TVAS = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
 
@@ -361,6 +361,7 @@ async function printDoc(doc) {
     <tr class="t"><td colspan="4">${isC ? 'Total TTC de l\'avoir' : 'Total TTC'}</td><td class="n">${eur(t.ttc)}</td></tr>
     ${used ? `<tr><td colspan="4">${isC ? 'Déjà déduit / remboursé' : 'Déjà réglé'}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${isC ? 'Reste à votre crédit' : 'Reste à payer'}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     </tbody></table>
+    ${isQ ? `<div class="pay"><b>Moyens de paiement acceptés :</b> ${REAL_METHODS.filter(m => m[0] !== 'autre').map(m => e(m[1])).join(', ')}.</div>` : ''}
     ${isC ? `<div class="pay"><b>Avoir</b> – à déduire de votre prochaine facture ou remboursé.${doc.note ? '<br>Motif : ' + e(doc.note) : ''}</div>` : `<div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
     <div class="sig"><div><b>${isQ ? 'Bon pour accord – date et signature du client' : 'Signature Entrepreneur'}</b><div style="height:60px"></div></div>
     <div>${S.iban && !isC ? `<b><u>Vous pouvez régler cette facture par virement</u></b><br><b>${e(S.company)}</b><br><b>IBAN</b> : ${e(S.iban)}<br><b>Code BIC</b> : ${e(S.bic)}` : ''}</div></div></div>`;

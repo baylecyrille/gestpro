@@ -72,9 +72,10 @@ async function renderContacts(el, tab = 'client') {
 /* ---------- Tableau de bord ---------- */
 async function renderDashboard(el) {
   const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves')]);
-  let per = 'month'; try { per = localStorage.getItem('gp_period') || 'month'; } catch { /* ignore */ }
-  if (!PERIODS.some(p => p[0] === per)) per = 'month';
-  const sm = summary(periodRange(per), docs, payments, moves, products);
+  let per = 'd30', pc = {}; try { per = localStorage.getItem('gp_period') || 'd30'; pc = { from: localStorage.getItem('gp_pfrom') || '', to: localStorage.getItem('gp_pto') || '' }; } catch { /* ignore */ }
+  if (!PERIODS.some(p => p[0] === per)) per = 'd30';
+  const range = periodRange(per, today(), pc);
+  const sm = summary(range, docs, payments, moves, products);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
   const invoices = docs.filter(d => d.type === 'invoice' && d.status !== 'draft');
@@ -116,6 +117,10 @@ async function renderDashboard(el) {
     return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div></div>
       <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
 
+  // chantiers en retard : date de fin dépassée et chantier encore ouvert
+  const lateSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status) && x.end && x.end < today()).sort((a, b) => a.end.localeCompare(b.end));
+  const lateHtml = lateSites.length ? `<h3>Chantiers en retard</h3>${lateSites.slice(0, 8).map(x => `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · fin prévue le ${dateFr(x.end)}</div></div><span class="chip bad">${Math.floor((Date.parse(today()) - Date.parse(x.end)) / 864e5)} j de retard</span></a>`).join('')}` : '';
+
   // planning des 7 prochains jours
   const days = weekDays(today());
   const JN = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
@@ -135,13 +140,8 @@ async function renderDashboard(el) {
   const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
   el.innerHTML = `<h2>Bonjour 👋${first ? ' ' + e(first) : ''}</h2>
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
-    <div class="grid">
-      <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC</small></a>
-      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a>
-      <a class="kpi" href="#/sites"><small>Chantiers ouverts</small><b>${sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).length}</b></a>
-      <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
-      <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>
     <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    ${per === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" id="pfrom" value="${e(pc.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" id="pto" value="${e(pc.to)}"></label></div>` : `<p class="muted" style="margin:0">Du ${dateFr(range.from)} au ${dateFr(range.to)}</p>`}
     <div class="grid">
       <div class="kpi"><small>CA facturé HT (net d'avoirs)</small><b>${eur(sm.ca)}</b><small>${sm.nbFact} facture(s)</small></div>
       <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b></div>
@@ -156,7 +156,17 @@ async function renderDashboard(el) {
     ${habAlerts.length ? `<h3>Habilitations à renouveler</h3>${habAlerts.map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.m.name)}</div><div class="s">${e(x.h.label)}</div></div><span class="chip ${x.st}">${x.st === 'bad' ? 'expirée le ' : 'expire le '}${dateFr(x.h.expiry)}</span></div>`).join('')}` : ''}
     ${unpaidList.length ? `<h3>Factures à encaisser</h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
     ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
-    ${startCard}`;
+    ${lateHtml}
+    ${startCard}
+    <h3>En un coup d'œil</h3><div class="grid">
+      <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC</small></a>
+      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a>
+      <a class="kpi" href="#/sites"><small>Chantiers ouverts</small><b>${sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).length}</b></a>
+      <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
+      <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>`;
+  const sv = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
+  $('#pfrom', el)?.addEventListener('change', ev => { sv('gp_pfrom', ev.target.value); refresh(); });
+  $('#pto', el)?.addEventListener('change', ev => { sv('gp_pto', ev.target.value); refresh(); });
   $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
   $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
 }

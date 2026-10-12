@@ -79,7 +79,9 @@ dialog::backdrop{background:#0006}
 .bar i{display:block;height:100%;background:var(--ok)}
 /* impression */
 #printarea{display:none}
-.sheet{font:12.5px/1.35 Georgia,'Times New Roman',serif;color:#000;width:190mm;margin:0 auto}
+.sheet{font:12.5px/1.35 Georgia,'Times New Roman',serif;color:#000;width:100%;max-width:186mm;margin:0 auto;box-sizing:border-box}
+#printarea{padding:0}
+.sheet tr{page-break-inside:avoid}
 .sheet .hd{display:flex;justify-content:space-between;gap:16px}
 .sheet .hd>div{flex:1}
 .sheet .co{font-family:Arial,sans-serif}
@@ -100,7 +102,7 @@ dialog::backdrop{background:#0006}
  body{background:#fff;padding:0}
  body>*:not(#printarea){display:none!important}
  #printarea{display:block}
- @page{size:A4;margin:10mm}
+ @page{size:A4;margin:12mm 12mm 14mm 12mm}
 }
 
 .cloud{font:inherit;font-size:12px;border:0;border-radius:99px;padding:3px 10px;background:#ffffff33;color:#fff;cursor:pointer}

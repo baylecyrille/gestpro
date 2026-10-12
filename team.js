@@ -65,7 +65,8 @@ export function memberModal(m) {
     ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
     ${colorField('Couleur (planning)', 'color', m.color, 'full')}
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
-    ${F('Coût horaire (€/h) – facultatif', 'rate', m.rate, { type: 'number', step: '0.01' })}
+    ${F('Coût horaire HT (€/h) – coût pour l\'entreprise', 'rate', m.rate, { type: 'number', step: '0.01' })}
+    ${F('Coût facturé HT (€/h) – prix de vente au client', 'billRate', m.billRate ?? '', { type: 'number', step: '0.01' })}
     ${F('Statut', 'active', m.active === false ? '0' : '1', { type: 'select', options: [['1', 'Actif'], ['0', 'Inactif']] })}
     ${F('Profil d\'accès à l\'appli', 'access', m.access || '', { type: 'select', options: auth.PROFILE_OPTIONS })}
     ${F(m.pinHash ? 'Nouveau code PIN (vide = inchangé)' : 'Code PIN (4 à 6 chiffres)', 'pin', '', { type: 'password', extra: 'inputmode="numeric" maxlength="6" autocomplete="new-password"' })}
@@ -84,7 +85,7 @@ export function memberModal(m) {
       if (o.access && pin) m.pinHash = await auth.hashPin(pin, m.id);
       if (!o.access) delete m.pinHash;
       const habs = $$('.hab', f).map(r => ({ label: $('[data-h=label]', r).value.trim(), expiry: $('[data-h=expiry]', r).value })).filter(h => h.label);
-      Object.assign(m, o, { photo, habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate) });
+      Object.assign(m, o, { photo, habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate), billRate: o.billRate === '' ? '' : num(o.billRate) });
       await db.put('members', m);
       if (firstAdmin && m.pinHash) auth.setUser(m.id); // active la protection sans verrouiller son auteur
       toast('Membre enregistré'); refresh();
@@ -180,7 +181,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
       ${members.sort((a, b) => (b.active !== false) - (a.active !== false) || a.name.localeCompare(b.name, 'fr')).map(m => {
         const done = round2(tasks.filter(t => t.memberId === m.id && (t.start || '').slice(0, 7) === today().slice(0, 7)).reduce((a, t) => a + num(t.done), 0));
         return `<div class="item" data-m="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}><span class="avatar" style="background:${e(m.color)}">${e(initials(m.name))}</span><div class="main"><div class="t">${e(m.name)} <small class="muted">${e(ROLE[m.role] || '')}${m.active === false ? ' · inactif' : ''}</small></div>
-          <div class="s">${[m.phone, m.email].filter(Boolean).map(e).join(' · ')}</div>
+          <div class="s">${[m.phone, m.email, m.rate !== '' && m.rate != null ? 'coût ' + num(m.rate) + ' €/h HT' : '', m.billRate !== '' && m.billRate != null ? 'facturé ' + num(m.billRate) + ' €/h HT' : ''].filter(Boolean).map(e).join(' · ')}</div>
           <div>${(m.habs || []).map(h => `<span class="chip ${soon(h)}">${e(h.label)}${h.expiry ? ' · ' + dateFr(h.expiry) : ''}</span>`).join('')}</div></div>
           <div class="r"><div class="s">ce mois</div><b>${done} h</b></div></div>`;
       }).join('') || '<div class="empty">Ajoutez les membres de l\'équipe (vous-même, ouvriers, apprentis, sous-traitants).</div>'}`;
