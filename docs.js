@@ -166,6 +166,12 @@ export async function renderDoc(el, id, arg) {
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
   let payments = allPay.filter(p => p.docId === cur.id);
 
+  const siteLabel = x => {
+    const nums = allDocs.filter(q => q.siteId === x.id && q.number).sort((a, b) => a.date.localeCompare(b.date)).map(q => q.number).slice(0, 3).join(', ');
+    const cl = contacts.find(c => c.id === x.clientId);
+    return x.name + (cl ? ' — ' + cname(cl) : '') + (nums ? ' · ' + nums : '');
+  };
+  const siteText = x => siteLabel(x) + ' ' + (x.address || '') + ' ' + allDocs.filter(q => q.siteId === x.id).map(q => q.number).join(' ');
   const curClient = () => contacts.find(x => x.id === cur.clientId) || {};
   const zonesHtml = () => {
     const defs = zoneDefs(cur, S, curClient()), ov = cur.zones || {}, n = Object.keys(ov).length;
@@ -192,7 +198,7 @@ export async function renderDoc(el, id, arg) {
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}
     <div class="card"><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
-      <label class="f full"><span>Chantier</span><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(x.name)}</option>`).join('')}</select></label>
+      <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>
       ${F('Date', 'date', cur.date, { type: 'date' })}
       ${F(isQ ? 'N° de devis' : isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : ''}
       ${F('Réf. chantier', 'siteRef', cur.siteRef, { cls: 'full' })}
@@ -364,6 +370,19 @@ export async function renderDoc(el, id, arg) {
     $$('[data-zr]', el).forEach(b => b.onclick = () => { const d = zoneDefs(cur, S, curClient()).find(x => x.k === b.dataset.zr); if (cur.zones) delete cur.zones[b.dataset.zr]; if (d) zset(d.k, d.v); });
     $('#zreset', el).onclick = () => { delete cur.zones; zoneDefs(cur, S, curClient()).forEach(d => zset(d.k, d.v)); };
     $('[name=clientId]', el).addEventListener('change', () => { cur.clientId = $('[name=clientId]', el).value; const d = zoneDefs(cur, S, curClient()).find(x => x.k === 'client'), i = $('[data-zk=client]', el); if (d && i && !i.dataset.dirty && !(cur.zones && 'client' in cur.zones)) i.value = d.v; });
+    $('#ssearch', el).oninput = ev => {
+      const q = ev.target.value.toLowerCase().trim(), sel = $('[name=siteId]', el), keep = sel.value;
+      const rows = sites.filter(x => x.id === keep || !q || siteText(x).toLowerCase().includes(q));
+      sel.innerHTML = '<option value="">— aucun —</option>' + rows.map(x => `<option value="${x.id}" ${x.id === keep ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('');
+      const m = rows.filter(x => x.id !== keep);
+      if (q && !keep && m.length === 1) { sel.value = m[0].id; sel.dispatchEvent(new Event('change')); }
+    };
+    $('#newsite', el).onclick = () => {
+      readHeader();
+      import('./sites.js').then(m => m.newSiteModal({ clientId: cur.clientId, name: cur.siteRef || cname(curClient()) || '', address: cur.siteAddr || '' }, st => {
+        sites.push(st); cur.siteId = st.id; if (!cur.siteRef) cur.siteRef = st.name; if (!cur.siteAddr) cur.siteAddr = st.address || ''; if (!cur.clientId) cur.clientId = st.clientId || ''; draw(); toast('Chantier créé et rattaché – pensez à enregistrer le document');
+      }));
+    };
     $('#csearch', el).oninput = ev => {
       const q = ev.target.value.toLowerCase().trim(), sel = $('[name=clientId]', el), keep = sel.value;
       const rows = clients.filter(c => c.id === keep || !q || [c.civ, c.name, c.company, c.city, c.zip].join(' ').toLowerCase().includes(q));

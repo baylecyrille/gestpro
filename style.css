@@ -232,3 +232,12 @@ nav#nav a[hidden]{display:none}
 .zempty{color:#999;font-weight:400}
 .zta{width:100%;box-sizing:border-box;font:inherit;color:#000;background:#fffbe0;border:1px solid #2f7ad6;border-radius:3px;padding:3px;min-height:1.6em}
 .pvtools{margin:6px 0}
+
+.gg{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.ggi{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--mut)}
+.ggi em{font-style:normal;min-width:26px}
+.gbar{display:inline-block;width:52px;height:6px;background:#e6edf6;border-radius:99px;overflow:hidden}
+.gbar b{display:block;height:100%;background:var(--p);border-radius:99px}
+.gbar b.ok{background:var(--ok)}.gbar b.warn{background:var(--warn)}.gbar b.bad{background:var(--bad)}
+.gbar.big{display:block;width:100%;height:10px}
+.gline{margin-bottom:10px}.gline .gh{display:flex;justify-content:space-between;margin-bottom:3px}

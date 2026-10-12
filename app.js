@@ -5,7 +5,7 @@ import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFil
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, ZONE_TOKENS, layoutFields, readLayout } from './docs.js';
 import { renderFacebook } from './facebook.js';
-import { renderSites, renderSite, siteStats, SS } from './sites.js';
+import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
@@ -30,9 +30,10 @@ async function fillRel(f, c) {
   const blk = (title, list, fn) => `<h4>${title} (${list.length})</h4>${list.map(fn).join('') || '<p class="muted" style="margin:0">Aucun.</p>'}`;
   const sl = sites.filter(s => s.clientId === c.id).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const box = f.querySelector('#rel'); if (!box) return;
-  box.innerHTML = blk('Chantiers', sl, s => `<a class="item" href="#/site/${s.id}"><div class="main"><div class="t">${e(s.name)}</div><div class="s">${e(SS[s.status] || '')}</div></div></a>`)
+  box.innerHTML = `<div class="row" style="margin:0 0 6px"><button type="button" class="btn sm primary" id="relnewsite">+ Chantier pour ce client</button></div>` + blk('Chantiers', sl, s => `<a class="item" href="#/site/${s.id}"><div class="main"><div class="t">${e(s.name)}</div><div class="s">${e(SS[s.status] || '')}</div>${gaugesHtml(siteGauges(s, siteStats(s.id, docs, pays), auth.can('sites.money')))}</div></a>`)
     + blk('Devis', mine.filter(d => d.type === 'quote'), doc) + blk('Factures', mine.filter(d => d.type === 'invoice'), doc) + blk('Avoirs', mine.filter(d => d.type === 'credit'), doc);
   box.addEventListener('click', ev => { if (ev.target.closest('a')) document.querySelector('#modal').close(); });
+  box.querySelector('#relnewsite').onclick = () => { document.querySelector('#modal').close(); import('./sites.js').then(m => m.newSiteModal({ clientId: c.id, name: cname(c), address: [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n') })); };
 }
 export function contactModal(c, kind, onSaved) {
   const isNew = !c; c = c || { kind };
@@ -143,12 +144,12 @@ async function renderDashboard(el) {
   // chantiers ouverts avec marge
   const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
   const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members, x); const st = siteStats(x.id, docs, payments);
-    return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div></div>
+    return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div>${gaugesHtml(siteGauges(x, st, auth.can('sites.money')))}</div>
       <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
 
   // chantiers en retard : date de fin dépassée et chantier encore ouvert
   const lateSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status) && x.end && x.end < today()).sort((a, b) => a.end.localeCompare(b.end));
-  const lateHtml = lateSites.length ? `<h3>Chantiers en retard</h3>${lateSites.slice(0, 8).map(x => `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · fin prévue le ${dateFr(x.end)}</div></div><span class="chip bad">${Math.floor((Date.parse(today()) - Date.parse(x.end)) / 864e5)} j de retard</span></a>`).join('')}` : '';
+  const lateHtml = lateSites.length ? `<h3>Chantiers en retard</h3>${lateSites.slice(0, 8).map(x => `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · fin prévue le ${dateFr(x.end)}</div>${gaugesHtml(siteGauges(x, siteStats(x.id, docs, payments), auth.can('sites.money')))}</div><span class="chip bad">${Math.floor((Date.parse(today()) - Date.parse(x.end)) / 864e5)} j de retard</span></a>`).join('')}` : '';
 
   // planning des 7 prochains jours
   const days = weekDays(today());
