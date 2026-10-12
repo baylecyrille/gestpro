@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
 import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, filterBar, bindFilters, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
-import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, ZONE_TOKENS } from './docs.js';
+import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, ZONE_TOKENS, layoutFields, readLayout } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
@@ -237,6 +237,8 @@ async function renderSettings(el) {
     <p class="muted">Textes de toutes les zones imprimées (en-tête, titre, colonnes, totaux, signature…). Ils s'appliquent à tous les documents du type choisi ; un document peut ensuite faire exception. Gras : <code>**texte**</code> · souligné : <code>__texte__</code> · jetons : <code>${ZONE_TOKENS}</code>.</p>
     <span class="seg">${[['q', 'Devis'], ['i', 'Factures'], ['c', 'Avoirs']].map(([k, l], n) => `<button type="button" class="btn sm ${n ? '' : 'on'}" data-zt="${k}">${l}</button>`).join('')}</span>
     ${[['q', 'quote'], ['i', 'invoice'], ['c', 'credit']].map(([k, ty], n) => `<div data-zp="${k}" ${n ? 'hidden' : ''}><div class="cols">${zoneDefs({ type: ty }, S, {}, false).filter(d => d.k !== 'client').map(d => `<label class="f full"><span>${e(d.label)}</span>${d.rows > 1 ? `<textarea data-zk="${d.k}" data-zty="${k}" rows="${Math.min(d.rows, 6)}">${e(d.v)}</textarea>` : `<input data-zk="${d.k}" data-zty="${k}" value="${e(d.v)}">`}</label>`).join('')}</div></div>`).join('')}
+    <h4 style="margin:12px 0 4px">Disposition (tailles, alignements, largeur des colonnes)</h4><p class="muted" style="margin:0 0 6px">Laissez vide pour la valeur par défaut. Les colonnes non renseignées restent automatiques.</p>
+    <div class="cols">${layoutFields(S.layout || {}, {}, 'data-ly')}</div>
     <div class="row"><button type="button" class="btn primary" id="zsave">Enregistrer la mise en page</button><button type="button" class="btn" id="zdef">↺ Textes d'origine (type affiché)</button></div></div>
   <div class="card"><h3 style="margin-top:0">Accès des membres</h3>
     <p>${auth.isActive() ? `Protection <b>active</b> : l'appli demande un nom et un code PIN. Connecté : <b>${e(auth.currentUser()?.name || '')}</b> (${e(auth.PROFILES[auth.currentUser()?.access]?.label || '')}).` : 'Protection <b>inactive</b> : tout le monde a tous les droits sur cet appareil.'}</p>
@@ -333,7 +335,7 @@ async function renderSettings(el) {
       $$(`[data-zty="${t}"]`, el).forEach(i => { const d = base.find(x => x.k === i.dataset.zk); if (d && i.value !== d.v) o[d.k] = i.value; });
       if (Object.keys(o).length) zones[t] = o;
     }
-    await db.saveSettings({ ...S, zones }); toast('Mise en page enregistrée'); refresh();
+    const layout = readLayout($('#zcard', el), 'data-ly'); await db.saveSettings({ ...S, zones, layout }); toast('Mise en page enregistrée'); refresh();
   };
   $('#zdef', el).onclick = () => { const base = zoneDefs({ type: ZT[zty] }, S, {}, true); $$(`[data-zty="${zty}"]`, el).forEach(i => { const d = base.find(x => x.k === i.dataset.zk); if (d) i.value = d.v; }); toast('Textes d\'origine remis – enregistrez'); };
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));

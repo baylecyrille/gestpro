@@ -79,19 +79,22 @@ dialog::backdrop{background:#0006}
 .bar i{display:block;height:100%;background:var(--ok)}
 /* impression */
 #printarea{display:none}
-.sheet{font:12.5px/1.35 Georgia,'Times New Roman',serif;color:#000;width:100%;max-width:186mm;margin:0 auto;box-sizing:border-box}
+.sheet{font:var(--fs,12.5px)/1.35 Georgia,'Times New Roman',serif;color:#000;width:100%;max-width:186mm;margin:0 auto;box-sizing:border-box}
 #printarea{padding:0}
 .sheet tr{page-break-inside:avoid}
 .sheet .hd{display:flex;justify-content:space-between;gap:16px}
 .sheet .hd>div{flex:1}
 .sheet .co{font-family:Arial,sans-serif}
-.sheet .co .nm{font-weight:700;font-size:15px;color:#1e5aa8;white-space:pre-line}
-.sheet .co img{max-height:90px;max-width:100%;margin-bottom:6px}
-.sheet .cl{font-family:Arial,sans-serif;font-weight:700;font-size:14px;white-space:pre-line}
-.sheet h1{font-size:19px;margin:18px 0 4px}
+.sheet .co .nm{font-weight:700;font-size:var(--nmfs,15px);color:#1e5aa8;white-space:pre-line}
+.sheet .co img{max-height:var(--logo,90px);max-width:100%;margin-bottom:6px}
+.sheet .cl{font-family:Arial,sans-serif;font-weight:700;font-size:var(--clfs,14px);white-space:pre-line}
+.sheet h1{font-size:var(--h1,19px);text-align:var(--h1al,left);margin:18px 0 4px}
+.sheet .dt{text-align:var(--dateal,left)}
+.sheet table.fx{table-layout:fixed}
+.sheet .sig .sph{height:var(--sigh,60px)}
 .sheet table{width:100%;border-collapse:collapse;margin-top:12px}
 .sheet th{background:#9dbbe3;border:1px solid #6d8fbf;padding:4px;font-weight:700}
-.sheet td{border:1px solid #888;padding:5px 6px}
+.sheet td{border:1px solid #888;padding:var(--pad,5px) 6px}
 .sheet td.n,.sheet th.n{text-align:right;white-space:nowrap}
 .sheet tr.t td{background:#fff7c2;font-weight:700}
 .sheet .pay{margin-top:10px}
@@ -223,3 +226,9 @@ nav#nav a[hidden]{display:none}
 .filt{flex-wrap:wrap;align-items:flex-end;gap:8px;margin:6px 0}
 .filt .f.sm{min-width:120px;flex:1}.filt .f.sm span{font-size:11px}
 .chk2{display:inline-flex;gap:6px;align-items:center;font-size:13px;padding-bottom:8px}
+
+.pvedit .zn{cursor:text;outline:1px dashed transparent;border-radius:2px}
+.pvedit .zn:hover{outline-color:#2f7ad6;background:rgba(47,122,214,.10)}
+.zempty{color:#999;font-weight:400}
+.zta{width:100%;box-sizing:border-box;font:inherit;color:#000;background:#fffbe0;border:1px solid #2f7ad6;border-radius:3px;padding:3px;min-height:1.6em}
+.pvtools{margin:6px 0}

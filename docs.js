@@ -319,11 +319,39 @@ export async function renderDoc(el, id, arg) {
 
   const bind = () => {
     bindRichFields(el);
+    let pvChanged = false;
+    const renderPv = async () => {
+      const c = JSON.parse(JSON.stringify(cur)); pruneBlocks(c);
+      $('#pvpaper', el).innerHTML = await sheetHtml(c, { edit: true });
+    };
+    const commitZone = (k, val) => {
+      const d = zoneDefs(cur, S, curClient()).find(x => x.k === k); if (!d) return;
+      const z = { ...(cur.zones || {}) };
+      if (val === d.v) delete z[k]; else z[k] = val;
+      if (Object.keys(z).length) cur.zones = z; else delete cur.zones;
+      pvChanged = true;
+    };
     const showPv = async on => {
       if (on) {
-        readHeader(); const c = JSON.parse(JSON.stringify(cur)); pruneBlocks(c);
-        $('#pvwrap', el).innerHTML = '<p class="muted" style="margin:6px 0">Aperçu du document tel qu\'il sera imprimé (rien n\'est enregistré).</p><div class="pvpaper">' + await sheetHtml(c) + '</div>';
-      }
+        readHeader(); pvChanged = false;
+        $('#pvwrap', el).innerHTML = `<p class="muted" style="margin:6px 0">Aperçu tel qu'il sera imprimé. <b>Cliquez sur une zone pour modifier son texte</b> ; ajustez la disposition ci-dessous (rien n'est enregistré avant « Enregistrer »).</p>
+          <details class="card pvtools"><summary><b>Ajuster la disposition</b> <span class="muted">(tailles, alignements, colonnes)</span></summary><div class="cols">${layoutFields(cur.layout || {}, layoutOf(S, null), 'data-lk')}</div><div class="row"><button type="button" class="btn" id="lyreset">↺ Rétablir les réglages généraux</button></div></details>
+          <div class="pvpaper" id="pvpaper"></div>`;
+        await renderPv();
+        const onLy = async () => { const o = readLayout($('#pvwrap', el), 'data-lk'); if (Object.keys(o).length) cur.layout = o; else delete cur.layout; pvChanged = true; await renderPv(); };
+        $$('[data-lk]', $('#pvwrap', el)).forEach(i => { i.addEventListener('input', onLy); i.addEventListener('change', onLy); });
+        $('#lyreset', el).onclick = () => { $$('[data-lk]', $('#pvwrap', el)).forEach(i => { i.value = ''; }); onLy(); };
+        $('#pvpaper', el).addEventListener('click', ev => {
+          const zn = ev.target.closest('.zn'); if (!zn || zn.querySelector('textarea')) return;
+          const k = zn.dataset.z, d = zoneDefs(cur, S, curClient()).find(x => x.k === k); if (!d) return;
+          const val = cur.zones && k in cur.zones ? cur.zones[k] : d.v;
+          zn.innerHTML = `<textarea class="zta" rows="${Math.max(1, Math.min(8, val.split('\n').length))}">${e(val)}</textarea>`;
+          const ta = zn.querySelector('textarea'); ta.focus();
+          let done = false; const end = async ok => { if (done) return; done = true; if (ok) commitZone(k, ta.value); await renderPv(); };
+          ta.addEventListener('blur', () => end(true));
+          ta.addEventListener('keydown', kev => { if (kev.key === 'Escape') end(false); });
+        });
+      } else if (pvChanged) { pvChanged = false; draw(); return; }
       $('#pvwrap', el).hidden = !on; $('#edwrap', el).hidden = on;
       $('#vedit', el).classList.toggle('on', !on); $('#vprev', el).classList.toggle('on', on);
       if (on) window.scrollTo?.(0, 0);
@@ -441,6 +469,48 @@ export function zoneDefs(doc, S, c = {}, base = false) {
   const so = (!base && S.zones && S.zones[ty]) || {}; // réglages généraux (Réglages > Mise en page des documents)
   return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v: k in so ? so[k] : v, rows }));
 }
+/* Disposition (tailles, alignements, colonnes) : valeurs vides = défaut. Réglages (S.layout) puis exception par document (doc.layout). */
+export const LAYOUT = [
+  ['fs', 'Taille du texte (px)', 'num', 9, 18, 12.5, 0.5],
+  ['nmfs', 'Taille du nom de l\'entreprise (px)', 'num', 10, 30, 15, 1],
+  ['clfs', 'Taille du bloc client (px)', 'num', 9, 24, 14, 1],
+  ['h1', 'Taille du titre (px)', 'num', 12, 36, 19, 1],
+  ['h1al', 'Alignement du titre', 'sel', [['', 'Gauche (défaut)'], ['center', 'Centré'], ['right', 'Droite']]],
+  ['dateAl', 'Alignement de la date', 'sel', [['', 'Gauche (défaut)'], ['center', 'Centré'], ['right', 'Droite']]],
+  ['logo', 'Hauteur du logo (px)', 'num', 20, 200, 90, 5],
+  ['cQty', 'Largeur colonne Qté (%)', 'num', 4, 30, '', 1],
+  ['cUnit', 'Largeur colonne Unité (%)', 'num', 4, 30, '', 1],
+  ['cPu', 'Largeur colonne Prix unit. (%)', 'num', 6, 30, '', 1],
+  ['cHt', 'Largeur colonne Prix H.T (%)', 'num', 6, 30, '', 1],
+  ['pad', 'Hauteur des lignes du tableau (px)', 'num', 1, 16, 5, 1],
+  ['sigH', 'Hauteur de l\'espace signature (px)', 'num', 20, 200, 60, 5],
+];
+const lyNum = (d, v) => { const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? null : Math.min(d[4], Math.max(d[3], n)); };
+export function layoutOf(S, doc) { const o = { ...(S.layout || {}), ...(doc?.layout || {}) }; Object.keys(o).forEach(k => { if (o[k] === '' || o[k] == null) delete o[k]; }); return o; }
+function layoutStyle(LY) {
+  const css = { fs: '--fs', nmfs: '--nmfs', clfs: '--clfs', h1: '--h1', logo: '--logo', pad: '--pad', sigH: '--sigh' }, out = [];
+  for (const d of LAYOUT) {
+    if (!(d[0] in LY)) continue;
+    if (d[2] === 'num' && css[d[0]]) { const n = lyNum(d, LY[d[0]]); if (n != null) out.push(css[d[0]] + ':' + n + 'px'); }
+    else if (d[0] === 'h1al' && ['center', 'right'].includes(LY.h1al)) out.push('--h1al:' + LY.h1al);
+    else if (d[0] === 'dateAl' && ['center', 'right'].includes(LY.dateAl)) out.push('--dateal:' + LY.dateAl);
+  }
+  return out.join(';');
+}
+function colgroup(LY) {
+  const cols = [['cQty', 9], ['cUnit', 8], ['cPu', 14], ['cHt', 14]];
+  if (!cols.some(([k]) => LY[k] != null)) return '';
+  return '<colgroup><col>' + cols.map(([k, dv]) => `<col style="width:${lyNum(LAYOUT.find(d => d[0] === k), LY[k] ?? dv) ?? dv}%">`).join('') + '</colgroup>';
+}
+export function layoutFields(vals, base, attr) {
+  return LAYOUT.map(d => d[2] === 'sel'
+    ? `<label class="f"><span>${e(d[1])}</span><select ${attr}="${d[0]}">${d[3].map(([v, l]) => `<option value="${v}" ${(vals[d[0]] || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`
+    : `<label class="f"><span>${e(d[1])}</span><input type="number" ${attr}="${d[0]}" min="${d[3]}" max="${d[4]}" step="${d[6]}" value="${vals[d[0]] ?? ''}" placeholder="${base[d[0]] ?? (d[5] === '' ? 'auto' : d[5])}"></label>`).join('');
+}
+export function readLayout(root, attr) {
+  const o = {}; root.querySelectorAll(`[${attr}]`).forEach(i => { if (i.value !== '') o[i.getAttribute(attr)] = i.value; }); return o;
+}
+
 function zhtml(txt, vars) {
   let h = e(txt || '');
   h = h.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>').replace(/__([\s\S]+?)__/g, '<u>$1</u>');
@@ -448,7 +518,7 @@ function zhtml(txt, vars) {
   return h.replace(/\n/g, '<br>');
 }
 
-async function sheetHtml(doc) {
+async function sheetHtml(doc, opts = {}) {
   const [S, contacts, payments] = await Promise.all([getS(), db.all('contacts'), db.all('payments')]);
   setStyles(S);
   const c = contacts.find(x => x.id === doc.clientId) || {};
@@ -458,26 +528,27 @@ async function sheetHtml(doc) {
   const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
   const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: doc.validUntil ? dateFr(doc.validUntil) : '', siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
   const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
-  const Z = k => zhtml(Zt(k), vars);
-  return `<div class="sheet">
+  const ED = !!opts.edit, LY = layoutOf(S, doc);
+  const Z = k => { const h = zhtml(Zt(k), vars); return ED ? `<span class="zn" data-z="${k}" title="Cliquer pour modifier">${h || '<i class="zempty">(zone vide – cliquer)</i>'}</span>` : h; };
+  return `<div class="sheet${ED ? ' pvedit' : ''}" style="${layoutStyle(LY)}">
     <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${Z('coName')}</div>
       <p>${Z('coInfo')}</p></div>
       <div><p class="small" style="margin-top:0">${Z('certs')}</p>
       <div class="cl">${Z('client')}</div>
       <p>${Z('chantier')}</p></div></div>
     <h1>${Z('title')}</h1>
-    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div>${Z('dateLine')}${isQ && doc.validUntil && Zt('validLine') ? `<br><span class="small">${Z('validLine')}</span>` : ''}</div></div>
+    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div class="dt">${Z('dateLine')}${isQ && doc.validUntil && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}</div></div>
     <div style="margin:6px 0">${isC ? '' : richHtml(doc.note)}</div>
-    <table><thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
+    <table class="${colgroup(LY) ? 'fx' : ''}">${colgroup(LY)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
     <tr><td colspan="4">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
     <tr><td colspan="3">${Z('lblTva')}</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
     <tr class="t"><td colspan="4">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
     ${used ? `<tr><td colspan="4">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     </tbody></table>
-    ${isQ && Zt('methods') ? `<div class="pay">${Z('methods')}</div>` : ''}
-    ${isC ? (Zt('creditTxt') || doc.note ? `<div class="pay">${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}</div>` : '') : `<div class="pay">${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
-    <div class="sig"><div>${Z('sigLeft')}<div style="height:60px"></div></div>
+    ${isQ && (Zt('methods') || ED) ? `<div class="pay">${Z('methods')}</div>` : ''}
+    ${isC ? (Zt('creditTxt') || doc.note || ED ? `<div class="pay">${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}</div>` : '') : `<div class="pay">${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
+    <div class="sig"><div>${Z('sigLeft')}<div class="sph"></div></div>
     <div>${Z('bank')}</div></div></div>`;
 }
 
