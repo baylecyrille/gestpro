@@ -166,6 +166,23 @@ export async function renderDoc(el, id, arg) {
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
   let payments = allPay.filter(p => p.docId === cur.id);
 
+  const curClient = () => contacts.find(x => x.id === cur.clientId) || {};
+  const zonesHtml = () => {
+    const defs = zoneDefs(cur, S, curClient()), ov = cur.zones || {}, n = Object.keys(ov).length;
+    return `<details class="card zones" ${n ? 'open' : ''}><summary><b>Mise en page – modifier toutes les zones du document</b> <span class="muted">${n ? '(' + n + ' modifiée' + (n > 1 ? 's' : '') + ')' : ''}</span></summary>
+      <p class="muted" style="margin:6px 0">Chaque zone imprimée est modifiable pour ce document. Gras : <code>**texte**</code> · souligné : <code>__texte__</code> · jetons automatiques : <code>${ZONE_TOKENS}</code>. Une zone vidée disparaît du document. Les zones non modifiées suivent les Réglages.</p>
+      <div class="cols">${defs.map(d => { const v = d.k in ov ? ov[d.k] : d.v; return `<label class="f full zrow"><span>${e(d.label)} <button type="button" class="btn sm ghost" data-zr="${d.k}">↺ rétablir</button></span>${d.rows > 1 ? `<textarea name="z_${d.k}" data-zk="${d.k}" rows="${Math.min(d.rows, 6)}">${e(v)}</textarea>` : `<input name="z_${d.k}" data-zk="${d.k}" value="${e(v)}">`}</label>`; }).join('')}</div>
+      <div class="row"><button type="button" class="btn" id="zreset">↺ Tout rétablir</button></div></details>`;
+  };
+  const readZones = () => {
+    const defs = zoneDefs(cur, S, curClient()), z = { ...(cur.zones || {}) };
+    $$('[data-zk]', el).forEach(i => {
+      const k = i.dataset.zk, d = defs.find(x => x.k === k); if (!d) return;
+      if (i.dataset.dirty || k in z) { if (i.value === d.v) delete z[k]; else z[k] = i.value; }
+    });
+    if (Object.keys(z).length) cur.zones = z; else delete cur.zones;
+  };
+
   const draw = () => {
     const t = totals(cur);
     el.innerHTML = `<div class="row"><a class="btn ghost" href="${cur.siteId && sites.some(x => x.id === cur.siteId) ? '#/site/' + cur.siteId : '#/docs/' + cur.type}">← Retour</a><span class="sp"></span>
@@ -188,6 +205,7 @@ export async function renderDoc(el, id, arg) {
     <div class="card lines"><div id="blocks"></div>
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
+    ${zonesHtml()}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew ? actionsHtml() : ''}</div>`;
     bind();
@@ -227,6 +245,7 @@ export async function renderDoc(el, id, arg) {
   const readHeader = () => {
     $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
+    readZones();
     cur.tva = num(cur.tva);
   };
 
@@ -312,6 +331,11 @@ export async function renderDoc(el, id, arg) {
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
+    $$('[data-zk]', el).forEach(i => i.addEventListener('input', () => { i.dataset.dirty = '1'; }));
+    const zset = (k, v) => { const i = $(`[data-zk="${k}"]`, el); if (i) { i.value = v; delete i.dataset.dirty; } };
+    $$('[data-zr]', el).forEach(b => b.onclick = () => { const d = zoneDefs(cur, S, curClient()).find(x => x.k === b.dataset.zr); if (cur.zones) delete cur.zones[b.dataset.zr]; if (d) zset(d.k, d.v); });
+    $('#zreset', el).onclick = () => { delete cur.zones; zoneDefs(cur, S, curClient()).forEach(d => zset(d.k, d.v)); };
+    $('[name=clientId]', el).addEventListener('change', () => { cur.clientId = $('[name=clientId]', el).value; const d = zoneDefs(cur, S, curClient()).find(x => x.k === 'client'), i = $('[data-zk=client]', el); if (d && i && !i.dataset.dirty && !(cur.zones && 'client' in cur.zones)) i.value = d.v; });
     $('#csearch', el).oninput = ev => {
       const q = ev.target.value.toLowerCase().trim(), sel = $('[name=clientId]', el), keep = sel.value;
       const rows = clients.filter(c => c.id === keep || !q || [c.civ, c.name, c.company, c.city, c.zip].join(' ').toLowerCase().includes(q));
@@ -379,6 +403,50 @@ export async function renderDoc(el, id, arg) {
 }
 
 /* ---------- Impression ---------- */
+/* ---------- Zones modifiables du document ----------
+   Chaque zone imprimée a un texte par défaut (calculé depuis les Réglages / le client / le document).
+   doc.zones ne contient que les zones modifiées à la main pour CE document.
+   Balisage : **gras**  __souligné__ ; jetons : {numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic} */
+export const ZONE_TOKENS = '{numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic}';
+export function zoneDefs(doc, S, c = {}) {
+  const isQ = doc.type === 'quote', isC = doc.type === 'credit', ty = isQ ? 'q' : isC ? 'c' : 'i';
+  const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  const T = isQ ? 'Devis' : isC ? 'Avoir' : 'Facture';
+  const L = [
+    ['coName', 'En-tête – nom de l\'entreprise', S.sub || S.company || '', 1, 'qic'],
+    ['coInfo', 'En-tête – coordonnées de l\'entreprise', [S.owner ? '**' + S.owner + '**' : '', S.address, S.phone, S.legal, S.email, S.web, S.siret ? 'N°SIRET : ' + S.siret : ''].filter(Boolean).join('\n'), 7, 'qic'],
+    ['certs', 'En-tête – RGE / assurances', [S.rge ? '**RGE** Numéro ' + S.rge : '', S.insurance ? 'Assurance Responsabilité Travaux ' + S.insurance : '', S.insurance ? 'Assurance Responsabilité Civile ' + S.insurance : ''].filter(Boolean).join('\n'), 3, 'qic'],
+    ['client', 'Bloc client (destinataire)', [cname(c) || '', c.company ? [c.companyCiv, c.company].filter(Boolean).join(' ') : '', addr].filter(Boolean).join('\n'), 4, 'qic'],
+    ['chantier', 'Bloc « Réf chantier »', '**__Réf chantier :__**\n{siteRef}\n**{siteAddr}**', 3, 'qic'],
+    ['title', 'Titre du document', T + ' {numero}', 1, 'qic'],
+    ['dateLine', 'Ligne ville / date', '**{ville}, le   {date}**', 1, 'qic'],
+    ['validLine', 'Validité du devis', 'Valable jusqu\'au {validite}', 1, 'q'],
+    ['thDes', 'Tableau – colonne 1', 'DESIGNATION', 1, 'qic'],
+    ['thQty', 'Tableau – colonne 2', 'Qté', 1, 'qic'],
+    ['thUnit', 'Tableau – colonne 3', 'Unité', 1, 'qic'],
+    ['thPu', 'Tableau – colonne 4', 'Prix unit.', 1, 'qic'],
+    ['thHt', 'Tableau – colonne 5', 'Prix H.T', 1, 'qic'],
+    ['lblHt', 'Totaux – libellé HT', 'Total HT', 1, 'qic'],
+    ['lblTva', 'Totaux – libellé TVA', 'TVA', 1, 'qic'],
+    ['lblTtc', 'Totaux – libellé TTC', isC ? 'Total TTC de l\'avoir' : 'Total TTC', 1, 'qic'],
+    ['lblPaid', 'Totaux – déjà réglé', isC ? 'Déjà déduit / remboursé' : 'Déjà réglé', 1, 'ic'],
+    ['lblLeft', 'Totaux – reste', isC ? 'Reste à votre crédit' : 'Reste à payer', 1, 'ic'],
+    ['methods', 'Moyens de paiement acceptés', '**Moyens de paiement acceptés :** ' + REAL_METHODS.filter(m => m[0] !== 'autre').map(m => m[1]).join(', ') + '.', 2, 'q'],
+    ['creditTxt', 'Mention de l\'avoir', '**Avoir** – à déduire de votre prochaine facture ou remboursé.', 2, 'c'],
+    ['lblMotif', 'Libellé du motif', 'Motif :', 1, 'c'],
+    ['payLbl', 'Titre du bloc règlement', '**Règlement**', 1, 'qi'],
+    ['sigLeft', 'Signature (gauche)', isQ ? '**Bon pour accord – date et signature du client**' : '**Signature Entrepreneur**', 2, 'qic'],
+    ['bank', 'Coordonnées bancaires (droite)', S.iban && !isC ? '**__Vous pouvez régler cette facture par virement__**\n**{company}**\n**IBAN** : {iban}\n**Code BIC** : {bic}' : '', 4, 'qi'],
+  ];
+  return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v, rows }));
+}
+function zhtml(txt, vars) {
+  let h = e(txt || '');
+  h = h.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>').replace(/__([\s\S]+?)__/g, '<u>$1</u>');
+  h = h.replace(/\{(\w+)\}/g, (m, k) => k in vars ? e(vars[k] ?? '') : m);
+  return h.replace(/\n/g, '<br>');
+}
+
 async function sheetHtml(doc) {
   const [S, contacts, payments] = await Promise.all([getS(), db.all('contacts'), db.all('payments')]);
   setStyles(S);
@@ -386,27 +454,30 @@ async function sheetHtml(doc) {
   const t = totals(doc), paid = paidOf(payments, doc.id);
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
   const used = isC ? creditUsed(payments, doc.id) : paid;
-  const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
+  const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: doc.validUntil ? dateFr(doc.validUntil) : '', siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
+  const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
+  const Z = k => zhtml(Zt(k), vars);
   return `<div class="sheet">
-    <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${e(S.sub || S.company)}</div>
-      <p><b>${e(S.owner)}</b><br>${e(S.address).replace(/\n/g, '<br>')}<br>${e(S.phone)}<br>${e(S.legal)}<br>${e(S.email)}<br>${e(S.web)}<br>N°SIRET : ${e(S.siret)}</p></div>
-      <div><p class="small" style="margin-top:0">${S.rge ? `<b>RGE</b> Numéro ${e(S.rge)}<br>` : ''}${S.insurance ? `Assurance Responsabilité Travaux ${e(S.insurance)}<br>Assurance Responsabilité Civile ${e(S.insurance)}` : ''}</p>
-      <div class="cl">${e(cname(c) || '')}${c.company ? '\n' + e([c.companyCiv, c.company].filter(Boolean).join(' ')) : ''}\n${e(addr)}</div>
-      <p><u><b>Réf chantier :</b></u><br>${e(doc.siteRef || '')}<br><b>${e(doc.siteAddr || '').replace(/\n/g, '<br>')}</b></p></div></div>
-    <h1>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(doc.number)}</h1>
-    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>
+    <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${Z('coName')}</div>
+      <p>${Z('coInfo')}</p></div>
+      <div><p class="small" style="margin-top:0">${Z('certs')}</p>
+      <div class="cl">${Z('client')}</div>
+      <p>${Z('chantier')}</p></div></div>
+    <h1>${Z('title')}</h1>
+    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div>${Z('dateLine')}${isQ && doc.validUntil && Zt('validLine') ? `<br><span class="small">${Z('validLine')}</span>` : ''}</div></div>
     <div style="margin:6px 0">${isC ? '' : richHtml(doc.note)}</div>
-    <table><thead><tr><th>DESIGNATION</th><th>Qté</th><th>Unité</th><th>Prix unit.</th><th>Prix H.T</th></tr></thead><tbody>
+    <table><thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
-    <tr><td colspan="4">Total HT</td><td class="n">${eur(t.ht)}</td></tr>
-    <tr><td colspan="3">TVA</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
-    <tr class="t"><td colspan="4">${isC ? 'Total TTC de l\'avoir' : 'Total TTC'}</td><td class="n">${eur(t.ttc)}</td></tr>
-    ${used ? `<tr><td colspan="4">${isC ? 'Déjà déduit / remboursé' : 'Déjà réglé'}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${isC ? 'Reste à votre crédit' : 'Reste à payer'}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
+    <tr><td colspan="4">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
+    <tr><td colspan="3">${Z('lblTva')}</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
+    <tr class="t"><td colspan="4">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
+    ${used ? `<tr><td colspan="4">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     </tbody></table>
-    ${isQ ? `<div class="pay"><b>Moyens de paiement acceptés :</b> ${REAL_METHODS.filter(m => m[0] !== 'autre').map(m => e(m[1])).join(', ')}.</div>` : ''}
-    ${isC ? `<div class="pay"><b>Avoir</b> – à déduire de votre prochaine facture ou remboursé.${doc.note ? '<br>Motif : ' + richHtml(doc.note) : ''}</div>` : `<div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
-    <div class="sig"><div><b>${isQ ? 'Bon pour accord – date et signature du client' : 'Signature Entrepreneur'}</b><div style="height:60px"></div></div>
-    <div>${S.iban && !isC ? `<b><u>Vous pouvez régler cette facture par virement</u></b><br><b>${e(S.company)}</b><br><b>IBAN</b> : ${e(S.iban)}<br><b>Code BIC</b> : ${e(S.bic)}` : ''}</div></div></div>`;
+    ${isQ && Zt('methods') ? `<div class="pay">${Z('methods')}</div>` : ''}
+    ${isC ? (Zt('creditTxt') || doc.note ? `<div class="pay">${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}</div>` : '') : `<div class="pay">${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
+    <div class="sig"><div>${Z('sigLeft')}<div style="height:60px"></div></div>
+    <div>${Z('bank')}</div></div></div>`;
 }
 
 async function printDoc(doc) {
