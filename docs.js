@@ -170,7 +170,7 @@ export async function renderDoc(el, id, arg) {
   const zonesHtml = () => {
     const defs = zoneDefs(cur, S, curClient()), ov = cur.zones || {}, n = Object.keys(ov).length;
     return `<details class="card zones" ${n ? 'open' : ''}><summary><b>Mise en page – modifier toutes les zones du document</b> <span class="muted">${n ? '(' + n + ' modifiée' + (n > 1 ? 's' : '') + ')' : ''}</span></summary>
-      <p class="muted" style="margin:6px 0">Chaque zone imprimée est modifiable pour ce document. Gras : <code>**texte**</code> · souligné : <code>__texte__</code> · jetons automatiques : <code>${ZONE_TOKENS}</code>. Une zone vidée disparaît du document. Les zones non modifiées suivent les Réglages.</p>
+      <p class="muted" style="margin:6px 0">Chaque zone imprimée est modifiable pour ce document. Gras : <code>**texte**</code> · souligné : <code>__texte__</code> · jetons automatiques : <code>${ZONE_TOKENS}</code>. Une zone vidée disparaît du document. Les zones non modifiées suivent <a href="#/settings">Réglages › Mise en page des documents</a>.</p>
       <div class="cols">${defs.map(d => { const v = d.k in ov ? ov[d.k] : d.v; return `<label class="f full zrow"><span>${e(d.label)} <button type="button" class="btn sm ghost" data-zr="${d.k}">↺ rétablir</button></span>${d.rows > 1 ? `<textarea name="z_${d.k}" data-zk="${d.k}" rows="${Math.min(d.rows, 6)}">${e(v)}</textarea>` : `<input name="z_${d.k}" data-zk="${d.k}" value="${e(v)}">`}</label>`; }).join('')}</div>
       <div class="row"><button type="button" class="btn" id="zreset">↺ Tout rétablir</button></div></details>`;
   };
@@ -408,12 +408,12 @@ export async function renderDoc(el, id, arg) {
    doc.zones ne contient que les zones modifiées à la main pour CE document.
    Balisage : **gras**  __souligné__ ; jetons : {numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic} */
 export const ZONE_TOKENS = '{numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic}';
-export function zoneDefs(doc, S, c = {}) {
+export function zoneDefs(doc, S, c = {}, base = false) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit', ty = isQ ? 'q' : isC ? 'c' : 'i';
   const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
   const T = isQ ? 'Devis' : isC ? 'Avoir' : 'Facture';
   const L = [
-    ['coName', 'En-tête – nom de l\'entreprise', S.sub || S.company || '', 1, 'qic'],
+    ['coName', 'En-tête – nom de l\'entreprise', S.sub || S.company || '', 2, 'qic'],
     ['coInfo', 'En-tête – coordonnées de l\'entreprise', [S.owner ? '**' + S.owner + '**' : '', S.address, S.phone, S.legal, S.email, S.web, S.siret ? 'N°SIRET : ' + S.siret : ''].filter(Boolean).join('\n'), 7, 'qic'],
     ['certs', 'En-tête – RGE / assurances', [S.rge ? '**RGE** Numéro ' + S.rge : '', S.insurance ? 'Assurance Responsabilité Travaux ' + S.insurance : '', S.insurance ? 'Assurance Responsabilité Civile ' + S.insurance : ''].filter(Boolean).join('\n'), 3, 'qic'],
     ['client', 'Bloc client (destinataire)', [cname(c) || '', c.company ? [c.companyCiv, c.company].filter(Boolean).join(' ') : '', addr].filter(Boolean).join('\n'), 4, 'qic'],
@@ -438,7 +438,8 @@ export function zoneDefs(doc, S, c = {}) {
     ['sigLeft', 'Signature (gauche)', isQ ? '**Bon pour accord – date et signature du client**' : '**Signature Entrepreneur**', 2, 'qic'],
     ['bank', 'Coordonnées bancaires (droite)', S.iban && !isC ? '**__Vous pouvez régler cette facture par virement__**\n**{company}**\n**IBAN** : {iban}\n**Code BIC** : {bic}' : '', 4, 'qi'],
   ];
-  return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v, rows }));
+  const so = (!base && S.zones && S.zones[ty]) || {}; // réglages généraux (Réglages > Mise en page des documents)
+  return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v: k in so ? so[k] : v, rows }));
 }
 function zhtml(txt, vars) {
   let h = e(txt || '');
