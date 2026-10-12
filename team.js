@@ -1,6 +1,6 @@
 // Équipe (membres, habilitations) et planning : affectation de membres à des chantiers avec heures prévues / réalisées.
 import * as db from './db.js';
-import { e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
+import { compressImage, e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import * as auth from './auth.js';
 
 export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
@@ -57,8 +57,11 @@ const initials = n => (n || '?').split(/\s+/).map(x => x[0]).join('').slice(0, 2
 export function memberModal(m) {
   const isNew = !m; m = m || { name: '', role: 'ouvrier', phone: '', email: '', color: COLORS[0], rate: '', habs: [], active: true, note: '' };
   const habRow = h => `<div class="row hab" style="margin-bottom:6px"><input list="habl" data-h="label" value="${e(h.label || '')}" placeholder="Habilitation" style="flex:2;min-width:140px"><input type="date" data-h="expiry" value="${e(h.expiry || '')}" title="Date d'expiration" style="flex:1;min-width:130px"><button type="button" class="btn sm" data-rmh>✕</button></div>`;
+  let photo = m.photo || '';
+  const avatar = () => photo ? `<img class="av" style="width:56px;height:56px;margin:0" src="${e(photo)}" alt="">` : '<span class="av ini" style="width:56px;height:56px;font-size:22px;margin:0">?</span>';
   modal(isNew ? 'Nouveau membre' : 'Fiche membre',
-    `<div class="cols">${F('Nom et prénom', 'name', m.name, { req: true, cls: 'full' })}
+    `<div class="cols"><div class="full row" style="margin:0"><span id="mav">${avatar()}</span><label class="btn"><input type="file" id="mphoto" accept="image/*" hidden>📷 Photo</label><button type="button" class="btn" id="mphdel">Retirer</button></div>
+    ${F('Nom et prénom', 'name', m.name, { req: true, cls: 'full' })}${F('Prénom affiché (« Bonjour … »)', 'first', m.first || '', { cls: 'full', ph: 'ex : Michael' })}
     ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
     ${colorField('Couleur (planning)', 'color', m.color, 'full')}
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
@@ -81,7 +84,7 @@ export function memberModal(m) {
       if (o.access && pin) m.pinHash = await auth.hashPin(pin, m.id);
       if (!o.access) delete m.pinHash;
       const habs = $$('.hab', f).map(r => ({ label: $('[data-h=label]', r).value.trim(), expiry: $('[data-h=expiry]', r).value })).filter(h => h.label);
-      Object.assign(m, o, { habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate) });
+      Object.assign(m, o, { photo, habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate) });
       await db.put('members', m);
       if (firstAdmin && m.pinHash) auth.setUser(m.id); // active la protection sans verrouiller son auteur
       toast('Membre enregistré'); refresh();
@@ -96,6 +99,8 @@ export function memberModal(m) {
       },
       onOpen: f => {
         bindColors(f);
+        $('#mphoto', f).onchange = async ev => { const file = ev.target.files[0]; if (!file) return; try { photo = await compressImage(file, { mode: 'photo', maxChars: 6000 }); $('#mav', f).innerHTML = avatar(); } catch (err) { alert(err.message); } };
+        $('#mphdel', f).onclick = () => { photo = ''; $('#mav', f).innerHTML = avatar(); };
         const ad = () => { const k = f.querySelector('[name=access]').value; $('#accdesc', f).textContent = k ? auth.PROFILES[k].desc : 'Ce membre n\'a pas d\'accès : il apparaît seulement dans le planning.'; };
         f.querySelector('[name=access]').onchange = ad; ad();
         $('#addh', f).onclick = () => { $('#habs', f).insertAdjacentHTML('beforeend', habRow({})); };

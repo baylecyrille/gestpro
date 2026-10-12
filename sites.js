@@ -75,7 +75,7 @@ export async function renderSite(el, id) {
   if (site && onlyMine() && !mySites(await db.all('tasks')).has(site.id)) { el.innerHTML = '<div class="empty">Ce chantier ne figure pas dans votre planning.</div>'; return; }
   if (!site) { el.innerHTML = '<div class="empty">Chantier introuvable.</div>'; return; }
   const [docs, payments, tasks, members, moves] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members'), db.all('moves')]);
-  const mg = siteMargin(site.id, docs, moves, tasks, members);
+  const mg = siteMargin(site.id, docs, moves, tasks, members, site);
   const client = contacts.find(c => c.id === site.clientId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
@@ -105,9 +105,11 @@ export async function renderSite(el, id) {
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}` : ''}
     ${siteTeamHtml(site.id, tasks, members, { edit: canAssign, money })}
     ${matHtml}
-    ${money ? `<h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">
+    ${money ? `<h3>Charges non facturées</h3><div class="card">${(site.charges || []).map((c, i) => `<div class="item" data-ch="${i}"><div class="main"><div class="t">${e(c.label)}</div><div class="s">${dateFr(c.date)} · ${num(c.qty)} ${e(c.unit || '')} × ${eur(num(c.cost))}${c.note ? ' · ' + e(c.note) : ''}</div></div><div class="r"><b>${eur(num(c.qty) * num(c.cost))}</b> <button class="btn sm danger" data-chrm="${i}">✕</button></div></div>`).join('') || '<p class="muted" style="margin-top:0">Aucune charge. Ajoutez ici les produits utilisés sur ce chantier mais non facturés au client : ils réduisent la marge.</p>'}${canEdit || auth.can('stock') ? '<button class="btn sm" id="addch">+ Produit / charge</button>' : ''}</div>
+    <h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">
       <div><span>${mg.previsionnel ? 'Marché signé HT (rien de facturé)' : 'Facturé HT (net des avoirs)'}</span><b>${eur(mg.base)}</b></div>
       <div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>
+      <div><span>− Charges non facturées</span><b>${eur(mg.charges)}</b></div>
       <div><span>− Main-d'œuvre (${mg.hours} h × coût horaire)</span><b>${eur(mg.mo)}</b></div>
       <div class="big"><span>Marge ${mg.previsionnel ? 'prévisionnelle' : ''}</span><span style="color:${mg.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(mg.marge)}${mg.pct !== null ? ` (${mg.pct} %)` : ''}</span></div></div>
       <p class="muted" style="margin-bottom:0">Les matières viennent des sorties de stock rattachées à ce chantier (« Déduire du stock » depuis une facture, ou sortie manuelle avec chantier).</p></div>` : ''}
@@ -115,6 +117,8 @@ export async function renderSite(el, id) {
   $('#stat', el).onchange = async ev => { site.status = ev.target.value; await db.put('sites', site); toast('Statut mis à jour'); refresh(); };
   if (canAssign) $('#assign', el).onclick = () => assignModal(null, { siteId: site.id });
   $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
+  $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
+  $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
   if (!canEdit) return;
   $('#edit', el).onclick = () => siteModal(site, clients, false);
   $('#del', el).onclick = async () => {
@@ -143,4 +147,32 @@ function siteModal(site, clients, isNew) {
     });
   bindColors($('#modal'));
   if (isNew) $('#modal').addEventListener('close', () => { if (location.hash === '#/site/new') go('#/sites'); }, { once: true });
+}
+
+/* Produit ou frais rattaché au chantier mais non facturé : compté en charge dans la rentabilité */
+function chargeModal(site, prods) {
+  const sold = prods.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  modal('Charge non facturée', `<div class="cols">
+    <label class="f full"><span>Produit (facultatif)</span><select name="pid"><option value="">— saisie libre —</option>${sold.map(p => `<option value="${p.id}">${e(p.name)}${p.kind === 'internal' ? ' (usage interne)' : ''}</option>`).join('')}</select></label>
+    ${F('Désignation', 'label', '', { req: true, cls: 'full' })}
+    ${F('Quantité', 'qty', 1, { type: 'number', step: 'any' })}${F('Unité', 'unit', 'u')}
+    ${F('Coût unitaire HT (€)', 'cost', 0, { type: 'number', step: '0.01' })}${F('Date', 'date', today(), { type: 'date' })}
+    <label class="f full" id="stk" hidden><span><input type="checkbox" name="stock"> Sortir aussi du stock (le produit est stocké)</span></label>
+    ${F('Note', 'note', '', { cls: 'full' })}</div>`,
+    async o => {
+      const p = prods.find(x => x.id === o.pid);
+      if (o.stock && p) {
+        const { recordMove } = await import('./stock.js');
+        const L = Object.entries(p.stock || {}).sort((a, b) => b[1] - a[1])[0];
+        if (!L) throw new Error('Ce produit n\'a pas de stock.');
+        await recordMove(p, { type: 'out', from: L[0], qty: num(o.qty), unit: num(o.cost), siteId: site.id, note: o.note || 'Charge chantier ' + o.label });
+      } else {
+        site.charges = [...(site.charges || []), { id: db.uid(), pid: o.pid || '', label: o.label.trim(), qty: num(o.qty), unit: o.unit, cost: num(o.cost), date: o.date, note: o.note }];
+        await db.put('sites', site);
+      }
+      refresh();
+    }, { onOpen: f => {
+      const sel = f.querySelector('[name=pid]');
+      sel.onchange = () => { const p = prods.find(x => x.id === sel.value); f.querySelector('#stk').hidden = !p; if (p) { f.querySelector('[name=label]').value = p.name; f.querySelector('[name=unit]').value = p.unit || 'u'; f.querySelector('[name=cost]').value = p.buy || 0; } };
+    } });
 }

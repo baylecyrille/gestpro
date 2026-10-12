@@ -349,7 +349,7 @@ async function printDoc(doc) {
     <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${e(S.sub || S.company)}</div>
       <p><b>${e(S.owner)}</b><br>${e(S.address).replace(/\n/g, '<br>')}<br>${e(S.phone)}<br>${e(S.legal)}<br>${e(S.email)}<br>${e(S.web)}<br>N°SIRET : ${e(S.siret)}</p></div>
       <div><p class="small" style="margin-top:0">${S.rge ? `<b>RGE</b> Numéro ${e(S.rge)}<br>` : ''}${S.insurance ? `Assurance Responsabilité Travaux ${e(S.insurance)}<br>Assurance Responsabilité Civile ${e(S.insurance)}` : ''}</p>
-      <div class="cl">${e(cname(c) || '')}${c.company ? '\n' + e(c.company) : ''}\n${e(addr)}</div>
+      <div class="cl">${e(cname(c) || '')}${c.company ? '\n' + e([c.companyCiv, c.company].filter(Boolean).join(' ')) : ''}\n${e(addr)}</div>
       <p><u><b>Réf chantier :</b></u><br>${e(doc.siteRef || '')}<br><b>${e(doc.siteAddr || '').replace(/\n/g, '<br>')}</b></p></div></div>
     <h1>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(doc.number)}</h1>
     <div class="hd"><div><b><u>${e(doc.intro || '')}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>

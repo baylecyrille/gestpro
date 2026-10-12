@@ -13,23 +13,38 @@ import * as auth from './auth.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
+  const nm = (S.appName || '').trim() || 'GestPro';
+  const br = document.querySelector('.brand'); if (br) br.textContent = nm;
+  document.title = nm + ' – Stock, devis, factures';
   const r = document.documentElement.style;
   if (S.wallpaper === false) { r.setProperty('--logo', 'none'); return; }
   r.setProperty('--logo', `url("${logoSrc(S)}")`);
 }
 
 /* ---------- Contacts ---------- */
+/* Devis, chantiers, factures et avoirs rattachés à un client (dans sa fiche) */
+async function fillRel(f, c) {
+  const [docs, sites, pays] = await Promise.all([db.all('documents'), db.all('sites'), db.all('payments')]);
+  const mine = docs.filter(d => d.clientId === c.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
+  const doc = d => { const t = totals(d); return `<a class="item" href="#/doc/${d.id}"><div class="main"><div class="t">${e(d.number || '(sans numéro)')}</div><div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b></div></a>`; };
+  const blk = (title, list, fn) => `<h4>${title} (${list.length})</h4>${list.map(fn).join('') || '<p class="muted" style="margin:0">Aucun.</p>'}`;
+  const sl = sites.filter(s => s.clientId === c.id).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const box = f.querySelector('#rel'); if (!box) return;
+  box.innerHTML = blk('Chantiers', sl, s => `<a class="item" href="#/site/${s.id}"><div class="main"><div class="t">${e(s.name)}</div><div class="s">${e(SS[s.status] || '')}</div></div></a>`)
+    + blk('Devis', mine.filter(d => d.type === 'quote'), doc) + blk('Factures', mine.filter(d => d.type === 'invoice'), doc) + blk('Avoirs', mine.filter(d => d.type === 'credit'), doc);
+  box.addEventListener('click', ev => { if (ev.target.closest('a')) document.querySelector('#modal').close(); });
+}
 export function contactModal(c, kind, onSaved) {
   const isNew = !c; c = c || { kind };
   const body = `<div class="cols"><label class="f"><span>Civilité / forme (libre)</span><input name="civ" value="${e(c.civ || '')}" list="civs" placeholder="Mr, Mme, Mr et Mme, SARL…" autocomplete="off"><datalist id="civs">${CIVS.map(x => `<option value="${e(x)}">`).join('')}</datalist></label>${F('Nom / raison sociale', 'name', c.name, { req: true })}
-    ${F('Contact (personne)', 'company', c.company, { cls: 'full' })}
+    <label class="f"><span>Civilité du contact</span><input name="companyCiv" value="${e(c.companyCiv || '')}" list="civs" autocomplete="off" placeholder="Mr, Mme…"></label>${F('Contact (personne)', 'company', c.company)}
     ${F('Adresse', 'address', c.address, { cls: 'full' })}${F('Code postal', 'zip', c.zip)}${F('Ville', 'city', c.city)}
     ${F('Téléphone', 'phone', c.phone, { type: 'tel' })}${F('E-mail', 'email', c.email, { type: 'email' })}
-    ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>`;
+    ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>${!isNew && c.kind !== 'supplier' ? '<div class="rel" id="rel"></div>' : ''}`;
   modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : 'client'}`, body, async o => {
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
-  }, { del: isNew ? null : async () => {
+  }, { onOpen: f => { if (!isNew && c.kind !== 'supplier') fillRel(f, c); }, del: isNew ? null : async () => {
     const docs = await db.all('documents');
     if (docs.some(d => d.clientId === c.id)) return alert('Ce client a des devis/factures : suppression impossible.');
     await db.del('contacts', c.id); refresh(); } });
@@ -97,7 +112,7 @@ async function renderDashboard(el) {
 
   // chantiers ouverts avec marge
   const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
-  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members); const st = siteStats(x.id, docs, payments);
+  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members, x); const st = siteStats(x.id, docs, payments);
     return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div></div>
       <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
 
@@ -117,7 +132,8 @@ async function renderDashboard(el) {
   habAlerts.sort((a, b) => (a.h.expiry || '').localeCompare(b.h.expiry || ''));
   const lateDays = d => Math.floor((Date.parse(today()) - Date.parse(d)) / 864e5);
 
-  el.innerHTML = `<h2>Bonjour 👋</h2>
+  const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
+  el.innerHTML = `<h2>Bonjour 👋${first ? ' ' + e(first) : ''}</h2>
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
     <div class="grid">
       <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC</small></a>
@@ -153,6 +169,7 @@ async function renderSettings(el) {
   const S = await getS();
   el.innerHTML = `<h2>Réglages</h2><form id="sf" class="card"><div class="cols">
     <h3 class="full">Entreprise (en-tête des documents)</h3>
+    ${F('Nom de l\'application', 'appName', S.appName, { cls: 'full' })}
     ${F('Raison sociale', 'company', S.company)}${F('Dirigeant', 'owner', S.owner)}
     ${F('Activité (titre bleu)', 'sub', S.sub, { type: 'textarea', rows: 2, cls: 'full' })}
     ${F('Adresse', 'address', S.address, { type: 'textarea', rows: 2 })}${F('Ville (« Lussac, le … »)', 'city', S.city)}
@@ -324,7 +341,8 @@ function applyAccess() {
   const ok = { dashboard: auth.can('dashboard'), sites: auth.can('sites'), planning: auth.can('planning'), stock: auth.can('stock'), docs: auth.can('quotes') || auth.can('invoices') || auth.can('credits'), contacts: auth.can('contacts'), facebook: auth.can('facebook'), settings: auth.can('settings') };
   $$('#nav a').forEach(a => (a.hidden = ok[a.dataset.r] === false));
   const u = $('#user'), me = auth.currentUser();
-  u.hidden = !me; if (me) u.textContent = '👤 ' + me.name.split(' ')[0];
+  u.hidden = !me;
+  if (me) { const fn = me.first || me.name.split(' ')[0]; u.innerHTML = (me.photo ? `<img class="av" src="${e(me.photo)}" alt="">` : `<span class="av ini">${e(fn.slice(0, 1).toUpperCase())}</span>`) + e(fn); }
 }
 $('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.logout(); route(); } };
 

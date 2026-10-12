@@ -55,6 +55,13 @@ export function pruneBlocks(d) {
   d.blocks = d.blocks.filter(b => b.type === 'line' ? (b.desig || num(b.pu)) : b.type === 'section' ? plain(b.title) : b.type === 'text' ? plain(b.html) : true);
   syncLines(d);
 }
+/* Sous-total d'une section : lignes situées entre cette section et la suivante */
+export function sectionTotals(bl) {
+  const out = {}; let cur = null;
+  for (const b of bl) { if (b.type === 'section') { cur = b.id; out[cur] = 0; } else if (b.type === 'line' && cur) out[cur] += num(b.qty) * num(b.pu); }
+  for (const k in out) out[k] = Math.round(out[k] * 100) / 100;
+  return out;
+}
 export const copyBlocks = bl => JSON.parse(JSON.stringify(bl || [])).map(b => ({ ...b, id: bid() }));
 
 /* ---------- Rendu pour l'impression ---------- */
@@ -65,7 +72,16 @@ const LIGHT = ['#dbe7f7', '#fde8e8', '#e6f4ea', '#fff4cc', '#ece6f8', '#eeeeee',
 const pal = (attr, cols, title) => `<details class="pal"><summary title="${title}">${attr === 'fc' ? 'A' : '▇'}</summary><div class="palbox">${cols.map(c => `<button type="button" class="sw" data-${attr}="${c}" style="background:${c}"></button>`).join('')}<label class="sw custom" title="Autre couleur"><input type="color" data-${attr}-x value="#c62f2f"><i>+</i></label></div></details>`;
 const secStyle = b => [`color:${b.color || STY.secColor}`, `background:${b.bg === 'none' ? 'transparent' : b.bg || STY.secBg}`, b.bold !== false && 'font-weight:700', b.italic && 'font-style:italic', b.align && `text-align:${b.align}`].filter(Boolean).join(';');
 export function printRows(d) {
-  return d.blocks.map(b => {
+  const st = sectionTotals(d.blocks);
+  const subRow = sec => `<tr class="subt"><td colspan="4" style="text-align:right;font-style:italic">Sous-total ${e(sec.title)}</td><td class="n"><i>${eur(st[sec.id])}</i></td></tr>`;
+  const out = []; let open = null;
+  for (const b of d.blocks) {
+    if (b.type === 'section') { if (open) out.push({ _sub: open }); open = b.sub ? b : null; }
+    out.push(b);
+  }
+  if (open) out.push({ _sub: open });
+  return out.map(b => {
+    if (b._sub) return subRow(b._sub);
     const bgl = STY.lineBg && STY.lineBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.lineBg)}"` : '';
     const bgt = STY.textBg && STY.textBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.textBg)}"` : '';
     if (b.type === 'line') return `<tr${bgl}><td>${e(b.desig)}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td><td class="n">${eur(num(b.qty) * num(b.pu))}</td></tr>`;
@@ -133,7 +149,8 @@ function bindToolbar(root, target, after = () => {}) {
 /* ---------- Éditeur de blocs ---------- */
 export function mountBlocks(box, d, { onChange, readHeader }) {
   let active = null; // éditeur texte actif
-  const change = () => { syncLines(d); onChange(); };
+  const updSub = () => { const st = sectionTotals(d.blocks); $$('[data-sub]', box).forEach(n => { const b = d.blocks.find(x => x.id === n.dataset.sub); n.textContent = b && b.sub ? 'Sous-total : ' + eur(st[b.id]) : ''; }); };
+  const change = () => { syncLines(d); updSub(); onChange(); };
   box.innerHTML = `<div class="rte-wrap">${toolbarHtml()}</div><div id="blks"></div>
     <div class="row addbar"><button type="button" class="btn" id="addp">+ Produit</button><button type="button" class="btn" id="addl">+ Ligne libre</button>
       <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
@@ -148,8 +165,9 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT"><div class="tot" data-t>${eur(num(b.qty) * num(b.pu))}</div></div>`;
     if (b.type === 'section') return `<div class="sec-ed"><input data-k="title" value="${e(b.title)}" placeholder="Titre de la section" style="${e(secStyle(b))}">
+      <b class="subv" data-sub="${b.id}">${b.sub ? 'Sous-total : ' + eur(sectionTotals(d.blocks)[b.id]) : ''}</b>
       <span class="mini">${pal('sc', COLOR_NAMES.map(c => c[0]).concat('#ffffff'), 'Couleur du texte')}${pal('sb', LIGHT.concat(COLOR_NAMES.map(c => c[0])), 'Couleur de fond')}
-      <button type="button" data-tg="nobg" title="Sans fond">∅</button><button type="button" data-tg="bold" title="Gras"><b>G</b></button><button type="button" data-tg="italic" title="Italique"><i>I</i></button>
+      <button type="button" data-tg="sub" title="Afficher un sous-total à la fin de la section" class="${b.sub ? 'on' : ''}">Σ</button><button type="button" data-tg="nobg" title="Sans fond">∅</button><button type="button" data-tg="bold" title="Gras"><b>G</b></button><button type="button" data-tg="italic" title="Italique"><i>I</i></button>
       <button type="button" data-al="left">⟸</button><button type="button" data-al="center">≡</button></span></div>`;
     if (b.type === 'text') return `<div class="rte" contenteditable="true" data-ph="Texte libre (commentaire, précision, mention…)">${sanitize(b.html)}</div>`;
     return '<div class="pbk-ed">— Saut de page —</div>';
@@ -185,7 +203,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       getS().then(async S => { await db.saveSettings({ ...S, snippets: [...(S.snippets || []), { name: name.trim(), html: sanitize(b.html) }] }); toast('Modèle enregistré'); });
     } else if (ev.target.closest('[data-tg]')) {
       const t = ev.target.closest('[data-tg]').dataset.tg;
-      if (t === 'nobg') b.bg = 'none'; else b[t] = t === 'bold' ? b.bold === false : !b[t];
+      if (t === 'nobg') b.bg = 'none'; else if (t === 'sub') b.sub = !b.sub; else b[t] = t === 'bold' ? b.bold === false : !b[t];
       draw(); change();
     } else if (ev.target.closest('[data-sc],[data-sb]')) { const x = ev.target.closest('[data-sc],[data-sb]'); if (x.dataset.sc) b.color = x.dataset.sc; else b.bg = x.dataset.sb; draw(); change();
     } else if (ev.target.closest('[data-al]')) { b.align = ev.target.closest('[data-al]').dataset.al; draw(); change(); }
@@ -203,8 +221,8 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   });
 
   $('#addl', box).onclick = () => add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
-  $('#addp', box).onclick = () => { readHeader(); pickProduct(p => add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 })); };
-  $('#adds', box).onclick = () => add({ type: 'section', title: '', color: '#1e5aa8', bg: '#dbe7f7', bold: true });
+  $('#addp', box).onclick = () => { readHeader(); pickProduct(p => add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }), { sale: true }); };
+  $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: true });
   $('#addt', box).onclick = () => add({ type: 'text', html: '' });
   $('#addb', box).onclick = () => add({ type: 'pagebreak' });
   $('#addm', box).onclick = () => snippetsModal(s => add({ type: 'text', html: sanitize(s.html) }));

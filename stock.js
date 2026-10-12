@@ -70,6 +70,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     <button class="btn" id="imp">Importer</button></div>
     <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button></div>
     <label class="row"><input type="checkbox" id="low"> <span>Seulement stock bas / épuisé</span></label>
+    <div class="row"><select id="kindf" style="width:auto"><option value="">Tous les articles</option><option value="sale">Articles vendus</option><option value="internal">Usage interne (consommables)</option></select></div>
     <div id="list"></div>`;
   const list = $('#list', body);
   const draw = () => {
@@ -78,6 +79,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     const rows = products.filter(p => {
       const t = total(p);
       if (low && !(t <= (p.min || 0))) return false;
+      const kf = $('#kindf', body).value; if (kf === 'internal' && p.kind !== 'internal') return false; if (kf === 'sale' && p.kind === 'internal') return false;
       return !q || [p.name, p.ref, p.barcode, p.category].join(' ').toLowerCase().includes(q);
     });
     list.innerHTML = rows.length ? rows.map(p => {
@@ -85,13 +87,13 @@ function productsTab(body, products, locs, contacts, photos = {}) {
       const cls = t <= 0 ? 'bad' : t <= (p.min || 0) ? 'warn' : 'ok';
       const chips = Object.entries(p.stock || {}).filter(([, q]) => q).map(([k, q]) => `<span class="chip">${e(locLabel(L[k]))} : ${q}</span>`).join('');
       const th = photos[p.id] ? `<img class="pthumb" src="${photos[p.id]}" alt="">` : '<div class="pthumb ph">▦</div>';
-      return `<div class="item" data-id="${p.id}">${th}<div class="main"><div class="t">${e(p.name)}</div>
+      return `<div class="item" data-id="${p.id}">${th}<div class="main"><div class="t">${e(p.name)}${p.kind === 'internal' ? ' <span class="chip">usage interne</span>' : ''}</div>
         <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}</div>${chips}</div>
-        <div class="r"><span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span><div class="s">${eur(p.sell)} HT</div></div></div>`;
+        <div class="r"><span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span><div class="s">${p.kind === 'internal' ? 'non vendu' : eur(p.sell) + ' HT'}</div></div></div>`;
     }).join('') : '<div class="empty">Aucun produit. Ajoutez-en un ou importez vos listes Excel.</div>';
   };
   draw();
-  $('#q', body).oninput = draw; $('#low', body).onchange = draw;
+  $('#q', body).oninput = draw; $('#low', body).onchange = draw; $('#kindf', body).onchange = draw;
   list.onclick = ev => { const it = ev.target.closest('.item'); if (it) productModal(products.find(p => p.id === it.dataset.id), locs, contacts, products); };
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);
@@ -114,6 +116,7 @@ export function productModal(p, locs, contacts, products, preset = {}) {
     ${F('Référence', 'ref', p.ref)}
     <div><label class="f"><span>Code-barres</span><div style="display:flex;gap:6px"><input name="barcode" value="${e(p.barcode)}" inputmode="text"><button type="button" class="btn" data-scan>▦</button></div></label></div>
     ${F('Catégorie', 'category', p.category)}
+    ${F('Type d\'article', 'kind', p.kind || 'sale', { type: 'select', options: [['sale', 'Vendu aux clients'], ['internal', 'Usage interne (non vendu : encre, papier, consommables…)']], cls: 'full' })}
     ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: UNITS.map(u => [u, u]) })}
     ${F('Prix d\'achat HT', 'buy', p.buy ?? '', { type: 'number', step: '0.01' })}
     ${F('Prix de vente HT', 'sell', p.sell ?? '', { type: 'number', step: '0.01' })}
@@ -130,7 +133,7 @@ export function productModal(p, locs, contacts, products, preset = {}) {
   modal(isNew ? 'Nouveau produit' : 'Produit', body, async o => {
     const dup = o.barcode && products.find(x => x.barcode === o.barcode && x.id !== p.id);
     if (dup) throw new Error(`Ce code-barres est déjà utilisé par « ${dup.name} ».`);
-    Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), min: num(o.min), supplierId: o.supplierId, note: o.note });
+    Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, kind: o.kind || 'sale', unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), min: num(o.min), supplierId: o.supplierId, note: o.note });
     const saved = await db.put('products', p);
     if (newPhoto !== undefined) {
       const v = Date.now();
@@ -180,8 +183,8 @@ export function lookupScan() {
 }
 
 // Sélecteur de produit (recherche + scan) utilisé par les devis/factures
-export async function pickProduct(cb) {
-  const products = (await db.all('products')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+export async function pickProduct(cb, { sale = false } = {}) {
+  const products = (await db.all('products')).filter(p => !sale || p.kind !== 'internal').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
   const body = `<div class="row"><input class="search" id="pq" type="search" placeholder="Rechercher un produit…"><button type="button" class="btn" id="ps">▦</button></div><div id="pl"></div>`;
   modal('Ajouter un produit', body, null, {
