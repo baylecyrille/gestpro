@@ -228,3 +228,22 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   $('#addm', box).onclick = () => snippetsModal(s => add({ type: 'text', html: sanitize(s.html) }));
   return { redraw: draw };
 }
+
+/* ---------- Champs texte enrichi (intitulé, remarque…) ---------- */
+export function richHtml(s) { // texte brut ancien (avec retours à la ligne) ou HTML déjà enrichi
+  s = String(s || '');
+  return /<\/?[a-z][\s\S]*>/i.test(s) ? sanitize(s) : e(s).replace(/\n/g, '<br>');
+}
+export function richField(label, key, value, { rows = 1 } = {}) {
+  return `<div class="f full richf" data-rf="${key}"><span>${label}</span>
+    <div class="rte-wrap">${toolbarHtml()}<button type="button" class="btn sm" data-rtpl>Modèles de texte…</button></div>
+    <div class="rte" contenteditable="true" data-rich="${key}" style="min-height:${rows > 1 ? 80 : 42}px" data-ph="Texte (mise en forme possible)">${richHtml(value)}</div></div>`;
+}
+export function bindRichFields(root) {
+  $$('.richf', root).forEach(box => {
+    const rte = $('.rte', box);
+    bindToolbar(box, () => rte);
+    $('[data-rtpl]', box).onclick = () => snippetsModal(s => { rte.focus(); if (!document.execCommand('insertHTML', false, sanitize(s.html))) rte.innerHTML += sanitize(s.html); });
+  });
+}
+export const readRich = root => { const o = {}; $$('[data-rich]', root).forEach(r => { o[r.dataset.rich] = sanitize(r.innerHTML); }); return o; };

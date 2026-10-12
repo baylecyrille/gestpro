@@ -27,6 +27,7 @@ export const DEFAULTS = {
   invPrefix: 'FAC-2026-', invNext: 1, creditPrefix: 'AV-2026-', creditNext: 1, pad: 4,
   validity: 30,
   appName: 'GestPro',
+  autoCloseSites: true,
   stSecColor: '#1e5aa8', stSecBg: '#dbe7f7', stLineBg: '#ffffff', stTextBg: '#f6f7f9',
   fbPage: '', fbId: '', fbToken: '',
   googleClientId: '',

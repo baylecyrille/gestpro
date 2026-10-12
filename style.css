@@ -208,3 +208,8 @@ nav#nav a[hidden]{display:none}
 .av.ini{display:inline-grid;place-items:center;background:var(--p,#2f7ad6);color:#fff;font-size:11px;font-weight:700}
 .rel h4{margin:10px 0 4px;font-size:13px}
 .rel a.item{text-decoration:none;color:inherit;padding:6px 8px;margin-bottom:4px}
+.ac{position:absolute;left:0;right:0;top:100%;z-index:50;background:var(--card,#fff);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.18);max-height:240px;overflow:auto}
+.ac button{display:block;width:100%;text-align:left;border:0;background:none;padding:9px 10px;font:inherit;color:inherit;cursor:pointer;border-bottom:1px solid var(--bd)}
+.ac button:hover{background:rgba(47,122,214,.12)}
+.richf .rtb{display:none}.richf:focus-within .rtb{display:flex}
+.richf .rte-wrap{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px}

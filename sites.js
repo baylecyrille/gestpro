@@ -1,6 +1,6 @@
 // Chantiers : fiche centrale qui relie client, devis, factures, avoirs et règlements.
 import * as db from './db.js';
-import { e, eur, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, F, addressAutocomplete, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
@@ -10,7 +10,7 @@ import * as auth from './auth.js';
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
 const mySites = (tasks) => new Set(tasks.filter(t => t.memberId === auth.currentUser()?.id).map(t => t.siteId));
 
-export const SS = { new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Payé', lost: 'Perdu' };
+export const SS = { new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Terminé', lost: 'Perdu' };
 export const SCOL = { new: '', signed: 'warn', progress: 'warn', paid: 'ok', lost: 'bad' };
 const OPEN = ['new', 'signed', 'progress'];
 
@@ -48,7 +48,7 @@ export async function renderSites(el, tab = 'open') {
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const list = sites.filter(s => tab === 'all' || (tab === 'open' ? OPEN.includes(s.status) : s.status === tab))
     .sort((a, b) => (b.start || b._u + '').localeCompare(a.start || a._u + ''));
-  el.innerHTML = `<h2>Chantiers</h2>${tabs('#/sites', [['open', 'Ouverts'], ['paid', 'Payés'], ['lost', 'Perdus'], ['all', 'Tous']], tab)}
+  el.innerHTML = `<h2>Chantiers</h2>${tabs('#/sites', [['open', 'Ouverts'], ['paid', 'Terminés'], ['lost', 'Perdus'], ['all', 'Tous']], tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (nom, client, adresse)…">${canEdit ? '<a class="btn primary" href="#/site/new">+ Chantier</a>' : ''}</div><div id="list"></div>`;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
@@ -90,7 +90,7 @@ export async function renderSite(el, id) {
     return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')}</div><div class="s">${dateFr(d.date)}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
   };
   const sect = (title, type, label) => `<h3>${title}</h3>${mine.filter(d => d.type === type).map(row).join('') || '<p class="muted">Aucun.</p>'}${label ? `<a class="btn sm" href="#/doc/new/${type}-${site.id}">+ ${label}</a>` : ''}`;
-  el.innerHTML = `<div class="row"><a class="btn ghost" href="#/sites">← Chantiers</a><span class="sp"></span>${canEdit ? '<button class="btn" id="edit">Modifier</button>' : ''}</div>
+  el.innerHTML = `<div class="row"><a class="btn ghost" href="#/sites">← Chantiers</a><span class="sp"></span>${canEdit ? `<button class="btn ${site.status === 'paid' ? '' : 'primary'}" id="finish">${site.status === 'paid' || site.status === 'lost' ? '↺ Rouvrir le chantier' : '✓ Terminer le chantier'}</button><button class="btn" id="edit">Modifier</button>` : ''}</div>
     <h2><span class="dot" style="background:${e(site.color || '#2f7ad6')}"></span> ${e(site.name)}</h2>
     <div class="card"><div class="row" style="margin:0"><select id="stat" style="width:auto" ${canEdit ? '' : 'disabled'}>${Object.entries(SS).map(([k, l]) => `<option value="${k}" ${k === site.status ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <span class="muted">${site.start ? dateFr(site.start) : 'dates non fixées'}${site.end ? ' → ' + dateFr(site.end) : ''}</span></div>
@@ -121,6 +121,13 @@ export async function renderSite(el, id) {
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
   if (!canEdit) return;
   $('#edit', el).onclick = () => siteModal(site, clients, false);
+  $('#finish', el).onclick = async () => {
+    const closed = site.status === 'paid' || site.status === 'lost';
+    if (!closed && st.resteAPayer > 0.005 && !confirm(`Il reste ${eur(st.resteAPayer)} à encaisser sur ce chantier. Le terminer quand même ?`)) return;
+    site.status = closed ? (mine.some(d => d.type === 'invoice') ? 'progress' : 'signed') : 'paid';
+    if (!closed && !site.end) site.end = today();
+    await db.put('sites', site); toast(closed ? 'Chantier rouvert' : 'Chantier terminé'); refresh();
+  };
   $('#del', el).onclick = async () => {
     if (!confirm('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien) ; le planning de ce chantier est supprimé.')) return;
     for (const d of mine) { d.siteId = ''; await db.put('documents', d); }
@@ -146,6 +153,7 @@ function siteModal(site, clients, isNew) {
       toast('Chantier enregistré'); isNew ? go('#/site/' + saved.id) : refresh();
     });
   bindColors($('#modal'));
+  addressAutocomplete($('#modal [name=address]'), it => { $('#modal [name=address]').value = it.label; });
   if (isNew) $('#modal').addEventListener('close', () => { if (location.hash === '#/site/new') go('#/sites'); }, { once: true });
 }
 

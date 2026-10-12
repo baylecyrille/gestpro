@@ -283,3 +283,37 @@ export const CIVS = ['Mr', 'Mme', 'Mlle', 'Mr et Mme', 'Mme et Mr', 'Mr et Mr', 
 const CIV_RE = /^((?:Mr|M\.?)\s*(?:et\s+)?Mme|Mme\s+(?:et\s+)?(?:Mr|M\.?)|Mr et Mr|Mme et Mme|Messieurs|Mesdames|Monsieur|Madame|Mlle|Mle|Melle|Mme|Mr|M|SARL|SASU|SAS|EURL|EARL|GAEC|SCI|SA)(?:\.\s*|\s+)(?=\S)/i;
 /* Sépare « Mr DUPONT Jean » en { civ: 'Mr', name: 'DUPONT Jean' } */
 export function splitCiv(name) { const m = String(name || '').trim().match(CIV_RE); return m ? { civ: m[1], name: String(name).trim().slice(m[0].length).trim() } : null; }
+
+/* Saisie d'adresse assistée : Base Adresse Nationale (api-adresse.data.gouv.fr, gratuite, sans clé, adresses françaises).
+   onPick({ label, street, zip, city }) est appelé au choix d'une suggestion. Silencieux si hors ligne. */
+export function addressAutocomplete(input, onPick) {
+  if (!input || input.dataset.ac) return; input.dataset.ac = '1';
+  const host = input.parentElement; host.style.position = 'relative';
+  const box = document.createElement('div'); box.className = 'ac'; box.hidden = true; host.appendChild(box);
+  let timer, seq = 0, last = '';
+  input.setAttribute('autocomplete', 'off');
+  const hide = () => { box.hidden = true; box.innerHTML = ''; };
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.split('\n').join(' ').trim();
+    if (q.length < 4 || q === last) { if (q.length < 4) hide(); return; }
+    timer = setTimeout(async () => {
+      const my = ++seq;
+      try {
+        const r = await fetch('https://api-adresse.data.gouv.fr/search/?limit=6&q=' + encodeURIComponent(q));
+        if (!r.ok || my !== seq) return;
+        const j = await r.json();
+        const items = (j.features || []).map(f => ({ label: f.properties.label, street: f.properties.name, zip: f.properties.postcode, city: f.properties.city }));
+        if (!items.length) return hide();
+        box.innerHTML = items.map((it, i) => `<button type="button" data-i="${i}">${e(it.label)}</button>`).join('');
+        box.hidden = false; box._items = items;
+      } catch { /* hors ligne : saisie libre */ }
+    }, 300);
+  });
+  box.addEventListener('mousedown', ev => ev.preventDefault());
+  box.addEventListener('click', ev => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const it = box._items[+b.dataset.i]; last = it.label; hide(); onPick(it);
+  });
+  input.addEventListener('blur', () => setTimeout(hide, 150));
+}

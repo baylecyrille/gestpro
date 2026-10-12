@@ -1,7 +1,7 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
-import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
@@ -44,15 +44,34 @@ export function contactModal(c, kind, onSaved) {
   modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : 'client'}`, body, async o => {
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
-  }, { onOpen: f => { if (!isNew && c.kind !== 'supplier') fillRel(f, c); }, del: isNew ? null : async () => {
+  }, { onOpen: f => { addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind !== 'supplier') fillRel(f, c); }, del: isNew ? null : async () => {
     const docs = await db.all('documents');
     if (docs.some(d => d.clientId === c.id)) return alert('Ce client a des devis/factures : suppression impossible.');
     await db.del('contacts', c.id); refresh(); } });
 }
 
+/* Équipe dans les contacts : mêmes fiches que « Équipe / planning » (une seule source) */
+async function renderTeamContacts(el) {
+  const { memberModal, ROLES } = await import('./team.js');
+  const members = (await db.all('members')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const R = Object.fromEntries(ROLES), edit = auth.can('team.edit') || auth.can('settings');
+  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], 'team')}
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…">${edit ? '<button class="btn primary" id="add">+ Membre</button>' : ''}</div><div id="list"></div>`;
+  const draw = () => {
+    const q = $('#q', el).value.toLowerCase();
+    $('#list', el).innerHTML = members.filter(m => !q || [m.name, m.first, m.phone, m.email, R[m.role]].join(' ').toLowerCase().includes(q)).map(m => `<div class="item" data-id="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}>${m.photo ? `<img class="av" style="width:38px;height:38px;margin:0" src="${e(m.photo)}" alt="">` : `<span class="avatar" style="background:${e(m.color || '#2f7ad6')}">${e((m.name || '?').split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase())}</span>`}
+      <div class="main"><div class="t">${e(m.name)} <small class="muted">${e(R[m.role] || '')}${m.active === false ? ' · inactif' : ''}</small></div><div class="s">${[m.phone, m.email].filter(Boolean).map(e).join(' · ')}</div></div>
+      <div class="r">${m.phone ? `<a class="btn sm" href="tel:${e(m.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`).join('') || '<div class="empty">Aucun membre.</div>';
+  };
+  draw(); $('#q', el).oninput = draw;
+  $('#add', el)?.addEventListener('click', () => memberModal());
+  $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a') && edit) memberModal(members.find(m => m.id === it.dataset.id)); };
+}
+
 async function renderContacts(el, tab = 'client') {
+  if (tab === 'team') return renderTeamContacts(el);
   const [contacts, docs, payments] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('payments')]);
-  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs']], tab)}
+  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…"><button class="btn primary" id="add">+ ${tab === 'client' ? 'Client' : 'Fournisseur'}</button></div><div id="list"></div>`;
   const list = contacts.filter(c => c.kind === tab).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const draw = () => {
@@ -194,6 +213,7 @@ async function renderSettings(el) {
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
     ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}
+    <label class="f full"><span><input type="checkbox" name="autoCloseSites" ${S.autoCloseSites !== false ? 'checked' : ''}> Terminer automatiquement un chantier quand tout est facturé et réglé</span></label>
     ${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
@@ -285,7 +305,7 @@ async function renderSettings(el) {
     const o = Object.fromEntries(new FormData(ev.target));
     ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
-    o.wallpaper = !!o.wallpaper;
+    o.wallpaper = !!o.wallpaper; o.autoCloseSites = !!o.autoCloseSites;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));

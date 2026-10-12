@@ -1,11 +1,11 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
-import { e, eur, num, round2, dateFr, today, cname, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
-import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles } from './blocks.js';
+import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
 
@@ -55,6 +55,24 @@ async function syncInvStatus(docId) {
   const t = totals(d).ttc, full = t > 0 && paidOf(await db.all('payments'), docId) >= t - 0.005;
   const ns = full ? 'paid' : d.status === 'paid' ? 'sent' : d.status;
   if (ns !== d.status) { d.status = ns; await db.put('documents', d); }
+  if (full) await autoCloseSite(d.siteId);
+}
+
+/* Chantier terminé automatiquement quand tout le marché est facturé et toutes les factures sont réglées */
+async function autoCloseSite(siteId) {
+  if (!siteId) return;
+  const S = await getS(); if (S.autoCloseSites === false) return;
+  const site = await db.get('sites', siteId);
+  if (!site || !['new', 'signed', 'progress'].includes(site.status)) return;
+  const [docs, pays] = await Promise.all([db.all('documents'), db.all('payments')]);
+  const mine = docs.filter(x => x.siteId === siteId && x.status !== 'draft');
+  const invs = mine.filter(x => x.type === 'invoice');
+  if (!invs.length || invs.some(x => paidOf(pays, x.id) < totals(x).ttc - 0.005)) return;
+  const market = mine.filter(x => x.type === 'quote' && ['accepted', 'invoiced'].includes(x.status)).reduce((a, x) => a + totals(x).ttc, 0);
+  const billed = invs.reduce((a, x) => a + totals(x).ttc, 0) - mine.filter(x => x.type === 'credit').reduce((a, x) => a + totals(x).ttc, 0);
+  if (market - billed > 0.5) return;
+  site.status = 'paid'; if (!site.end) site.end = today();
+  await db.put('sites', site); toast('Chantier terminé : tout est facturé et réglé');
 }
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
@@ -151,8 +169,8 @@ export async function renderDoc(el, id, arg) {
       ${F(isQ ? 'N° de devis' : isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : ''}
       ${F('Réf. chantier', 'siteRef', cur.siteRef, { cls: 'full' })}
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
-      ${F('Intitulé', 'intro', cur.intro, { cls: 'full' })}
-      ${F(isC ? 'Motif de l\'avoir' : 'Remarque', 'note', cur.note, { cls: 'full' })}
+      ${richField('Intitulé', 'intro', cur.intro)}
+      ${richField(isC ? 'Motif de l\'avoir' : 'Remarque', 'note', cur.note, { rows: 3 })}
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></div>
@@ -197,6 +215,7 @@ export async function renderDoc(el, id, arg) {
 
   const readHeader = () => {
     $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId'].includes(i.name)) cur[i.name] = i.value; });
+    Object.assign(cur, readRich(el));
     cur.tva = num(cur.tva);
   };
 
@@ -269,6 +288,8 @@ export async function renderDoc(el, id, arg) {
   };
 
   const bind = () => {
+    bindRichFields(el);
+    addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
     $('#csearch', el).oninput = ev => {
       const q = ev.target.value.toLowerCase().trim(), sel = $('[name=clientId]', el), keep = sel.value;
@@ -352,8 +373,8 @@ async function printDoc(doc) {
       <div class="cl">${e(cname(c) || '')}${c.company ? '\n' + e([c.companyCiv, c.company].filter(Boolean).join(' ')) : ''}\n${e(addr)}</div>
       <p><u><b>Réf chantier :</b></u><br>${e(doc.siteRef || '')}<br><b>${e(doc.siteAddr || '').replace(/\n/g, '<br>')}</b></p></div></div>
     <h1>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(doc.number)}</h1>
-    <div class="hd"><div><b><u>${e(doc.intro || '')}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>
-    <p>${isC ? '' : e(doc.note || '')}</p>
+    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>
+    <div style="margin:6px 0">${isC ? '' : richHtml(doc.note)}</div>
     <table><thead><tr><th>DESIGNATION</th><th>Qté</th><th>Unité</th><th>Prix unit.</th><th>Prix H.T</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
     <tr><td colspan="4">Total HT</td><td class="n">${eur(t.ht)}</td></tr>
@@ -362,7 +383,7 @@ async function printDoc(doc) {
     ${used ? `<tr><td colspan="4">${isC ? 'Déjà déduit / remboursé' : 'Déjà réglé'}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${isC ? 'Reste à votre crédit' : 'Reste à payer'}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     </tbody></table>
     ${isQ ? `<div class="pay"><b>Moyens de paiement acceptés :</b> ${REAL_METHODS.filter(m => m[0] !== 'autre').map(m => e(m[1])).join(', ')}.</div>` : ''}
-    ${isC ? `<div class="pay"><b>Avoir</b> – à déduire de votre prochaine facture ou remboursé.${doc.note ? '<br>Motif : ' + e(doc.note) : ''}</div>` : `<div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
+    ${isC ? `<div class="pay"><b>Avoir</b> – à déduire de votre prochaine facture ou remboursé.${doc.note ? '<br>Motif : ' + richHtml(doc.note) : ''}</div>` : `<div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
     <div class="sig"><div><b>${isQ ? 'Bon pour accord – date et signature du client' : 'Signature Entrepreneur'}</b><div style="height:60px"></div></div>
     <div>${S.iban && !isC ? `<b><u>Vous pouvez régler cette facture par virement</u></b><br><b>${e(S.company)}</b><br><b>IBAN</b> : ${e(S.iban)}<br><b>Code BIC</b> : ${e(S.bic)}` : ''}</div></div></div>`;
   await Promise.all([...$('#printarea').querySelectorAll('img')].map(i => (i.decode ? i.decode().catch(() => {}) : null)));
