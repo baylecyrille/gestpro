@@ -5,6 +5,7 @@ import { e, eur, num, round2, dateFr, today, F, modal, closeModal, toast, tabs, 
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
+import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows } from './blocks.js';
 
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
 
@@ -58,7 +59,8 @@ async function syncInvStatus(docId) {
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
 async function makeInvoice(q) {
-  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), blocks: q.blocks ? copyBlocks(q.blocks) : undefined, siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  ensureBlocks(inv);
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
@@ -125,7 +127,7 @@ export async function renderDoc(el, id, arg) {
   }
   else cur = await db.get('documents', id);
   if (!cur) { el.innerHTML = '<div class="empty">Document introuvable.</div>'; return; }
-  normStatus(cur);
+  normStatus(cur); ensureBlocks(cur);
   if (isNew && !cur.by) cur.by = auth.currentUser()?.id || '';
   if (!auth.canDoc(cur)) { el.innerHTML = '<div class="empty">Vous n\'avez pas accès à ce document.</div>'; return; }
   const canPay = auth.can('invoices'), canInv = auth.can('invoices');
@@ -135,14 +137,6 @@ export async function renderDoc(el, id, arg) {
   const isQ = cur.type === 'quote', isC = cur.type === 'credit';
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
   let payments = allPay.filter(p => p.docId === cur.id);
-
-  const lineHtml = (l, i) => `<div class="ln" data-i="${i}">
-    <div class="d"><input data-k="desig" value="${e(l.desig)}" placeholder="Désignation"></div>
-    <input data-k="qty" type="number" step="any" inputmode="decimal" value="${l.qty}" placeholder="Qté">
-    <select data-k="unit">${UNITS.map(u => `<option ${u === l.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
-    <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${l.pu}" placeholder="P.U. HT">
-    <button type="button" class="btn sm" data-rm>✕</button>
-    <div class="tot" data-t>${eur(num(l.qty) * num(l.pu))}</div></div>`;
 
   const draw = () => {
     const t = totals(cur);
@@ -161,9 +155,7 @@ export async function renderDoc(el, id, arg) {
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></div>
-    <div class="card lines"><div class="ln h"><span>Désignation</span><span>Qté</span><span>Unité</span><span>P.U. HT</span><span></span></div>
-      <div id="lines">${cur.lines.map(lineHtml).join('')}</div>
-      <div class="row"><button type="button" class="btn" id="addp">+ Produit (stock / code-barres)</button><button type="button" class="btn" id="addl">+ Ligne libre</button></div>
+    <div class="card lines"><div id="blocks"></div>
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
@@ -211,7 +203,7 @@ export async function renderDoc(el, id, arg) {
     readHeader();
     if (!cur.clientId) { toast('Choisissez un client'); return false; }
     if (!cur.number && (cur.type === 'quote' || cur.status !== 'draft')) cur.number = await nextNumber(cur.type);
-    cur.lines = cur.lines.filter(l => l.desig || num(l.pu));
+    pruneBlocks(cur);
     await db.put('documents', cur);
     if (isQ && cur.status === 'invoiced' && !cur.invoiceId) { // devis passé à « Facturé » : la facture est créée automatiquement
       if (cur.invoiceId = (await makeInvoice(cur)).id) { toast('Facture créée à partir du devis'); go('#/doc/' + cur.invoiceId); return true; }
@@ -276,20 +268,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const bind = () => {
-    const lines = $('#lines', el);
-    lines.oninput = ev => {
-      const row = ev.target.closest('.ln'); if (!row) return;
-      const l = cur.lines[+row.dataset.i];
-      l[ev.target.dataset.k] = ev.target.dataset.k === 'desig' || ev.target.dataset.k === 'unit' ? ev.target.value : ev.target.value;
-      $('[data-t]', row).textContent = eur(num(l.qty) * num(l.pu));
-      refreshTotals();
-    };
-    lines.onclick = ev => {
-      const rm = ev.target.closest('[data-rm]'); if (!rm) return;
-      readHeader(); cur.lines.splice(+rm.closest('.ln').dataset.i, 1); draw();
-    };
-    $('#addl', el).onclick = () => { readHeader(); cur.lines.push({ desig: '', qty: 1, unit: 'u', pu: 0 }); draw(); };
-    $('#addp', el).onclick = () => { readHeader(); pickProduct(p => { cur.lines.push({ pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }); draw(); }); };
+    mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
     $('#newc', el).onclick = () => { readHeader(); import('./app.js').then(m => m.contactModal(null, 'client', c => { clients.push(c); cur.clientId = c.id; draw(); })); };
     $('[name=siteId]', el).onchange = () => {
       const prev = cur.siteId; readHeader(); const st = sites.find(x => x.id === cur.siteId);
@@ -298,7 +277,7 @@ export async function renderDoc(el, id, arg) {
     };
     $('#save', el).onclick = save;
     if (isNew) return;
-    $('#print', el).onclick = async () => { readHeader(); await db.put('documents', cur); printDoc(cur); };
+    $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); printDoc(cur); };
     $('#delete', el).onclick = async () => {
       if (!confirm('Supprimer ce document et ses règlements ?')) return;
       if (isC) { for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); } }
@@ -366,7 +345,7 @@ async function printDoc(doc) {
     <div class="hd"><div><b><u>${e(doc.intro || '')}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>
     <p>${isC ? '' : e(doc.note || '')}</p>
     <table><thead><tr><th>DESIGNATION</th><th>Qté</th><th>Unité</th><th>Prix unit.</th><th>Prix H.T</th></tr></thead><tbody>
-    ${doc.lines.map(l => `<tr><td>${e(l.desig)}</td><td class="n">${num(l.qty)}</td><td>${e(l.unit)}</td><td class="n">${eur(num(l.pu))}</td><td class="n">${eur(num(l.qty) * num(l.pu))}</td></tr>`).join('')}
+    ${printRows(ensureBlocks(doc))}
     <tr><td colspan="4">Total HT</td><td class="n">${eur(t.ht)}</td></tr>
     <tr><td colspan="3">TVA</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
     <tr class="t"><td colspan="4">${isC ? 'Total TTC de l\'avoir' : 'Total TTC'}</td><td class="n">${eur(t.ttc)}</td></tr>

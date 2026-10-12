@@ -204,6 +204,9 @@ async function renderSettings(el) {
       <li><b>Identifiants → Créer → ID client OAuth → Application Web</b>. Origine JavaScript autorisée : <code>${e(location.origin)}</code></li>
       <li>Copiez l'ID client ici, enregistrez, puis « Créer le classeur ».</li></ol>
       <p class="muted">Sur un autre appareil : saisissez le même identifiant, « Utiliser un classeur existant » et collez l'adresse du classeur. Modifiez les données depuis l'appli (les colonnes lisibles du classeur sont un reflet ; les colonnes id/maj/json ne doivent pas être modifiées).</p></details></details></div>
+  <div class="card"><h3 style="margin-top:0">Modèles de texte</h3><p class="muted">Textes réutilisables (conditions, mentions, remarques) à insérer dans vos devis et factures.</p><div class="row"><button class="btn" id="snip">Gérer les modèles de texte…</button></div></div>
+  <div class="card"><h3 style="margin-top:0">Importer des devis / factures</h3><p class="muted">Ajoute à vos données (sans rien remplacer) le contenu d'un fichier d'import GestPro : clients, chantiers, produits, devis, factures et règlements. Le fichier est lu sur cet appareil uniquement.</p>
+    <div class="row"><label class="btn"><input type="file" id="addimp" accept=".json" hidden>Choisir un fichier d'import…</label></div></div>
   <div class="card"><h3 style="margin-top:0">Sauvegarde</h3><p class="muted">Les données sont stockées uniquement sur cet appareil. Faites une sauvegarde régulière et transférez-la pour changer de téléphone/ordinateur.</p>
     <div class="row"><button class="btn" id="exp">Exporter (JSON)</button><label class="btn"><input type="file" id="imp" accept=".json" hidden>Restaurer…</label>${installEvt ? '<button class="btn primary" id="inst">Installer l\'application</button>' : ''}</div></div>`;
   const gstat = () => {
@@ -258,6 +261,15 @@ async function renderSettings(el) {
     const f = ev.target.files[0]; if (!f) return;
     if (!confirm('La restauration REMPLACE toutes les données actuelles. Continuer ?')) return;
     try { await db.importAll(JSON.parse(await readFileText(f))); toast('Données restaurées'); refresh(); } catch (err) { alert(err.message); }
+  };
+  $('#snip', el).onclick = () => import('./blocks.js').then(m => m.snippetsModal(null));
+  $('#addimp', el).onchange = async ev => {
+    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+    try {
+      const imp = await import('./importer.js'); const data = JSON.parse(await readFileText(f)); const p = await imp.planImport(data);
+      if (!confirm(`Importer : ${p.contacts} nouveaux clients, ${p.sites} chantiers, ${p.products} produits, ${p.docs} documents (${p.skippedDocs} déjà présents ignorés) et ${p.payments} règlements ?\n\nVos données actuelles ne seront ni modifiées ni supprimées.`)) return;
+      const r = await imp.runImport(data); toast(`Import terminé : ${r.documents} documents, ${r.contacts} clients`); refresh();
+    } catch (err) { alert(err.message); }
   };
   $('#inst', el)?.addEventListener('click', () => installEvt.prompt());
   $('#logout', el)?.addEventListener('click', () => { auth.logout(); location.hash = '#/dashboard'; route(); });
