@@ -191,3 +191,11 @@ nav#nav a[hidden]{display:none}
 .sheet tr.sec td{background:#eef3fa}
 .sheet tr.txt td{border-top:0;border-bottom:0;white-space:normal}
 .sheet tr.txt ul,.sheet tr.txt ol{margin:2px 0;padding-left:20px}
+.pal{position:relative;display:inline-block}
+.pal>summary{list-style:none;cursor:pointer;border:1px solid var(--bd);border-radius:6px;padding:3px 8px;min-height:30px;display:inline-flex;align-items:center}
+.pal>summary::-webkit-details-marker{display:none}
+.palbox{position:absolute;z-index:20;top:100%;left:0;display:flex;flex-wrap:wrap;gap:6px;width:190px;padding:8px;background:var(--card,#fff);border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.palbox .sw{width:24px;height:24px;border-radius:50%;border:1px solid #8884;padding:0;cursor:pointer;position:relative;overflow:hidden}
+.palbox .sw.custom{background:conic-gradient(red,yellow,lime,aqua,blue,magenta,red)}
+.palbox .sw.custom input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.palbox .sw.custom i{position:absolute;inset:0;display:grid;place-items:center;font-style:normal;color:#fff;font-weight:700;text-shadow:0 0 2px #000}

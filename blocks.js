@@ -1,5 +1,5 @@
 // Structure des devis / factures : blocs ordonnés (section, texte mis en forme, ligne produit, saut de page).
-import { e, eur, num, F, modal, toast, $, $$ } from './util.js';
+import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
 import { UNITS, pickProduct } from './stock.js';
@@ -58,12 +58,19 @@ export function pruneBlocks(d) {
 export const copyBlocks = bl => JSON.parse(JSON.stringify(bl || [])).map(b => ({ ...b, id: bid() }));
 
 /* ---------- Rendu pour l'impression ---------- */
-const secStyle = b => [b.color && `color:${b.color}`, b.bg && `background:${b.bg}`, b.bold !== false && 'font-weight:700', b.italic && 'font-style:italic', b.align && `text-align:${b.align}`].filter(Boolean).join(';');
+/* Couleurs par défaut (Réglages) de chaque type de ligne */
+export const STY = { secColor: '#1e5aa8', secBg: '#dbe7f7', lineBg: '#ffffff', textBg: '#f6f7f9' };
+export function setStyles(S) { STY.secColor = S.stSecColor || STY.secColor; STY.secBg = S.stSecBg || STY.secBg; STY.lineBg = S.stLineBg || '#ffffff'; STY.textBg = S.stTextBg || '#ffffff'; }
+const LIGHT = ['#dbe7f7', '#fde8e8', '#e6f4ea', '#fff4cc', '#ece6f8', '#eeeeee', '#ffffff'];
+const pal = (attr, cols, title) => `<details class="pal"><summary title="${title}">${attr === 'fc' ? 'A' : '▇'}</summary><div class="palbox">${cols.map(c => `<button type="button" class="sw" data-${attr}="${c}" style="background:${c}"></button>`).join('')}<label class="sw custom" title="Autre couleur"><input type="color" data-${attr}-x value="#c62f2f"><i>+</i></label></div></details>`;
+const secStyle = b => [`color:${b.color || STY.secColor}`, `background:${b.bg === 'none' ? 'transparent' : b.bg || STY.secBg}`, b.bold !== false && 'font-weight:700', b.italic && 'font-style:italic', b.align && `text-align:${b.align}`].filter(Boolean).join(';');
 export function printRows(d) {
   return d.blocks.map(b => {
-    if (b.type === 'line') return `<tr><td>${e(b.desig)}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td><td class="n">${eur(num(b.qty) * num(b.pu))}</td></tr>`;
+    const bgl = STY.lineBg && STY.lineBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.lineBg)}"` : '';
+    const bgt = STY.textBg && STY.textBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.textBg)}"` : '';
+    if (b.type === 'line') return `<tr${bgl}><td>${e(b.desig)}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td><td class="n">${eur(num(b.qty) * num(b.pu))}</td></tr>`;
     if (b.type === 'section') return `<tr class="sec"><td colspan="5" style="${e(secStyle(b))}">${e(b.title)}</td></tr>`;
-    if (b.type === 'text') return `<tr class="txt"><td colspan="5">${sanitize(b.html)}</td></tr>`;
+    if (b.type === 'text') return `<tr class="txt"><td colspan="5"${bgt}>${sanitize(b.html)}</td></tr>`;
     if (b.type === 'pagebreak') return '<tr class="pbk" style="page-break-after:always;break-after:page"><td colspan="5" style="border:0;padding:0;height:0"></td></tr>';
     return '';
   }).join('');
@@ -102,8 +109,7 @@ function toolbarHtml() {
   return `<div class="rtb">
     <button type="button" data-cmd="bold" title="Gras"><b>G</b></button><button type="button" data-cmd="italic" title="Italique"><i>I</i></button>
     <button type="button" data-cmd="underline" title="Souligné"><u>S</u></button><button type="button" data-cmd="strikeThrough" title="Barré"><s>B</s></button>
-    <label title="Couleur du texte">A<input type="color" data-color="foreColor" value="#c62f2f"></label>
-    <label title="Surlignage" class="hl">▇<input type="color" data-color="hiliteColor" value="#fff2a8"></label>
+    ${pal('fc', COLOR_NAMES.map(c => c[0]).concat('#ffffff'), 'Couleur du texte')}${pal('hc', ['#fff2a8', ...LIGHT, ...COLOR_NAMES.map(c => c[0])], 'Surlignage')}
     <select data-size title="Taille"><option value="">Taille</option><option value="2">Petit</option><option value="3">Normal</option><option value="5">Grand</option><option value="6">Très grand</option></select>
     <button type="button" data-cmd="justifyLeft" title="Aligner à gauche">⟸</button><button type="button" data-cmd="justifyCenter" title="Centrer">≡</button><button type="button" data-cmd="justifyRight" title="Aligner à droite">⟹</button>
     <button type="button" data-cmd="insertUnorderedList" title="Liste à puces">•≡</button><button type="button" data-cmd="insertOrderedList" title="Liste numérotée">1.</button>
@@ -116,7 +122,11 @@ function bindToolbar(root, target, after = () => {}) {
   const run = (cmd, val) => { const t = target(); if (!t) { toast('Cliquez d\'abord dans un texte'); return; } t.focus(); try { document.execCommand('styleWithCSS', false, true); } catch (_) {} document.execCommand(cmd, false, val); after(t); };
   tb.addEventListener('mousedown', ev => { if (!ev.target.closest('input,select')) ev.preventDefault(); }); // garde la sélection
   tb.addEventListener('click', ev => { const b = ev.target.closest('[data-cmd]'); if (b) run(b.dataset.cmd); });
-  tb.querySelectorAll('[data-color]').forEach(i => { i.addEventListener('input', () => run(i.dataset.color, i.value)); });
+  tb.addEventListener('click', ev => {
+    const f = ev.target.closest('[data-fc]'), h = ev.target.closest('[data-hc]');
+    if (f) run('foreColor', f.dataset.fc); if (h) run('hiliteColor', h.dataset.hc);
+  });
+  tb.addEventListener('input', ev => { const i = ev.target; if (i.matches('[data-fc-x]')) run('foreColor', i.value); if (i.matches('[data-hc-x]')) run('hiliteColor', i.value); });
   const sz = tb.querySelector('[data-size]'); sz.onchange = () => { if (sz.value) run('fontSize', sz.value); sz.value = ''; };
 }
 
@@ -138,8 +148,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT"><div class="tot" data-t>${eur(num(b.qty) * num(b.pu))}</div></div>`;
     if (b.type === 'section') return `<div class="sec-ed"><input data-k="title" value="${e(b.title)}" placeholder="Titre de la section" style="${e(secStyle(b))}">
-      <span class="mini"><label title="Couleur du texte">A<input type="color" data-k="color" value="${b.color || '#1e5aa8'}"></label>
-      <label title="Couleur de fond">▇<input type="color" data-k="bg" value="${b.bg || '#dbe7f7'}"></label>
+      <span class="mini">${pal('sc', COLOR_NAMES.map(c => c[0]).concat('#ffffff'), 'Couleur du texte')}${pal('sb', LIGHT.concat(COLOR_NAMES.map(c => c[0])), 'Couleur de fond')}
       <button type="button" data-tg="nobg" title="Sans fond">∅</button><button type="button" data-tg="bold" title="Gras"><b>G</b></button><button type="button" data-tg="italic" title="Italique"><i>I</i></button>
       <button type="button" data-al="left">⟸</button><button type="button" data-al="center">≡</button></span></div>`;
     if (b.type === 'text') return `<div class="rte" contenteditable="true" data-ph="Texte libre (commentaire, précision, mention…)">${sanitize(b.html)}</div>`;
@@ -149,13 +158,14 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   const draw = () => {
     host.innerHTML = d.blocks.map(b => `<div class="blk blk-${b.type}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
       <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
-      <div class="bb">${inner(b)}</div></div>`).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
+      <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
   };
   draw();
 
   host.addEventListener('input', ev => {
     const row = ev.target.closest('.blk'); if (!row) return; const b = d.blocks[idx(row.dataset.id)]; if (!b) return;
     if (ev.target.classList.contains('rte')) { b.html = sanitize(ev.target.innerHTML); change(); return; }
+    if (ev.target.matches('[data-sc-x],[data-sb-x]')) { if (ev.target.hasAttribute('data-sc-x')) b.color = ev.target.value; else b.bg = ev.target.value; $('[data-k=title]', row).setAttribute('style', secStyle(b)); change(); return; }
     const k = ev.target.dataset.k; if (!k) return;
     b[k] = ev.target.value;
     if (b.type === 'line') $('[data-t]', row).textContent = eur(num(b.qty) * num(b.pu));
@@ -175,8 +185,9 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       getS().then(async S => { await db.saveSettings({ ...S, snippets: [...(S.snippets || []), { name: name.trim(), html: sanitize(b.html) }] }); toast('Modèle enregistré'); });
     } else if (ev.target.closest('[data-tg]')) {
       const t = ev.target.closest('[data-tg]').dataset.tg;
-      if (t === 'nobg') b.bg = ''; else b[t] = t === 'bold' ? b.bold === false : !b[t];
+      if (t === 'nobg') b.bg = 'none'; else b[t] = t === 'bold' ? b.bold === false : !b[t];
       draw(); change();
+    } else if (ev.target.closest('[data-sc],[data-sb]')) { const x = ev.target.closest('[data-sc],[data-sb]'); if (x.dataset.sc) b.color = x.dataset.sc; else b.bg = x.dataset.sb; draw(); change();
     } else if (ev.target.closest('[data-al]')) { b.align = ev.target.closest('[data-al]').dataset.al; draw(); change(); }
   });
   /* Glisser-déposer (poignée) */

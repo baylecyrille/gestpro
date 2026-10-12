@@ -1,11 +1,11 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
-import { e, eur, num, round2, dateFr, today, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, cname, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
-import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows } from './blocks.js';
+import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles } from './blocks.js';
 
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
 
@@ -103,13 +103,13 @@ export async function renderDocs(el, tab = 'quote') {
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div><div id="list"></div>`;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
-    const rows = list.filter(d => !q || [d.number, C[d.clientId]?.name, d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q));
+    const rows = list.filter(d => !q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q));
     $('#list', el).innerHTML = rows.map(d => {
       const t = totals(d);
       let badge;
       if (d.type === 'invoice' || d.type === 'credit') badge = invBadge(d, payments);
       else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
-      return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(C[d.clientId]?.name || 'Sans client')}</div>
+      return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
         <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
     }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.</div>`;
   };
@@ -133,6 +133,7 @@ export async function renderDoc(el, id, arg) {
   const canPay = auth.can('invoices'), canInv = auth.can('invoices');
   const [contacts, S, allPay, sites, allDocs] = await Promise.all([db.all('contacts'), getS(), db.all('payments'), db.all('sites'), db.all('documents')]);
   sites.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  setStyles(S);
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const isQ = cur.type === 'quote', isC = cur.type === 'credit';
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
@@ -144,10 +145,10 @@ export async function renderDoc(el, id, arg) {
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}
     <div class="card"><div class="cols">
-      <label class="f full"><span>Client</span><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(c.name)}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
+      <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
       <label class="f full"><span>Chantier</span><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(x.name)}</option>`).join('')}</select></label>
       ${F('Date', 'date', cur.date, { type: 'date' })}
-      ${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : F(isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}
+      ${F(isQ ? 'N° de devis' : isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : ''}
       ${F('Réf. chantier', 'siteRef', cur.siteRef, { cls: 'full' })}
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
       ${F('Intitulé', 'intro', cur.intro, { cls: 'full' })}
@@ -269,6 +270,14 @@ export async function renderDoc(el, id, arg) {
 
   const bind = () => {
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
+    $('#csearch', el).oninput = ev => {
+      const q = ev.target.value.toLowerCase().trim(), sel = $('[name=clientId]', el), keep = sel.value;
+      const rows = clients.filter(c => c.id === keep || !q || [c.civ, c.name, c.company, c.city, c.zip].join(' ').toLowerCase().includes(q));
+      sel.innerHTML = '<option value="">— choisir —</option>' + rows.map(c => `<option value="${c.id}" ${c.id === keep ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('');
+      const m = rows.filter(c => c.id !== keep);
+      if (q && !keep && m.length === 1) sel.value = m[0].id;
+      else if (q && m.length === 1 && rows.length === 2) sel.value = m[0].id;
+    };
     $('#newc', el).onclick = () => { readHeader(); import('./app.js').then(m => m.contactModal(null, 'client', c => { clients.push(c); cur.clientId = c.id; draw(); })); };
     $('[name=siteId]', el).onchange = () => {
       const prev = cur.siteId; readHeader(); const st = sites.find(x => x.id === cur.siteId);
@@ -330,6 +339,7 @@ export async function renderDoc(el, id, arg) {
 /* ---------- Impression ---------- */
 async function printDoc(doc) {
   const [S, contacts, payments] = await Promise.all([getS(), db.all('contacts'), db.all('payments')]);
+  setStyles(S);
   const c = contacts.find(x => x.id === doc.clientId) || {};
   const t = totals(doc), paid = paidOf(payments, doc.id);
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
@@ -339,7 +349,7 @@ async function printDoc(doc) {
     <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${e(S.sub || S.company)}</div>
       <p><b>${e(S.owner)}</b><br>${e(S.address).replace(/\n/g, '<br>')}<br>${e(S.phone)}<br>${e(S.legal)}<br>${e(S.email)}<br>${e(S.web)}<br>N°SIRET : ${e(S.siret)}</p></div>
       <div><p class="small" style="margin-top:0">${S.rge ? `<b>RGE</b> Numéro ${e(S.rge)}<br>` : ''}${S.insurance ? `Assurance Responsabilité Travaux ${e(S.insurance)}<br>Assurance Responsabilité Civile ${e(S.insurance)}` : ''}</p>
-      <div class="cl">${e(c.name || '')}${c.company ? '\n' + e(c.company) : ''}\n${e(addr)}</div>
+      <div class="cl">${e(cname(c) || '')}${c.company ? '\n' + e(c.company) : ''}\n${e(addr)}</div>
       <p><u><b>Réf chantier :</b></u><br>${e(doc.siteRef || '')}<br><b>${e(doc.siteAddr || '').replace(/\n/g, '<br>')}</b></p></div></div>
     <h1>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(doc.number)}</h1>
     <div class="hd"><div><b><u>${e(doc.intro || '')}</u></b></div><div><b>${e(S.city || '')}, le &nbsp; ${dateFr(doc.date)}</b>${isQ && doc.validUntil ? `<br><span class="small">Valable jusqu'au ${dateFr(doc.validUntil)}</span>` : ''}</div></div>

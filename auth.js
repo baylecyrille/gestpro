@@ -78,9 +78,12 @@ export function guard(name, a) {
   return f() ? null : home();
 }
 
+/* « docs.own » est une restriction explicite du profil (jamais déduite du droit total « * ») */
+export const ownOnly = () => { const c = PROFILES[profileKey()]?.can; return active && Array.isArray(c) && c.includes('docs.own'); };
+
 /* Document accessible ? (droit par type + devis limités aux siens pour un commercial) */
 export function canDoc(d) {
   const f = { quote: 'quotes', invoice: 'invoices', credit: 'credits' }[d.type];
   if (!can(f)) return false;
-  return !(d.type === 'quote' && can('docs.own') && active && d.by !== user?.id);
+  return !(d.type === 'quote' && ownOnly() && d.by && d.by !== user?.id);
 }

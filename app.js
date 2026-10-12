@@ -1,7 +1,7 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
-import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
@@ -21,7 +21,7 @@ export function applyWallpaper(S) {
 /* ---------- Contacts ---------- */
 export function contactModal(c, kind, onSaved) {
   const isNew = !c; c = c || { kind };
-  const body = `<div class="cols">${F('Nom / raison sociale', 'name', c.name, { req: true, cls: 'full' })}
+  const body = `<div class="cols"><label class="f"><span>Civilité / forme (libre)</span><input name="civ" value="${e(c.civ || '')}" list="civs" placeholder="Mr, Mme, Mr et Mme, SARL…" autocomplete="off"><datalist id="civs">${CIVS.map(x => `<option value="${e(x)}">`).join('')}</datalist></label>${F('Nom / raison sociale', 'name', c.name, { req: true })}
     ${F('Contact (personne)', 'company', c.company, { cls: 'full' })}
     ${F('Adresse', 'address', c.address, { cls: 'full' })}${F('Code postal', 'zip', c.zip)}${F('Ville', 'city', c.city)}
     ${F('Téléphone', 'phone', c.phone, { type: 'tel' })}${F('E-mail', 'email', c.email, { type: 'email' })}
@@ -42,10 +42,10 @@ async function renderContacts(el, tab = 'client') {
   const list = contacts.filter(c => c.kind === tab).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
-    $('#list', el).innerHTML = list.filter(c => !q || [c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
+    $('#list', el).innerHTML = list.filter(c => !q || [c.civ, c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
       let due = 0;
       if (tab === 'client') docs.filter(d => d.clientId === c.id && d.type === 'invoice' && d.status !== 'draft').forEach(d => (due += totals(d).ttc - paidOf(payments, d.id)));
-      return `<div class="item" data-id="${c.id}"><div class="main"><div class="t">${e(c.name)}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
+      return `<div class="item" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
         <div class="r">${due > 0.005 ? `<span class="chip bad">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
     }).join('') || '<div class="empty">Aucune fiche.</div>';
   };
@@ -170,6 +170,10 @@ async function renderSettings(el) {
     ${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
+    <h3 class="full">Couleurs des lignes de devis / factures</h3>
+    ${colorField('Section : texte', 'stSecColor', S.stSecColor, 'full')}${colorField('Section : fond', 'stSecBg', S.stSecBg, 'full')}
+    ${colorField('Ligne produit : fond', 'stLineBg', S.stLineBg, 'full')}${colorField('Texte / commentaire : fond', 'stTextBg', S.stTextBg, 'full')}
+    <p class="muted full">Ces couleurs s'appliquent par défaut ; chaque section ou texte peut ensuite avoir sa propre couleur.</p>
     <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
   </div><button class="btn primary">Enregistrer</button></form>
   <div class="card"><h3 style="margin-top:0">Accès des membres</h3>
@@ -238,6 +242,7 @@ async function renderSettings(el) {
   camInfo();
   $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
   $('#camreset', el).onclick = () => { resetCamera(); toast('Caméra automatique rétablie'); camInfo(); };
+  bindColors($('#sf', el));
   let logo = S.logo;
   $('#logo', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
@@ -323,7 +328,18 @@ function applyAccess() {
 }
 $('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.logout(); route(); } };
 
+/* Une seule fois : sort la civilité (Mr, Mme, SARL…) du champ « Nom » des fiches existantes */
+async function migrateCiv() {
+  const S = await getS(); if (S.civMig) return;
+  const list = (await db.all('contacts')).filter(c => c.civ === undefined && c.name);
+  const upd = [];
+  for (const c of list) { const s = splitCiv(c.name); if (s && s.name) upd.push({ ...c, civ: s.civ, name: s.name }); }
+  if (upd.length) await db.putMany('contacts', upd);
+  await db.saveSettings({ ...S, civMig: true });
+}
+
 async function route() {
+  await migrateCiv().catch(() => {});
   const { active, user } = await auth.load();
   document.body.classList.toggle('locked', active && !user);
   if (active && !user) { $('#user').hidden = true; return showLogin(); }
