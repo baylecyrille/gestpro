@@ -1,6 +1,6 @@
 // Stock : produits, code-barres, zones / emplacements, mouvements, import Excel/CSV.
 import * as db from './db.js';
-import { e, eur, num, dateFr, today, F, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, compressImage, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, filterBar, bindFilters, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, compressImage, $, $$ } from './util.js';
 import { markPhotosDirty } from './sheets.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
@@ -63,25 +63,32 @@ export async function renderStock(el, tab = 'products') {
 function productsTab(body, products, locs, contacts, photos = {}) {
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   products.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const cats = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const FC = [{ id: 'sort', label: 'Trier par', def: 'name', options: [['name', 'Nom A→Z'], ['stockA', 'Stock ↑ (le plus bas)'], ['stockD', 'Stock ↓'], ['cat', 'Catégorie'], ['priceD', 'Prix de vente ↓'], ['valueD', 'Valeur du stock ↓'], ['recent', 'Plus récents']] },
+    { id: 'cat', label: 'Catégorie', options: [['', 'Toutes'], ...cats.map(c => [c, c])] }, { id: 'loc', label: 'Emplacement', options: [['', 'Tous'], ...locs.map(l => [l.id, locLabel(l)])] },
+    { id: 'kind', label: 'Type', options: [['', 'Tous'], ['sale', 'Vendus'], ['internal', 'Usage interne']] }, { id: 'low', type: 'check', label: 'Stock bas / épuisé' }];
+  const SORTS = { name: (a, b) => a.name.localeCompare(b.name, 'fr'), stockA: (a, b) => total(a) - total(b), stockD: (a, b) => total(b) - total(a), cat: (a, b) => (a.category || '~').localeCompare(b.category || '~', 'fr') || a.name.localeCompare(b.name, 'fr'),
+    priceD: (a, b) => num(b.sell) - num(a.sell), valueD: (a, b) => total(b) * num(b.buy) - total(a) * num(a.buy), recent: (a, b) => (b._u || 0) - (a._u || 0) };
+  let getF;
   body.innerHTML = `<div class="row">
     <input class="search" id="q" type="search" placeholder="Rechercher (nom, réf., code-barres…)">
     <button class="btn primary" id="scanb">▦ Scanner</button>
     <button class="btn" id="add">+ Produit</button>
     <button class="btn" id="imp">Importer</button></div>
     <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button></div>
-    <label class="row"><input type="checkbox" id="low"> <span>Seulement stock bas / épuisé</span></label>
-    <div class="row"><select id="kindf" style="width:auto"><option value="">Tous les articles</option><option value="sale">Articles vendus</option><option value="internal">Usage interne (consommables)</option></select></div>
+    ${filterBar(FC)}
     <div id="list"></div>`;
   const list = $('#list', body);
   const draw = () => {
     const q = $('#q', body).value.toLowerCase().trim();
-    const low = $('#low', body).checked;
+    const F2 = getF ? getF() : {};
     const rows = products.filter(p => {
       const t = total(p);
-      if (low && !(t <= (p.min || 0))) return false;
-      const kf = $('#kindf', body).value; if (kf === 'internal' && p.kind !== 'internal') return false; if (kf === 'sale' && p.kind === 'internal') return false;
+      if (F2.low && !(t <= (p.min || 0))) return false;
+      if (F2.kind === 'internal' && p.kind !== 'internal') return false; if (F2.kind === 'sale' && p.kind === 'internal') return false;
+      if (F2.cat && p.category !== F2.cat) return false; if (F2.loc && !(p.stock && p.stock[F2.loc] > 0)) return false;
       return !q || [p.name, p.ref, p.barcode, p.category].join(' ').toLowerCase().includes(q);
-    });
+    }).sort(SORTS[F2.sort] || SORTS.name);
     list.innerHTML = rows.length ? rows.map(p => {
       const t = total(p);
       const cls = t <= 0 ? 'bad' : t <= (p.min || 0) ? 'warn' : 'ok';
@@ -92,8 +99,9 @@ function productsTab(body, products, locs, contacts, photos = {}) {
         <div class="r"><span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span><div class="s">${p.kind === 'internal' ? 'non vendu' : eur(p.sell) + ' HT'}</div></div></div>`;
     }).join('') : '<div class="empty">Aucun produit. Ajoutez-en un ou importez vos listes Excel.</div>';
   };
+  getF = bindFilters(body, 'stock_', FC, draw);
   draw();
-  $('#q', body).oninput = draw; $('#low', body).onchange = draw; $('#kindf', body).onchange = draw;
+  $('#q', body).oninput = draw;
   list.onclick = ev => { const it = ev.target.closest('.item'); if (it) productModal(products.find(p => p.id === it.dataset.id), locs, contacts, products); };
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);

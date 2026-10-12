@@ -317,3 +317,20 @@ export function addressAutocomplete(input, onPick) {
   });
   input.addEventListener('blur', () => setTimeout(hide, 150));
 }
+
+/* ---- Tri & filtres mémorisés (par écran) ---- */
+export const getPref = (k, d = '') => { try { const v = localStorage.getItem('gp_f_' + k); return v === null ? d : v; } catch { return d; } };
+export const setPref = (k, v) => { try { localStorage.setItem('gp_f_' + k, v); } catch { /* ignore */ } };
+export function filterBar(ctl) {
+  return `<div class="row filt">${ctl.map(c => c.type === 'check' ? `<label class="chk2"><input type="checkbox" data-f="${c.id}"> ${e(c.label)}</label>`
+    : c.type === 'date' ? `<label class="f sm"><span>${e(c.label)}</span><input type="date" data-f="${c.id}"></label>`
+    : `<label class="f sm"><span>${e(c.label)}</span><select data-f="${c.id}">${c.options.map(([v, l]) => `<option value="${e(v)}">${e(l)}</option>`).join('')}</select></label>`).join('')}<button type="button" class="btn sm" data-freset>Réinitialiser</button></div>`;
+}
+export function bindFilters(root, pre, ctl, onChange) {
+  const node = c => root.querySelector(`[data-f="${c.id}"]`);
+  const get = () => Object.fromEntries(ctl.map(c => [c.id, c.type === 'check' ? node(c).checked : node(c).value]));
+  const apply = (c, v) => { const n = node(c); if (c.type === 'check') n.checked = v === '1' || v === true; else { n.value = v; if (n.value !== v) n.value = c.def ?? ''; } };
+  ctl.forEach(c => { apply(c, getPref(pre + c.id, c.type === 'check' ? '0' : (c.def ?? ''))); node(c).addEventListener('change', () => { setPref(pre + c.id, c.type === 'check' ? (node(c).checked ? '1' : '0') : node(c).value); onChange(get()); }); });
+  root.querySelector('[data-freset]').onclick = () => { ctl.forEach(c => { apply(c, c.type === 'check' ? '0' : (c.def ?? '')); setPref(pre + c.id, c.type === 'check' ? '0' : (c.def ?? '')); }); onChange(get()); };
+  return get;
+}

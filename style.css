@@ -220,3 +220,6 @@ nav#nav a[hidden]{display:none}
 .blk.insec{margin-left:14px;border-left:3px solid #1e5aa855}
 /* Conserve les couleurs (fonds, surlignages, textes) à l'impression et en PDF */
 .sheet,.sheet *,#printarea,#printarea *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+.filt{flex-wrap:wrap;align-items:flex-end;gap:8px;margin:6px 0}
+.filt .f.sm{min-width:120px;flex:1}.filt .f.sm span{font-size:11px}
+.chk2{display:inline-flex;gap:6px;align-items:center;font-size:13px;padding-bottom:8px}

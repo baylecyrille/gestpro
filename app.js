@@ -1,7 +1,7 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
-import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
+import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, filterBar, bindFilters, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState } from './docs.js';
 import { renderFacebook } from './facebook.js';
@@ -71,18 +71,28 @@ async function renderTeamContacts(el) {
 async function renderContacts(el, tab = 'client') {
   if (tab === 'team') return renderTeamContacts(el);
   const [contacts, docs, payments] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('payments')]);
+  const dueOf = c => docs.filter(d => d.clientId === c.id && d.type === 'invoice' && d.status !== 'draft').reduce((a, d) => a + totals(d).ttc - paidOf(payments, d.id), 0);
+  const DUE = Object.fromEntries(contacts.map(c => [c.id, tab === 'client' ? dueOf(c) : 0]));
+  const NDOC = Object.fromEntries(contacts.map(c => [c.id, docs.filter(d => d.clientId === c.id).length]));
+  const list = contacts.filter(c => c.kind === tab);
+  const cities = [...new Set(list.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const FC = [{ id: 'sort', label: 'Trier par', def: 'name', options: [['name', 'Nom A→Z'], ['city', 'Ville'], ['zip', 'Code postal'], ['due', 'Solde dû ↓'], ['docs', 'Nombre de documents ↓'], ['recent', 'Plus récents']] },
+    { id: 'city', label: 'Ville', options: [['', 'Toutes'], ...cities.map(c => [c, c])] }, { id: 'due', type: 'check', label: 'Solde dû' }, { id: 'phone', type: 'check', label: 'Avec téléphone' }, { id: 'nodoc', type: 'check', label: 'Sans document' }];
+  const SORTS = { name: (a, b) => a.name.localeCompare(b.name, 'fr'), city: (a, b) => (a.city || '~').localeCompare(b.city || '~', 'fr') || a.name.localeCompare(b.name, 'fr'), zip: (a, b) => (a.zip || '~').localeCompare(b.zip || '~'),
+    due: (a, b) => DUE[b.id] - DUE[a.id], docs: (a, b) => NDOC[b.id] - NDOC[a.id], recent: (a, b) => (b._u || 0) - (a._u || 0) };
   el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], tab)}
-    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…"><button class="btn primary" id="add">+ ${tab === 'client' ? 'Client' : 'Fournisseur'}</button></div><div id="list"></div>`;
-  const list = contacts.filter(c => c.kind === tab).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…"><button class="btn primary" id="add">+ ${tab === 'client' ? 'Client' : 'Fournisseur'}</button></div>${filterBar(FC)}<div id="list"></div>`;
+  let getF;
   const draw = () => {
-    const q = $('#q', el).value.toLowerCase();
-    $('#list', el).innerHTML = list.filter(c => !q || [c.civ, c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
+    const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
+    $('#list', el).innerHTML = list.filter(c => (!F2.city || c.city === F2.city) && (!F2.due || DUE[c.id] > 0.005) && (!F2.phone || c.phone) && (!F2.nodoc || !NDOC[c.id])).sort(SORTS[F2.sort] || SORTS.name).filter(c => !q || [c.civ, c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
       let due = 0;
       if (tab === 'client') docs.filter(d => d.clientId === c.id && d.type === 'invoice' && d.status !== 'draft').forEach(d => (due += totals(d).ttc - paidOf(payments, d.id)));
       return `<div class="item" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
         <div class="r">${due > 0.005 ? `<span class="chip bad">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
     }).join('') || '<div class="empty">Aucune fiche.</div>';
   };
+  getF = bindFilters(el, 'contacts_' + tab + '_', FC, draw);
   draw(); $('#q', el).oninput = draw;
   $('#add', el).onclick = () => contactModal(null, tab);
   $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a')) contactModal(list.find(c => c.id === it.dataset.id)); };

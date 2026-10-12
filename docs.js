@@ -1,7 +1,7 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
-import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -117,11 +117,19 @@ export async function renderDocs(el, tab = 'quote') {
   const [docs, contacts, payments] = await Promise.all([db.all('documents'), db.all('contacts'), db.all('payments')]);
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const list = docs.filter(d => d.type === tab && auth.canDoc(d)).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
+  const cl = [...new Set(list.map(d => d.clientId).filter(Boolean))].map(id => [id, cname(C[id]) || '?']).sort((a, b) => a[1].localeCompare(b[1], 'fr'));
+  const stOpts = tab === 'quote' ? [['', 'Tous'], ...Object.entries(QS)] : tab === 'invoice' ? [['', 'Toutes'], ['unpaid', 'À encaisser'], ['paid', 'Réglées'], ['draft', 'Brouillons']] : [['', 'Tous'], ...Object.entries(CS)];
+  const FC = [{ id: 'sort', label: 'Trier par', def: 'dateD', options: [['dateD', 'Date (récent)'], ['dateA', 'Date (ancien)'], ['num', 'Numéro'], ['client', 'Client A→Z'], ['amtD', 'Montant ↓'], ['amtA', 'Montant ↑']] },
+    { id: 'status', label: 'Statut', options: stOpts }, { id: 'client', label: 'Client', options: [['', 'Tous'], ...cl] }, { id: 'from', type: 'date', label: 'Du' }, { id: 'to', type: 'date', label: 'Au' }];
+  const SORTS = { dateD: (a, b) => (b.date + b.number).localeCompare(a.date + a.number), dateA: (a, b) => (a.date + a.number).localeCompare(b.date + b.number), num: (a, b) => String(a.number).localeCompare(String(b.number), 'fr', { numeric: true }),
+    client: (a, b) => cname(C[a.clientId]).localeCompare(cname(C[b.clientId]), 'fr'), amtD: (a, b) => totals(b).ttc - totals(a).ttc, amtA: (a, b) => totals(a).ttc - totals(b).ttc };
   el.innerHTML = `<h2>Devis &amp; factures</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
-    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div><div id="list"></div>`;
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div>${filterBar(FC)}<div id="list"></div>`;
+  let getF;
+  const okStatus = (d, s) => !s || (tab === 'invoice' && s === 'unpaid' ? d.status !== 'draft' && totals(d).ttc - paidOf(payments, d.id) > 0.005 : tab === 'invoice' && s === 'paid' ? d.status !== 'draft' && totals(d).ttc > 0 && totals(d).ttc - paidOf(payments, d.id) <= 0.005 : d.status === s);
   const draw = () => {
-    const q = $('#q', el).value.toLowerCase();
-    const rows = list.filter(d => !q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q));
+    const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
+    const rows = list.filter(d => (!q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q)) && okStatus(d, F2.status) && (!F2.client || d.clientId === F2.client) && (!F2.from || (d.date || '') >= F2.from) && (!F2.to || (d.date || '') <= F2.to)).sort(SORTS[F2.sort] || SORTS.dateD);
     $('#list', el).innerHTML = rows.map(d => {
       const t = totals(d);
       let badge;
@@ -131,6 +139,7 @@ export async function renderDocs(el, tab = 'quote') {
         <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
     }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.</div>`;
   };
+  getF = bindFilters(el, 'docs_' + tab + '_', FC, draw);
   draw(); $('#q', el).oninput = draw;
 }
 

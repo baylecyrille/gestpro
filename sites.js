@@ -1,6 +1,6 @@
 // Chantiers : fiche centrale qui relie client, devis, factures, avoirs et règlements.
 import * as db from './db.js';
-import { e, eur, num, round2, dateFr, today, F, addressAutocomplete, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, F, addressAutocomplete, filterBar, bindFilters, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
@@ -46,13 +46,22 @@ export async function renderSites(el, tab = 'open') {
   const mine = onlyMine() ? mySites(tasks) : null, money = auth.can('sites.money'), canEdit = auth.can('sites.edit');
   const sites = mine ? sites0.filter(s => mine.has(s.id)) : sites0;
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
+  const cl = [...new Set(sites.map(s => s.clientId).filter(Boolean))].map(id => [id, C[id]?.name || '?']).sort((a, b) => a[1].localeCompare(b[1], 'fr'));
+  const FC = [{ id: 'sort', label: 'Trier par', def: 'recent', options: [['recent', 'Plus récents'], ['name', 'Nom A→Z'], ['client', 'Client A→Z'], ['start', 'Date de début'], ['end', 'Date de fin (proche)'], ['amount', 'Montant du marché'], ['due', 'Reste à payer']] },
+    { id: 'client', label: 'Client', options: [['', 'Tous'], ...cl] }, { id: 'late', type: 'check', label: 'En retard' }, { id: 'due', type: 'check', label: 'Reste à payer' }];
   const list = sites.filter(s => tab === 'all' || (tab === 'open' ? OPEN.includes(s.status) : s.status === tab))
-    .sort((a, b) => (b.start || b._u + '').localeCompare(a.start || a._u + ''));
+;
   el.innerHTML = `<h2>Chantiers</h2>${tabs('#/sites', [['open', 'Ouverts'], ['paid', 'Terminés'], ['lost', 'Perdus'], ['all', 'Tous']], tab)}
-    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (nom, client, adresse)…">${canEdit ? '<a class="btn primary" href="#/site/new">+ Chantier</a>' : ''}</div><div id="list"></div>`;
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (nom, client, adresse)…">${canEdit ? '<a class="btn primary" href="#/site/new">+ Chantier</a>' : ''}</div>
+    ${filterBar(FC)}<div id="list"></div>`;
+  const ST = Object.fromEntries(sites.map(s => [s.id, siteStats(s.id, docs, payments)]));
+  const SORTS = { recent: (a, b) => (b._u || 0) - (a._u || 0), name: (a, b) => a.name.localeCompare(b.name, 'fr'), client: (a, b) => (C[a.clientId]?.name || '~').localeCompare(C[b.clientId]?.name || '~', 'fr'),
+    start: (a, b) => (b.start || '').localeCompare(a.start || ''), end: (a, b) => (a.end || '9999').localeCompare(b.end || '9999'), amount: (a, b) => ST[b.id].marcheTTC - ST[a.id].marcheTTC, due: (a, b) => ST[b.id].resteAPayer - ST[a.id].resteAPayer };
+  let getF;
   const draw = () => {
-    const q = $('#q', el).value.toLowerCase();
-    const rows = list.filter(s => !q || [s.name, C[s.clientId]?.name, s.address].join(' ').toLowerCase().includes(q));
+    const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
+    const rows = list.filter(s => (!q || [s.name, C[s.clientId]?.name, s.address].join(' ').toLowerCase().includes(q)) && (!F2.client || s.clientId === F2.client) && (!F2.late || (OPEN.includes(s.status) && s.end && s.end < today())) && (!F2.due || ST[s.id].resteAPayer > 0.005))
+      .sort(SORTS[F2.sort] || SORTS.recent);
     $('#list', el).innerHTML = rows.map(s => {
       const st = siteStats(s.id, docs, payments);
       return `<a class="item" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
@@ -61,6 +70,7 @@ export async function renderSites(el, tab = 'open') {
         <div class="r"><span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
     }).join('') || `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`;
   };
+  getF = bindFilters(el, 'sites_', FC, draw);
   draw(); $('#q', el).oninput = draw;
 }
 
