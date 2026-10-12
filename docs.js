@@ -160,7 +160,9 @@ export async function renderDoc(el, id, arg) {
   const draw = () => {
     const t = totals(cur);
     el.innerHTML = `<div class="row"><a class="btn ghost" href="${cur.siteId && sites.some(x => x.id === cur.siteId) ? '#/site/' + cur.siteId : '#/docs/' + cur.type}">← Retour</a><span class="sp"></span>
+      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
+    <div id="pvwrap" hidden></div><div id="edwrap">
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}
     <div class="card"><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
@@ -178,7 +180,7 @@ export async function renderDoc(el, id, arg) {
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
-    ${!isNew ? actionsHtml() : ''}`;
+    ${!isNew ? actionsHtml() : ''}</div>`;
     bind();
   };
 
@@ -289,6 +291,16 @@ export async function renderDoc(el, id, arg) {
 
   const bind = () => {
     bindRichFields(el);
+    const showPv = async on => {
+      if (on) {
+        readHeader(); const c = JSON.parse(JSON.stringify(cur)); pruneBlocks(c);
+        $('#pvwrap', el).innerHTML = '<p class="muted" style="margin:6px 0">Aperçu du document tel qu\'il sera imprimé (rien n\'est enregistré).</p><div class="pvpaper">' + await sheetHtml(c) + '</div>';
+      }
+      $('#pvwrap', el).hidden = !on; $('#edwrap', el).hidden = on;
+      $('#vedit', el).classList.toggle('on', !on); $('#vprev', el).classList.toggle('on', on);
+      if (on) window.scrollTo?.(0, 0);
+    };
+    $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
     $('#csearch', el).oninput = ev => {
@@ -358,7 +370,7 @@ export async function renderDoc(el, id, arg) {
 }
 
 /* ---------- Impression ---------- */
-async function printDoc(doc) {
+async function sheetHtml(doc) {
   const [S, contacts, payments] = await Promise.all([getS(), db.all('contacts'), db.all('payments')]);
   setStyles(S);
   const c = contacts.find(x => x.id === doc.clientId) || {};
@@ -366,7 +378,7 @@ async function printDoc(doc) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
   const used = isC ? creditUsed(payments, doc.id) : paid;
   const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
-  $('#printarea').innerHTML = `<div class="sheet">
+  return `<div class="sheet">
     <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${e(S.sub || S.company)}</div>
       <p><b>${e(S.owner)}</b><br>${e(S.address).replace(/\n/g, '<br>')}<br>${e(S.phone)}<br>${e(S.legal)}<br>${e(S.email)}<br>${e(S.web)}<br>N°SIRET : ${e(S.siret)}</p></div>
       <div><p class="small" style="margin-top:0">${S.rge ? `<b>RGE</b> Numéro ${e(S.rge)}<br>` : ''}${S.insurance ? `Assurance Responsabilité Travaux ${e(S.insurance)}<br>Assurance Responsabilité Civile ${e(S.insurance)}` : ''}</p>
@@ -386,6 +398,10 @@ async function printDoc(doc) {
     ${isC ? `<div class="pay"><b>Avoir</b> – à déduire de votre prochaine facture ou remboursé.${doc.note ? '<br>Motif : ' + richHtml(doc.note) : ''}</div>` : `<div class="pay"><b>Règlement</b><br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
     <div class="sig"><div><b>${isQ ? 'Bon pour accord – date et signature du client' : 'Signature Entrepreneur'}</b><div style="height:60px"></div></div>
     <div>${S.iban && !isC ? `<b><u>Vous pouvez régler cette facture par virement</u></b><br><b>${e(S.company)}</b><br><b>IBAN</b> : ${e(S.iban)}<br><b>Code BIC</b> : ${e(S.bic)}` : ''}</div></div></div>`;
+}
+
+async function printDoc(doc) {
+  $('#printarea').innerHTML = await sheetHtml(doc);
   await Promise.all([...$('#printarea').querySelectorAll('img')].map(i => (i.decode ? i.decode().catch(() => {}) : null)));
   setTimeout(() => window.print(), 60);
 }

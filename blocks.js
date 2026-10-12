@@ -58,7 +58,7 @@ export function pruneBlocks(d) {
 /* Sous-total d'une section : lignes situées entre cette section et la suivante */
 export function sectionTotals(bl) {
   const out = {}; let cur = null;
-  for (const b of bl) { if (b.type === 'section') { cur = b.id; out[cur] = 0; } else if (b.type === 'line' && cur) out[cur] += num(b.qty) * num(b.pu); }
+  for (const b of bl) { if (b.type === 'section') { cur = b.id; out[cur] = 0; } else if (b.type === 'sectionend') cur = null; else if (b.type === 'line' && cur) out[cur] += num(b.qty) * num(b.pu); }
   for (const k in out) out[k] = Math.round(out[k] * 100) / 100;
   return out;
 }
@@ -77,6 +77,7 @@ export function printRows(d) {
   const out = []; let open = null;
   for (const b of d.blocks) {
     if (b.type === 'section') { if (open) out.push({ _sub: open }); open = b.sub ? b : null; }
+    if (b.type === 'sectionend') { if (open) out.push({ _sub: open }); open = null; continue; }
     out.push(b);
   }
   if (open) out.push({ _sub: open });
@@ -153,7 +154,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   const change = () => { syncLines(d); updSub(); onChange(); };
   box.innerHTML = `<div class="rte-wrap">${toolbarHtml()}</div><div id="blks"></div>
     <div class="row addbar"><button type="button" class="btn" id="addp">+ Produit</button><button type="button" class="btn" id="addl">+ Ligne libre</button>
-      <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
+      <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="adde" title="Termine la section en cours : les lignes suivantes n'en font plus partie">+ Fin de section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
   bindToolbar(box, () => active, t => { const blk = d.blocks.find(x => x.id === t.closest('.blk')?.dataset.id); if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
   const host = $('#blks', box);
   const idx = id => d.blocks.findIndex(b => b.id === id);
@@ -170,13 +171,16 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       <button type="button" data-tg="sub" title="Afficher un sous-total à la fin de la section" class="${b.sub ? 'on' : ''}">Σ</button><button type="button" data-tg="nobg" title="Sans fond">∅</button><button type="button" data-tg="bold" title="Gras"><b>G</b></button><button type="button" data-tg="italic" title="Italique"><i>I</i></button>
       <button type="button" data-al="left">⟸</button><button type="button" data-al="center">≡</button></span></div>`;
     if (b.type === 'text') return `<div class="rte" contenteditable="true" data-ph="Texte libre (commentaire, précision, mention…)">${sanitize(b.html)}</div>`;
+    if (b.type === 'sectionend') { let sid = ''; for (const x of d.blocks) { if (x === b) break; if (x.type === 'section') sid = x.id; else if (x.type === 'sectionend') sid = ''; } return `<div class="pbk-ed">— Fin de la section${sid ? ' « ' + e(plain(d.blocks.find(x => x.id === sid).title)) + ' »' : ' (aucune section ouverte)'} — <b class="subv" data-sub="${sid}"></b></div>`; }
     return '<div class="pbk-ed">— Saut de page —</div>';
   };
-  const LABEL = { line: 'Ligne', section: 'Section', text: 'Texte', pagebreak: 'Page' };
+  const LABEL = { line: 'Ligne', section: 'Section', text: 'Texte', pagebreak: 'Page', sectionend: 'Fin de section' };
   const draw = () => {
-    host.innerHTML = d.blocks.map(b => `<div class="blk blk-${b.type}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
+    let open = false;
+    host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
       <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
-      <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
+      <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
+    updSub();
   };
   draw();
 
@@ -223,6 +227,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   $('#addl', box).onclick = () => add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
   $('#addp', box).onclick = () => { readHeader(); pickProduct(p => add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }), { sale: true }); };
   $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: true });
+  $('#adde', box).onclick = () => add({ type: 'sectionend' });
   $('#addt', box).onclick = () => add({ type: 'text', html: '' });
   $('#addb', box).onclick = () => add({ type: 'pagebreak' });
   $('#addm', box).onclick = () => snippetsModal(s => add({ type: 'text', html: sanitize(s.html) }));
