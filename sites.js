@@ -5,6 +5,7 @@ import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
 import * as auth from './auth.js';
+import * as lock from './lock.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -20,7 +21,7 @@ export function siteStats(siteId, docs, payments) {
   const quotes = mine.filter(d => d.type === 'quote');
   const signed = quotes.filter(d => d.status === 'accepted' || d.status === 'invoiced');
   const pending = quotes.filter(d => d.status === 'sent' || d.status === 'draft');
-  const invoices = mine.filter(d => d.type === 'invoice' && d.status !== 'draft');
+  const invoices = mine.filter(d => d.type === 'invoice' && d.status !== 'draft' && d.status !== 'cancelled');
   const credits = mine.filter(d => d.type === 'credit' && d.status !== 'draft');
   const sum = (l, f) => round2(l.reduce((a, d) => a + totals(d)[f], 0));
   const marcheHT = sum(signed, 'ht'), marcheTTC = sum(signed, 'ttc');
@@ -66,7 +67,7 @@ const gaugesBig = (list, edit, site) => `<div class="card gauges"><h3 style="mar
 /* ---------- Liste ---------- */
 export async function renderSites(el, tab = 'open') {
   const [sites0, contacts, docs, payments, tasks] = await Promise.all([db.all('sites'), db.all('contacts'), db.all('documents'), db.all('payments'), db.all('tasks')]);
-  const mine = onlyMine() ? mySites(tasks) : null, money = auth.can('sites.money'), canEdit = auth.can('sites.edit');
+  const mine = onlyMine() ? mySites(tasks) : null, money = auth.can('sites.money'), canEdit = auth.can('sites.edit'), LK = await lock.allLocks();
   const sites = mine ? sites0.filter(s => mine.has(s.id)) : sites0;
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const cl = [...new Set(sites.map(s => s.clientId).filter(Boolean))].map(id => [id, C[id]?.name || '?']).sort((a, b) => a[1].localeCompare(b[1], 'fr'));
@@ -87,10 +88,10 @@ export async function renderSites(el, tab = 'open') {
       .sort(SORTS[F2.sort] || SORTS.recent);
     $('#list', el).innerHTML = rows.map(s => {
       const st = siteStats(s.id, docs, payments);
-      return `<a class="item" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
+      return `<a class="item${lock.lockCls(LK, s.id)}" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
         <div class="s">${e(C[s.clientId]?.name || 'Sans client')}${s.address ? ' · ' + e(s.address.split('\n')[0]) : ''}</div>
         <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}</div>${gaugesHtml(siteGauges(s, st, money))}</div>
-        <div class="r"><span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
+        <div class="r">${lock.lockTag(LK, s.id)}<span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
     }).join('') || `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`;
   };
   getF = bindFilters(el, 'sites_', FC, draw);
@@ -168,7 +169,7 @@ export async function renderSite(el, id) {
   $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
   if (!canEdit) return;
-  $('#edit', el).onclick = () => siteModal(site, clients, false);
+  $('#edit', el).onclick = () => lock.withLock(site.id, () => siteModal(site, clients, false));
   $('#finish', el).onclick = async () => {
     const closed = site.status === 'paid' || site.status === 'lost';
     if (!closed && st.resteAPayer > 0.005 && !confirm(`Il reste ${eur(st.resteAPayer)} à encaisser sur ce chantier. Le terminer quand même ?`)) return;
@@ -186,16 +187,24 @@ export async function renderSite(el, id) {
 
 export const mapsDir = addr => 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' + encodeURIComponent(String(addr || '').replace(/\s*\n\s*/g, ', '));
 
+/* Couleur d'un nouveau chantier : au hasard parmi celles qu'aucun chantier en cours n'utilise (celles des chantiers terminés sont réutilisables) */
+export const SITE_PALETTE = ['#2f7ad6', '#1b8a4b', '#c77700', '#c62f2f', '#7b4fd0', '#0f9aa8', '#555d6b', '#d6336c', '#2b8a3e', '#e67700', '#1971c2', '#9c36b5', '#0b7285', '#a61e4d', '#5c940d', '#e8590c', '#3b5bdb', '#862e9c', '#087f5b', '#b36b00', '#c2255c', '#364fc7', '#66a80f', '#c92a2a'];
+export function pickSiteColor(sites, excludeId) {
+  const used = new Set(sites.filter(s => s.id !== excludeId && OPEN.includes(s.status)).map(s => String(s.color || '').toLowerCase()));
+  const free = SITE_PALETTE.filter(c => !used.has(c));
+  const pool = free.length ? free : SITE_PALETTE;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 /* Création d'un chantier : pre = valeurs préremplies (clientId, name, address, quoteId) ; onSaved(site) remplace la redirection */
 export async function newSiteModal(pre = {}, onSaved) {
-  const [contacts, docs] = await Promise.all([db.all('contacts'), db.all('documents')]);
+  const [contacts, docs, allSites] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('sites')]);
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const { quoteId, ...rest } = pre;
-  siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: '#2f7ad6', ...rest }, clients, true, { docs, contacts, quoteId, onSaved });
+  siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: pickSiteColor(allSites), ...rest }, clients, true, { docs, contacts, quoteId, onSaved });
 }
 
 function siteModal(site, clients, isNew, opts = {}) {
-  const COLORS = ['#2f7ad6', '#1b8a4b', '#c77700', '#c62f2f', '#7b4fd0', '#0f9aa8', '#555d6b'];
   const docs = opts.docs || [], CM = Object.fromEntries((opts.contacts || clients).map(c => [c.id, c])), SITES = {};
   const quotes = isNew ? docs.filter(d => d.type === 'quote').sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number)) : [];
   const qLabel = d => `${d.number || '(sans n°)'} — ${cname(CM[d.clientId]) || 'sans client'}${d.siteRef ? ' — ' + d.siteRef : ''} — ${eur(totals(d).ttc)}${d.siteId ? ' · déjà rattaché à un chantier' : ''}`;

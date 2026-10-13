@@ -3,7 +3,7 @@
 // techniques (id, maj, supprime, json). Fusion enregistrement par enregistrement : le plus récent gagne.
 // Le cache local (IndexedDB) reste utilisable hors ligne ; la synchro reprend dès le retour du réseau.
 import * as db from './db.js';
-import { getS } from './defaults.js';
+import { getS, DEFAULTS } from './defaults.js';
 import { loadScript } from './util.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -25,7 +25,7 @@ const ht = d => Math.round((d.lines || []).reduce((a, l) => a + (+l.qty || 0) * 
 export const TABS = [
   { store: 'products', name: 'Produits', cols: [['Référence', r => r.ref], ['Désignation', r => r.name], ['Code-barres', r => r.barcode], ['Catégorie', r => r.category], ['Unité', r => r.unit], ['Prix achat HT', r => r.buy], ['Prix vente HT', r => r.sell], ['TVA %', r => r.tva], ['Seuil alerte', r => r.min], ['Stock total', r => sum(r.stock)]] },
   { store: 'sites', name: 'Chantiers', cols: [['Nom', r => r.name], ['Client', (r, c) => c.contacts[r.clientId]?.name], ['Adresse', r => r.address], ['Statut', r => ({ new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Terminé', lost: 'Perdu' })[r.status] || r.status], ['Début', r => r.start], ['Fin', r => r.end], ['Note', r => r.note]] },
-  { store: 'members', name: 'Equipe', cols: [['Nom', r => r.name], ['Fonction', r => ({ gerant: 'Gérant', chef: 'Chef de chantier', ouvrier: 'Ouvrier', apprenti: 'Apprenti', soustraitant: 'Sous-traitant', autre: 'Autre' })[r.role] || r.role], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['Coût horaire', r => r.rate], ['Habilitations', r => (r.habs || []).map(h => h.label + (h.expiry ? ' (' + h.expiry + ')' : '')).join(' ; ')], ['Profil d\'accès', r => ({ admin: 'Administrateur', manager: 'Gestionnaire', sales: 'Commercial', worker: 'Compagnon / salarié', contractor: 'Intervenant' })[r.access] || ''], ['Actif', r => (r.active === false ? 'non' : 'oui')]] },
+  { store: 'members', name: 'Equipe', cols: [['Nom', r => r.name], ['Fonction', r => ({ gerant: 'Gérant', chef: 'Chef de chantier', ouvrier: 'Ouvrier', apprenti: 'Apprenti', soustraitant: 'Sous-traitant', autre: 'Autre' })[r.role] || r.role], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['Contrat', r => r.contract], ['Embauche', r => r.hireDate], ['Sortie', r => r.exitDate], ['Coût horaire', r => r.rate], ['Habilitations', r => (r.habs || []).map(h => h.label + (h.expiry ? ' (' + h.expiry + ')' : '')).join(' ; ')], ['Profil d\'accès', r => ({ admin: 'Administrateur', manager: 'Gestionnaire', sales: 'Commercial', worker: 'Compagnon / salarié', contractor: 'Intervenant' })[r.access] || ''], ['Actif', r => (r.active === false ? 'non' : 'oui')]] },
   { store: 'tasks', name: 'Planning', cols: [['Chantier', (r, c) => c.sites[r.siteId]?.name], ['Membre', (r, c) => c.members[r.memberId]?.name], ['Du', r => r.start], ['Au', r => r.end], ['Heures/jour', r => r.hours], ['Heures prévues', r => { let n = 0; for (let d = new Date(r.start + 'T12:00'); d <= new Date((r.end || r.start) + 'T12:00'); d.setDate(d.getDate() + 1)) { const w = d.getDay(); if (r.weekend || (w && w < 6)) n++; } return n * (+r.hours || 0); }], ['Heures réalisées', r => r.done], ['Tâche', r => r.note]] },
   { store: 'locations', name: 'Emplacements', cols: [['Zone', r => r.zone], ['Lieu', r => r.place], ['Note', r => r.note]] },
   { store: 'contacts', name: 'Contacts', cols: [['Type', r => (r.kind === 'supplier' ? 'Fournisseur' : 'Client')], ['Nom', r => r.name], ['Contact', r => r.company], ['Adresse', r => r.address], ['CP', r => r.zip], ['Ville', r => r.city], ['Téléphone', r => r.phone], ['E-mail', r => r.email], ['SIRET', r => r.siret], ['Note', r => r.note]] },
@@ -158,7 +158,7 @@ export async function useSheet(input) {
 const clean = (store, rec) => {
   const { _u, _d, ...r } = rec;
   if (store === 'fbposts') delete r.image;
-  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); if ((r.value.logo || '').length > 40000) delete r.value.logo; }
+  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); if ((r.value.logo || '').length > 40000 || (r.value.logo && JSON.stringify(r).length > 47000)) delete r.value.logo; }
   return r;
 };
 
@@ -252,7 +252,15 @@ export async function sync({ interactive = false } = {}) {
           if (!m._d && t.store === 'settings') {
             const keep = {}; LOCAL_ONLY.forEach(k => { if (l?.value?.[k] !== undefined) keep[k] = l.value[k]; });
             if (m.value.logo === undefined && l?.value?.logo) keep.logo = l.value.logo;
-            rec = { ...m, value: { ...m.value, ...keep } };
+            const val = { ...m.value, ...keep };
+            // un appareil neuf (réglages par défaut) ne doit jamais écraser des réglages personnalisés (nom de l'appli, logo, numérotation…)
+            if (rid === 'main' && l?.value) for (const [k, lv] of Object.entries(l.value)) {
+              if (LOCAL_ONLY.includes(k) || k === 'logo' || lv === undefined) continue;
+              const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+              if ((m.value[k] === undefined || same(m.value[k], DEFAULTS[k])) && !same(lv, DEFAULTS[k]) && !same(lv, m.value[k])) val[k] = lv;
+            }
+            rec = { ...m, value: val };
+            if (JSON.stringify(val) !== JSON.stringify(m.value)) { rec._u = Date.now(); dirty.add('settings'); }
           }
           await db.putRaw(t.store, rec); pulled++;
         } else if (l && (!m || l._u > m._u)) dirty.add(t.store);

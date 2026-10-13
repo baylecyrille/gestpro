@@ -5,13 +5,27 @@ import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterB
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
+import * as lock from './lock.js';
 import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
 import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 
+const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
 
 const QS = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' };
-const IS = { draft: 'Brouillon', pending: 'En attente', sent: 'Envoyée', paid: 'Réglée' };
+const IS = { draft: 'Brouillon', pending: 'À payer', sent: 'Envoyée', partial: 'Réglée partiellement', paid: 'Réglée', overdue: 'En retard / impayée', dispute: 'En litige / suspendue', cancelled: 'Annulée' };
+/* Facture à prendre en compte dans les chiffres (ni brouillon ni annulée) */
+export const counts = d => d.status !== 'draft' && d.status !== 'cancelled';
+/* État réel d'une facture : règlements + date limite (en retard = échéance dépassée et reste à payer) */
+export function invState(doc, payments) {
+  normStatus(doc);
+  if (['draft', 'cancelled', 'dispute'].includes(doc.status)) return doc.status;
+  const t = totals(doc).ttc, p = paidOf(payments, doc.id);
+  if (doc.status === 'paid' || (t > 0 && p >= t - 0.005)) return 'paid';
+  if (doc.dueDate && doc.dueDate < today()) return 'overdue';
+  if (p > 0) return 'partial';
+  return doc.status === 'sent' ? 'sent' : doc.status === 'overdue' ? 'overdue' : 'pending';
+}
 const normStatus = d => { if (d.type === 'invoice' && d.status === 'issued') d.status = 'pending'; return d; };
 const CS = { draft: 'Brouillon', issued: 'Émis' };
 const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte bleue'], ['virement', 'Virement'], ['autre', 'Autre'], ['avoir', 'Avoir (imputation)']];
@@ -41,20 +55,20 @@ export function invBadge(doc, payments) {
     if (t > 0 && u >= t - 0.005) return '<span class="chip ok">Soldé</span>';
     return `<span class="chip warn">${u > 0 ? 'Partiel' : 'À utiliser'}</span>`;
   }
-  if (doc.status === 'draft') return '<span class="chip">Brouillon</span>';
-  const t = totals(doc).ttc, p = paidOf(payments, doc.id);
-  if (doc.status === 'paid' || (t > 0 && p >= t - 0.005)) return '<span class="chip ok">Réglée</span>';
-  const part = p > 0 ? '<span class="chip warn">Partielle</span>' : '';
-  return `<span class="chip ${doc.status === 'sent' ? 'warn' : 'bad'}">${IS[doc.status] || 'En attente'}</span>${part}`;
+  const st = invState(doc, payments), p = paidOf(payments, doc.id);
+  const cls = { draft: '', paid: 'ok', partial: 'warn', sent: 'warn', dispute: 'warn', overdue: 'bad', pending: 'bad', cancelled: '' }[st];
+  const part = st === 'overdue' && p > 0.005 ? '<span class="chip warn">Partielle</span>' : '';
+  const late = st === 'overdue' && doc.dueDate ? ` title="Échéance dépassée : ${dateFr(doc.dueDate)}"` : '';
+  return `<span class="chip ${cls}"${late}${st === 'cancelled' ? ' style="text-decoration:line-through"' : ''}>${IS[st] || 'À payer'}</span>${part}`;
 }
 /* Met l'état de la facture en cohérence avec les règlements (réglée / plus réglée) */
 async function syncInvStatus(docId) {
   const d = await db.get('documents', docId);
   if (!d || d.type !== 'invoice') return;
   normStatus(d);
-  if (d.status === 'draft') return;
-  const t = totals(d).ttc, full = t > 0 && paidOf(await db.all('payments'), docId) >= t - 0.005;
-  const ns = full ? 'paid' : d.status === 'paid' ? 'sent' : d.status;
+  if (['draft', 'cancelled', 'dispute'].includes(d.status)) return; // états choisis à la main : jamais modifiés automatiquement
+  const t = totals(d).ttc, p = paidOf(await db.all('payments'), docId), full = t > 0 && p >= t - 0.005;
+  const ns = full ? 'paid' : p > 0.005 ? 'partial' : (d.status === 'paid' || d.status === 'partial') ? 'pending' : d.status;
   if (ns !== d.status) { d.status = ns; await db.put('documents', d); }
   if (full) await autoCloseSite(d.siteId);
 }
@@ -66,7 +80,7 @@ async function autoCloseSite(siteId) {
   const site = await db.get('sites', siteId);
   if (!site || !['new', 'signed', 'progress'].includes(site.status)) return;
   const [docs, pays] = await Promise.all([db.all('documents'), db.all('payments')]);
-  const mine = docs.filter(x => x.siteId === siteId && x.status !== 'draft');
+  const mine = docs.filter(x => x.siteId === siteId && counts(x));
   const invs = mine.filter(x => x.type === 'invoice');
   if (!invs.length || invs.some(x => paidOf(pays, x.id) < totals(x).ttc - 0.005)) return;
   const market = mine.filter(x => x.type === 'quote' && ['accepted', 'invoiced'].includes(x.status)).reduce((a, x) => a + totals(x).ttc, 0);
@@ -108,7 +122,8 @@ async function nextNumber(type) {
 
 export async function newDoc(type, extra = {}) {
   const S = await getS();
-  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: '', siteId: '', ...extra };
+  const due = type === 'invoice' ? addDays(today(), num(S.payDays ?? 30)) : '';
+  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: '', dueDate: due, siteId: '', ...extra };
 }
 
 /* ---------- Liste ---------- */
@@ -116,10 +131,11 @@ export async function renderDocs(el, tab = 'quote') {
   const allowed = ['quote', 'invoice', 'credit'].filter(t => auth.can(TYPE_RIGHT[t]));
   if (!allowed.includes(tab)) return go('#/docs/' + (allowed[0] || 'quote'));
   const [docs, contacts, payments] = await Promise.all([db.all('documents'), db.all('contacts'), db.all('payments')]);
+  const LK = await lock.allLocks();
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const list = docs.filter(d => d.type === tab && auth.canDoc(d)).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
   const cl = [...new Set(list.map(d => d.clientId).filter(Boolean))].map(id => [id, cname(C[id]) || '?']).sort((a, b) => a[1].localeCompare(b[1], 'fr'));
-  const stOpts = tab === 'quote' ? [['', 'Tous'], ...Object.entries(QS)] : tab === 'invoice' ? [['', 'Toutes'], ['unpaid', 'À encaisser'], ['paid', 'Réglées'], ['draft', 'Brouillons']] : [['', 'Tous'], ...Object.entries(CS)];
+  const stOpts = tab === 'quote' ? [['', 'Tous'], ...Object.entries(QS)] : tab === 'invoice' ? [['', 'Toutes'], ['unpaid', 'À encaisser'], ['paid', 'Réglées'], ['partial', 'Réglées partiellement'], ['overdue', 'En retard / impayées'], ['dispute', 'En litige / suspendues'], ['cancelled', 'Annulées'], ['draft', 'Brouillons']] : [['', 'Tous'], ...Object.entries(CS)];
   const FC = [{ id: 'sort', label: 'Trier par', def: 'dateD', options: [['dateD', 'Date (récent)'], ['dateA', 'Date (ancien)'], ['num', 'Numéro'], ['client', 'Client A→Z'], ['amtD', 'Montant ↓'], ['amtA', 'Montant ↑']] },
     { id: 'status', label: 'Statut', options: stOpts }, { id: 'client', label: 'Client', options: [['', 'Tous'], ...cl] }, { id: 'from', type: 'date', label: 'Du' }, { id: 'to', type: 'date', label: 'Au' }];
   const SORTS = { dateD: (a, b) => (b.date + b.number).localeCompare(a.date + a.number), dateA: (a, b) => (a.date + a.number).localeCompare(b.date + b.number), num: (a, b) => String(a.number).localeCompare(String(b.number), 'fr', { numeric: true }),
@@ -127,7 +143,7 @@ export async function renderDocs(el, tab = 'quote') {
   el.innerHTML = `<h2>Devis &amp; factures</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div>${filterBar(FC)}<div id="list"></div>`;
   let getF;
-  const okStatus = (d, s) => !s || (tab === 'invoice' && s === 'unpaid' ? d.status !== 'draft' && totals(d).ttc - paidOf(payments, d.id) > 0.005 : tab === 'invoice' && s === 'paid' ? d.status !== 'draft' && totals(d).ttc > 0 && totals(d).ttc - paidOf(payments, d.id) <= 0.005 : d.status === s);
+  const okStatus = (d, s) => !s || (tab === 'invoice' ? (s === 'unpaid' ? counts(d) && totals(d).ttc - paidOf(payments, d.id) > 0.005 : invState(d, payments) === s) : d.status === s);
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
     const rows = list.filter(d => (!q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q)) && okStatus(d, F2.status) && (!F2.client || d.clientId === F2.client) && (!F2.from || (d.date || '') >= F2.from) && (!F2.to || (d.date || '') <= F2.to)).sort(SORTS[F2.sort] || SORTS.dateD);
@@ -136,8 +152,8 @@ export async function renderDocs(el, tab = 'quote') {
       let badge;
       if (d.type === 'invoice' || d.type === 'credit') badge = invBadge(d, payments);
       else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
-      return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
-        <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
+      return `<a class="item${lock.lockCls(LK, d.id)}" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
+        <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${lock.lockTag(LK, d.id)}${badge}</div></div></a>`;
     }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.</div>`;
   };
   getF = bindFilters(el, 'docs_' + tab + '_', FC, draw);
@@ -158,6 +174,14 @@ export async function renderDoc(el, id, arg) {
   normStatus(cur); ensureBlocks(cur);
   if (isNew && !cur.by) cur.by = auth.currentUser()?.id || '';
   if (!auth.canDoc(cur)) { el.innerHTML = '<div class="empty">Vous n\'avez pas accès à ce document.</div>'; return; }
+  if (!isNew) { // verrou d'édition : un seul utilisateur à la fois sur ce document
+    const lk = await lock.begin(cur.id, { prefix: '#/doc/' + cur.id });
+    if (lk.blocked) {
+      el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a></div><div class="card"><h3 style="margin-top:0">${e(lock.lockMsg(lk.blocked))}</h3><p class="muted">Ce document est grisé le temps de sa modification par cette personne. Réessayez dans un moment.</p>${lk.canForce ? '<button class="btn danger" id="lkforce">Ouvrir quand même</button>' : ''}</div>`;
+      $('#lkforce', el)?.addEventListener('click', async () => { if (confirm('Risque d\'écraser ses modifications. Ouvrir quand même ?')) { await lock.begin(cur.id, { prefix: '#/doc/' + cur.id, force: true }); refresh(); } });
+      return;
+    }
+  }
   const canPay = auth.can('invoices'), canInv = auth.can('invoices');
   const [contacts, S, allPay, sites, allDocs] = await Promise.all([db.all('contacts'), getS(), db.all('payments'), db.all('sites'), db.all('documents')]);
   sites.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -206,6 +230,7 @@ export async function renderDoc(el, id, arg) {
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
       ${richField('Intitulé', 'intro', cur.intro)}
       ${richField(isC ? 'Motif de l\'avoir' : 'Remarque', 'note', cur.note, { rows: 3 })}
+      ${!isQ && !isC ? F('Date limite de règlement', 'dueDate', cur.dueDate || '', { type: 'date' }) : ''}
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></div>
@@ -249,7 +274,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const readHeader = () => {
-    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId'].includes(i.name)) cur[i.name] = i.value; });
+    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
     readZones();
     cur.tva = num(cur.tva);
@@ -261,9 +286,6 @@ export async function renderDoc(el, id, arg) {
     if (!cur.number && (cur.type === 'quote' || cur.status !== 'draft')) cur.number = await nextNumber(cur.type);
     pruneBlocks(cur);
     await db.put('documents', cur);
-    if (isQ && cur.status === 'invoiced' && !cur.invoiceId) { // devis passé à « Facturé » : la facture est créée automatiquement
-      if (cur.invoiceId = (await makeInvoice(cur)).id) { toast('Facture créée à partir du devis'); go('#/doc/' + cur.invoiceId); return true; }
-    }
     if (!isQ && !isC) await syncInvStatus(cur.id);
     await bumpSite(cur);
     if (isNew) { toast('Enregistré'); location.hash = '#/doc/' + cur.id; } else { toast('Enregistré'); refresh(); }
@@ -480,7 +502,7 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['chantier', 'Bloc « Réf chantier »', '**__Réf chantier :__**\n{siteRef}\n**{siteAddr}**', 3, 'qic'],
     ['title', 'Titre du document', T + ' {numero}', 1, 'qic'],
     ['dateLine', 'Ligne ville / date', '**{ville}, le   {date}**', 1, 'qic'],
-    ['validLine', 'Validité du devis', 'Valable jusqu\'au {validite}', 1, 'q'],
+    ['validLine', isQ ? 'Validité du devis' : 'Date limite de règlement', isQ ? 'Valable jusqu\'au {validite}' : 'À régler avant le {validite}', 1, 'qi'],
     ['thDes', 'Tableau – colonne 1', 'DESIGNATION', 1, 'qic'],
     ['thQty', 'Tableau – colonne 2', 'Qté', 1, 'qic'],
     ['thUnit', 'Tableau – colonne 3', 'Unité', 1, 'qic'],
@@ -559,7 +581,7 @@ export async function sheetHtml(doc, opts = {}) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
   const used = isC ? creditUsed(payments, doc.id) : paid;
   const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
-  const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: doc.validUntil ? dateFr(doc.validUntil) : '', siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
+  const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: isQ ? (doc.validUntil ? dateFr(doc.validUntil) : '') : (doc.dueDate ? dateFr(doc.dueDate) : ''), siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
   const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
   const LE = !!opts.layoutEdit, ED = !!opts.edit && !LE, LY = layoutOf(S, doc);
   const Z = k => { const h = zhtml(Zt(k), vars); return ED ? `<span class="zn" data-z="${k}" title="Cliquer pour modifier">${h || '<i class="zempty">(zone vide – cliquer)</i>'}</span>` : h; };
@@ -574,7 +596,7 @@ export async function sheetHtml(doc, opts = {}) {
       case 'title': return `<h1>${Z('title')}</h1>`;
       case 'intro': return `<b><u>${richHtml(doc.intro)}</u></b>`;
       case 'note': return isC ? '' : richHtml(doc.note);
-      case 'dateLine': return `<span class="dl">${Z('dateLine')}</span>${isQ && doc.validUntil && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}`;
+      case 'dateLine': return `<span class="dl">${Z('dateLine')}</span>${((isQ && doc.validUntil) || (!isQ && !isC && doc.dueDate)) && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}`;
       case 'pay': return `${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}`;
       case 'creditTxt': return `${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}`;
       default: return Z(it.k);

@@ -29,7 +29,7 @@ export function purchaseOf(mv, P) {
 
 export function summary(range, docs, payments, moves, products) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
-  const sales = docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && inR(d.date, range));
+  const sales = docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && d.status !== 'cancelled' && inR(d.date, range));
   const ca = round2(sales.reduce((a, d) => a + sign(d) * totals(d).ht, 0));
   const tvaColl = round2(sales.reduce((a, d) => a + sign(d) * totals(d).tva, 0));
   const buys = moves.filter(m => m.purchase && inR(m.date, range)).map(m => purchaseOf(m, P));
@@ -44,7 +44,7 @@ export function monthly(docs, moves, products, ref = today(), n = 12) {
   const out = []; let y = +ref.slice(0, 4), m = +ref.slice(5, 7);
   for (let i = 0; i < n; i++) { out.unshift({ ym: `${y}-${String(m).padStart(2, '0')}`, ca: 0, achats: 0 }); if (--m === 0) { m = 12; y--; } }
   const at = Object.fromEntries(out.map(o => [o.ym, o]));
-  docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft').forEach(d => { const o = at[(d.date || '').slice(0, 7)]; if (o) o.ca = round2(o.ca + sign(d) * totals(d).ht); });
+  docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && d.status !== 'cancelled').forEach(d => { const o = at[(d.date || '').slice(0, 7)]; if (o) o.ca = round2(o.ca + sign(d) * totals(d).ht); });
   moves.filter(m2 => m2.purchase).forEach(m2 => { const o = at[(m2.date || '').slice(0, 7)]; if (o) o.achats = round2(o.achats + purchaseOf(m2, P).ht); });
   return out;
 }
@@ -52,7 +52,7 @@ export function monthly(docs, moves, products, ref = today(), n = 12) {
 /* Rentabilité d'un chantier : facturé (ou marché si rien n'est encore facturé) − matières sorties du stock − main-d'œuvre */
 export function siteMargin(siteId, docs, moves, tasks, members, site) {
   const M = Object.fromEntries(members.map(m => [m.id, m]));
-  const mine = docs.filter(d => d.siteId === siteId && d.status !== 'draft');
+  const mine = docs.filter(d => d.siteId === siteId && d.status !== 'draft' && d.status !== 'cancelled');
   const fact = round2(mine.filter(d => d.type === 'invoice' || d.type === 'credit').reduce((a, d) => a + sign(d) * totals(d).ht, 0));
   const marche = round2(mine.filter(d => d.type === 'quote' && (d.status === 'accepted' || d.status === 'invoiced')).reduce((a, d) => a + totals(d).ht, 0));
   const matieres = round2(moves.filter(m => m.siteId === siteId && m.type === 'out').reduce((a, m) => a + num(m.qty) * num(m.unit), 0));

@@ -3,6 +3,7 @@ import * as db from './db.js';
 import { compressImage, e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import * as auth from './auth.js';
 
+export const CONTRACTS = ['CDI', 'CDD', 'CDD saisonnier', 'CDI de chantier / d\'opération', 'Intérim (mission)', 'Contrat d\'apprentissage', 'Contrat de professionnalisation', 'Stage', 'Gérant / mandataire social', 'Sous-traitant / indépendant', 'Autre'];
 export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
 const ROLE = Object.fromEntries(ROLES);
 const HABS = ['SST (secouriste)', 'Travail en hauteur', 'Habilitation électrique', 'CACES nacelle', 'CACES chariot', 'Échafaudage (montage)', 'Amiante SS4', 'Permis B', 'Permis poids lourd'];
@@ -63,6 +64,9 @@ export function memberModal(m) {
     `<div class="cols"><div class="full row" style="margin:0"><span id="mav">${avatar()}</span><label class="btn"><input type="file" id="mphoto" accept="image/*" hidden>📷 Photo</label><button type="button" class="btn" id="mphdel">Retirer</button></div>
     ${F('Nom et prénom', 'name', m.name, { req: true, cls: 'full' })}${F('Prénom affiché (« Bonjour … »)', 'first', m.first || '', { cls: 'full', ph: 'ex : Michael' })}
     ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
+    ${F('Type de contrat de travail', 'contract', m.contract || '', { type: 'select', options: [['', '— non renseigné —'], ...CONTRACTS.map(c => [c, c])] })}
+    ${F('Date de naissance', 'birthDate', m.birthDate || '', { type: 'date' })}${F('Date d\'embauche', 'hireDate', m.hireDate || '', { type: 'date' })}
+    ${F('Date de sortie', 'exitDate', m.exitDate || '', { type: 'date' })}<span></span>
     ${colorField('Couleur (planning)', 'color', m.color, 'full')}
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
     ${F('Coût horaire HT (€/h) – coût pour l\'entreprise', 'rate', m.rate, { type: 'number', step: '0.01' })}
@@ -187,7 +191,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
       }).join('') || '<div class="empty">Ajoutez les membres de l\'équipe (vous-même, ouvriers, apprentis, sous-traitants).</div>'}`;
     if (auth.can('team.edit')) {
       $('#addm', el).onclick = () => memberModal();
-      $$('[data-m]', el).forEach(n => n.onclick = () => memberModal(members.find(m => m.id === n.dataset.m)));
+      $$('[data-m]', el).forEach(n => n.onclick = () => import('./lock.js').then(L => L.withLock(n.dataset.m, () => memberModal(members.find(m => m.id === n.dataset.m)))));
     }
     return;
   }

@@ -290,3 +290,6 @@ body.lyopen{overflow:hidden}
   .lybody{flex-direction:column}
   .lypanel{width:auto;max-height:42vh;border-left:0;border-top:1px solid var(--bd)}
 }
+
+.item.locked{opacity:.5;filter:grayscale(.9)}
+.chip.lockchip{background:#fdecec;color:#a33}

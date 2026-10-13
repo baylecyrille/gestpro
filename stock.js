@@ -102,7 +102,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
   getF = bindFilters(body, 'stock_', FC, draw);
   draw();
   $('#q', body).oninput = draw;
-  list.onclick = ev => { const it = ev.target.closest('.item'); if (it) productModal(products.find(p => p.id === it.dataset.id), locs, contacts, products); };
+  list.onclick = ev => { const it = ev.target.closest('.item'); if (it) import('./lock.js').then(L => L.withLock(it.dataset.id, () => productModal(products.find(p => p.id === it.dataset.id), locs, contacts, products))); };
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);
   $('#scanb', body).onclick = lookupScan;

@@ -3,13 +3,14 @@ import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
 import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, filterBar, bindFilters, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
-import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs } from './docs.js';
+import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, counts } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
+import * as lock from './lock.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -55,24 +56,25 @@ export function contactModal(c, kind, onSaved) {
 async function renderTeamContacts(el) {
   const { memberModal, ROLES } = await import('./team.js');
   const members = (await db.all('members')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  const R = Object.fromEntries(ROLES), edit = auth.can('team.edit') || auth.can('settings');
+  const R = Object.fromEntries(ROLES), edit = auth.can('team.edit') || auth.can('settings'), LK = await lock.allLocks();
   el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], 'team')}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…">${edit ? '<button class="btn primary" id="add">+ Membre</button>' : ''}</div><div id="list"></div>`;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
-    $('#list', el).innerHTML = members.filter(m => !q || [m.name, m.first, m.phone, m.email, R[m.role]].join(' ').toLowerCase().includes(q)).map(m => `<div class="item" data-id="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}>${m.photo ? `<img class="av" style="width:38px;height:38px;margin:0" src="${e(m.photo)}" alt="">` : `<span class="avatar" style="background:${e(m.color || '#2f7ad6')}">${e((m.name || '?').split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase())}</span>`}
+    $('#list', el).innerHTML = members.filter(m => !q || [m.name, m.first, m.phone, m.email, R[m.role]].join(' ').toLowerCase().includes(q)).map(m => `<div class="item${lock.lockCls(LK, m.id)}" data-id="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}>${m.photo ? `<img class="av" style="width:38px;height:38px;margin:0" src="${e(m.photo)}" alt="">` : `<span class="avatar" style="background:${e(m.color || '#2f7ad6')}">${e((m.name || '?').split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase())}</span>`}
       <div class="main"><div class="t">${e(m.name)} <small class="muted">${e(R[m.role] || '')}${m.active === false ? ' · inactif' : ''}</small></div><div class="s">${[m.phone, m.email].filter(Boolean).map(e).join(' · ')}</div></div>
-      <div class="r">${m.phone ? `<a class="btn sm" href="tel:${e(m.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`).join('') || '<div class="empty">Aucun membre.</div>';
+      <div class="r">${lock.lockTag(LK, m.id)}${m.phone ? `<a class="btn sm" href="tel:${e(m.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`).join('') || '<div class="empty">Aucun membre.</div>';
   };
   draw(); $('#q', el).oninput = draw;
   $('#add', el)?.addEventListener('click', () => memberModal());
-  $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a') && edit) memberModal(members.find(m => m.id === it.dataset.id)); };
+  $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a') && edit) lock.withLock(it.dataset.id, () => memberModal(members.find(m => m.id === it.dataset.id))); };
 }
 
 async function renderContacts(el, tab = 'client') {
   if (tab === 'team') return renderTeamContacts(el);
   const [contacts, docs, payments] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('payments')]);
-  const dueOf = c => docs.filter(d => d.clientId === c.id && d.type === 'invoice' && d.status !== 'draft').reduce((a, d) => a + totals(d).ttc - paidOf(payments, d.id), 0);
+  const LK = await lock.allLocks();
+  const dueOf = c => docs.filter(d => d.clientId === c.id && d.type === 'invoice' && counts(d)).reduce((a, d) => a + totals(d).ttc - paidOf(payments, d.id), 0);
   const DUE = Object.fromEntries(contacts.map(c => [c.id, tab === 'client' ? dueOf(c) : 0]));
   const NDOC = Object.fromEntries(contacts.map(c => [c.id, docs.filter(d => d.clientId === c.id).length]));
   const list = contacts.filter(c => c.kind === tab);
@@ -88,15 +90,15 @@ async function renderContacts(el, tab = 'client') {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
     $('#list', el).innerHTML = list.filter(c => (!F2.city || c.city === F2.city) && (!F2.due || DUE[c.id] > 0.005) && (!F2.phone || c.phone) && (!F2.nodoc || !NDOC[c.id])).sort(SORTS[F2.sort] || SORTS.name).filter(c => !q || [c.civ, c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
       let due = 0;
-      if (tab === 'client') docs.filter(d => d.clientId === c.id && d.type === 'invoice' && d.status !== 'draft').forEach(d => (due += totals(d).ttc - paidOf(payments, d.id)));
-      return `<div class="item" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
-        <div class="r">${due > 0.005 ? `<span class="chip bad">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
+      if (tab === 'client') docs.filter(d => d.clientId === c.id && d.type === 'invoice' && counts(d)).forEach(d => (due += totals(d).ttc - paidOf(payments, d.id)));
+      return `<div class="item${lock.lockCls(LK, c.id)}" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
+        <div class="r">${lock.lockTag(LK, c.id)}${due > 0.005 ? `<span class="chip bad">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
     }).join('') || '<div class="empty">Aucune fiche.</div>';
   };
   getF = bindFilters(el, 'contacts_' + tab + '_', FC, draw);
   draw(); $('#q', el).oninput = draw;
   $('#add', el).onclick = () => contactModal(null, tab);
-  $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a')) contactModal(list.find(c => c.id === it.dataset.id)); };
+  $('#list', el).onclick = ev => { const it = ev.target.closest('.item'); if (it && !ev.target.closest('a')) lock.withLock(it.dataset.id, () => contactModal(list.find(c => c.id === it.dataset.id))); };
 }
 
 /* ---------- Tableau de bord ---------- */
@@ -108,7 +110,7 @@ async function renderDashboard(el) {
   const sm = summary(range, docs, payments, moves, products);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
-  const invoices = docs.filter(d => d.type === 'invoice' && d.status !== 'draft');
+  const invoices = docs.filter(d => d.type === 'invoice' && counts(d));
   const unpaidList = invoices.map(d => ({ d, left: Math.max(0, totals(d).ttc - paidOf(payments, d.id)) })).filter(x => x.left > 0.005).sort((a, b) => a.d.date.localeCompare(b.d.date));
   const unpaid = unpaidList.reduce((a, x) => a + x.left, 0);
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent');
@@ -225,7 +227,7 @@ async function renderSettings(el) {
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
     ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}
     <label class="f full"><span><input type="checkbox" name="autoCloseSites" ${S.autoCloseSites !== false ? 'checked' : ''}> Terminer automatiquement un chantier quand tout est facturé et réglé</span></label>
-    ${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
+    ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
     <h3 class="full">Couleurs des lignes de devis / factures</h3>
@@ -244,9 +246,10 @@ async function renderSettings(el) {
   <div class="card"><h3 style="margin-top:0">Scanner de codes-barres</h3>
     <p class="muted">Si l'image est floue, ouvrez le scanner et changez de caméra (⟳ ou liste) : le choix est mémorisé sur cet appareil. Le bouton ◎ relance la mise au point, le curseur règle le zoom.</p>
     <p id="camstat"></p><div class="row"><button type="button" class="btn primary" id="camtest">Tester / choisir la caméra</button><button type="button" class="btn" id="camreset">Caméra automatique</button></div></div>
-  <div class="card" id="gcard"><h3 style="margin-top:0">Google Sheets (stockage des données)</h3>
+  <div class="card" id="gcard"><div class="row" style="margin:0 0 6px;align-items:center"><h3 style="margin:0">Google Sheets (stockage des données)</h3><span class="sp"></span>${sheets.configured() ? '<button type="button" class="btn sm" id="gsyncq" title="Synchroniser maintenant">↻</button>' : ''}<button type="button" class="btn sm" id="gedit">🔒 Modifier</button></div>
     <p class="muted">Toutes vos données sont enregistrées dans un classeur Google Sheets « GestPro – Données » de votre Drive (un onglet par type), et synchronisées entre vos appareils. Sans réseau, l'appli continue de fonctionner et se resynchronise ensuite.</p>
     <p id="gstat"></p>
+    <fieldset id="gfs" disabled style="border:0;padding:0;margin:0;min-width:0;opacity:.75">
     <form id="gs"><b>Passerelle Apps Script (recommandé)</b>
       ${F('URL de l\'application web (se termine par /exec)', 'scriptUrl', sheets.scriptUrlValue(), { ph: 'https://script.google.com/macros/s/…/exec' })}
       ${F('Clé secrète (la même que dans Code.gs)', 'scriptKey', '', { type: 'password', ph: sheets.scriptMode() ? '•••• enregistrée sur cet appareil' : '' })}
@@ -268,7 +271,7 @@ async function renderSettings(el) {
       <li><b>Écran de consentement OAuth</b> : type « Externe », nom GestPro, ajoutez votre adresse Gmail comme <i>utilisateur test</i>.</li>
       <li><b>Identifiants → Créer → ID client OAuth → Application Web</b>. Origine JavaScript autorisée : <code>${e(location.origin)}</code></li>
       <li>Copiez l'ID client ici, enregistrez, puis « Créer le classeur ».</li></ol>
-      <p class="muted">Sur un autre appareil : saisissez le même identifiant, « Utiliser un classeur existant » et collez l'adresse du classeur. Modifiez les données depuis l'appli (les colonnes lisibles du classeur sont un reflet ; les colonnes id/maj/json ne doivent pas être modifiées).</p></details></details></div>
+      <p class="muted">Sur un autre appareil : saisissez le même identifiant, « Utiliser un classeur existant » et collez l'adresse du classeur. Modifiez les données depuis l'appli (les colonnes lisibles du classeur sont un reflet ; les colonnes id/maj/json ne doivent pas être modifiées).</p></details></details></fieldset></div>
   <div class="card"><h3 style="margin-top:0">Modèles de texte</h3><p class="muted">Textes réutilisables (conditions, mentions, remarques) à insérer dans vos devis et factures.</p><div class="row"><button class="btn" id="snip">Gérer les modèles de texte…</button></div></div>
   <div class="card"><h3 style="margin-top:0">Importer des devis / factures</h3><p class="muted">Ajoute à vos données (sans rien remplacer) le contenu d'un fichier d'import GestPro : clients, chantiers, produits, devis, factures et règlements. Le fichier est lu sur cet appareil uniquement.</p>
     <div class="row"><label class="btn"><input type="file" id="addimp" accept=".json" hidden>Choisir un fichier d'import…</label></div></div>
@@ -280,6 +283,12 @@ async function renderSettings(el) {
     $('#gstat', el).innerHTML = `<b>${lbl}</b>${st.msg ? ' – ' + e(st.msg) : ''}${t ? ` · dernière synchro ${new Date(t).toLocaleString('fr-FR')}` : ''}`;
   };
   gstat();
+  $('#gedit', el).onclick = () => {
+    const fs = $('#gfs', el), lockedNow = fs.disabled;
+    if (lockedNow && !confirm('Modifier la connexion Google Sheets ? Une erreur ici peut interrompre la synchronisation de vos données.')) return;
+    fs.disabled = !lockedNow; fs.style.opacity = lockedNow ? '1' : '.75'; $('#gedit', el).textContent = lockedNow ? '🔓 Verrouiller' : '🔒 Modifier';
+  };
+  $('#gsyncq', el)?.addEventListener('click', async () => { try { const r = await sheets.sync({ interactive: true }); toast(r?.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); refresh(); } catch (err) { alert(err.message); } });
   $('#gf', el).onsubmit = async ev => { ev.preventDefault(); const o = Object.fromEntries(new FormData(ev.target)); await db.saveSettings({ ...(await getS()), googleClientId: o.googleClientId.trim() }); toast('Identifiant enregistré'); };
   const guard = fn => async () => { try { await fn(); } catch (err) { alert(err.message); } refresh(); };
   $('#gs', el).onsubmit = async ev => {
@@ -317,7 +326,7 @@ async function renderSettings(el) {
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva'].forEach(k => (o[k] = num(o[k])));
+    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper; o.autoCloseSites = !!o.autoCloseSites;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
@@ -393,12 +402,15 @@ $('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.log
 
 /* Une seule fois : sort la civilité (Mr, Mme, SARL…) du champ « Nom » des fiches existantes */
 async function migrateCiv() {
-  const S = await getS(); if (S.civMig) return;
+  // drapeau local (surtout pas dans les réglages : sur un appareil neuf, cela écraserait les réglages synchronisés)
+  try { if (localStorage.getItem('gp_civmig')) return; } catch { return; }
+  const S = await getS(); if (S.civMig) { localStorage.setItem('gp_civmig', '1'); return; }
+  if (sheets.configured() && !(await db.all('contacts')).length) return; // attend la réception des données
   const list = (await db.all('contacts')).filter(c => c.civ === undefined && c.name);
   const upd = [];
   for (const c of list) { const s = splitCiv(c.name); if (s && s.name) upd.push({ ...c, civ: s.civ, name: s.name }); }
   if (upd.length) await db.putMany('contacts', upd);
-  await db.saveSettings({ ...S, civMig: true });
+  localStorage.setItem('gp_civmig', '1');
 }
 
 async function route() {
