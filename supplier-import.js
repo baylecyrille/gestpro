@@ -47,9 +47,9 @@ export async function upsertSupplier(S, inv) {
   return { contact: saved, isNew };
 }
 
-export async function supplierImportModal() {
+export async function supplierImportModal(opts = {}) {
   const [products, locs] = await Promise.all([db.all('products'), db.all('locations')]);
-  const body = `<p class="muted">Choisissez la facture d'un fournisseur au format PDF. Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. Seules les lignes que vous validez sont ajoutées à votre catalogue.</p>
+  const body = `<p class="muted">Choisissez la facture d'un fournisseur au format PDF. Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
     <label class="f"><span>Facture fournisseur (PDF)</span><input type="file" id="spf" accept="application/pdf,.pdf"></label><div id="spres"></div>`;
   modal('Facture fournisseur (PDF)', body, async (o, f) => (f._go ? f._go() : false), {
     wide: true, submitLabel: 'Importer la sélection',
@@ -61,13 +61,14 @@ export async function supplierImportModal() {
         let r;
         try { r = await readPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
         if (!r.items.length) { out.innerHTML = '<p class="bad">Aucune ligne de produit reconnue dans ce PDF (PDF scanné en image ou mise en page inhabituelle). Rien n\'a été importé.</p>'; return; }
-        renderReview(f, out, r, products, locs);
+        renderReview(f, out, r, products, locs, opts);
       };
     }
   });
 }
 
-function renderReview(f, out, r, products, locs) {
+function renderReview(f, out, r, products, locs, opts = {}) {
+  const doc = !!opts.onLines;
   const S = r.supplier, inv = r.invoice;
   const findP = it => products.find(p => it.ref && p.ref && p.ref.toLowerCase() === it.ref.toLowerCase()) || products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
   const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it) }));
@@ -88,10 +89,10 @@ function renderReview(f, out, r, products, locs) {
       <td>${x.ex ? '<span class="chip ok">existant</span>' : x.price === 0 ? '<span class="chip">lot</span>' : '<span class="chip warn">nouveau</span>'}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="cols" style="margin-top:10px">
-      <label class="f full"><span><input type="checkbox" id="spcat" checked> Mettre à jour le catalogue (créer les nouveaux produits, actualiser le prix d'achat des existants)</span></label>
-      ${F('Marge sur les nouveaux produits (%) → prix de vente', 'spm', 30, { type: 'number', step: '1' })}
-      <label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>
-      <label class="f full"><span><input type="checkbox" id="spsup" ${S.name ? 'checked' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
+      <label class="f full"><span><input type="checkbox" id="spcat" ${doc ? '' : 'checked'}> ${doc ? 'Aussi créer / mettre à jour ces produits dans le catalogue' : 'Mettre à jour le catalogue (créer les nouveaux produits, actualiser le prix d\'achat des existants)'}</span></label>
+      ${F(doc ? 'Marge sur le prix d\'achat (%) → prix de vente de la ligne (produit existant : son prix de vente)' : 'Marge sur les nouveaux produits (%) → prix de vente', 'spm', 30, { type: 'number', step: '1' })}
+      ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
+      <label class="f full"><span><input type="checkbox" id="spsup" ${S.name && !doc ? 'checked' : ''} ${S.name ? '' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
     </div><p id="spcnt" class="muted"></p>`;
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
   const upd = () => { $('#spcnt', out).textContent = `${nbOn()} ligne(s) sélectionnée(s).`; btn.disabled = !nbOn() && !$('#spsup', out).checked; };
@@ -106,13 +107,14 @@ function renderReview(f, out, r, products, locs) {
       const g = k => $(`[data-k=${k}]`, tr).value;
       return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')) };
     }).filter(x => x.name);
-    const cat = $('#spcat', out).checked, stk = $('#spstk', out).checked, sup = $('#spsup', out).checked, mg = num($('[name=spm]', out).value);
-    const loc = $('#splc', out).value;
+    const cat = $('#spcat', out).checked, stk = !doc && $('#spstk', out).checked, sup = $('#spsup', out).checked, mg = num($('[name=spm]', out).value);
+    const loc = doc ? '' : $('#splc', out).value;
     let created = 0, updated = 0, moved = 0, supMsg = '';
     let supplier = null;
     if (sup) { const u = await upsertSupplier(S, inv); if (u) { supplier = u.contact; supMsg = u.isNew ? 'fournisseur créé' : 'fournisseur complété'; } }
+    const live = await db.all('products');
+    for (const x of sel) { const q = live.find(q => x.ref && q.ref && q.ref.toLowerCase() === x.ref.toLowerCase()) || live.find(q => q.name.toLowerCase() === x.name.toLowerCase()); if (q) { x.pid = q.id; x.sell = q.sell; } }
     if (cat || stk) {
-      const live = await db.all('products');
       for (const x of sel) {
         let p = live.find(q => x.ref && q.ref && q.ref.toLowerCase() === x.ref.toLowerCase()) || live.find(q => q.name.toLowerCase() === x.name.toLowerCase());
         const isNew = !p;
@@ -127,9 +129,14 @@ function renderReview(f, out, r, products, locs) {
         }
         const saved = await db.put('products', p);
         if (!live.includes(p)) live.push(saved);
+        x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
         if (stk && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price }); moved++; }
       }
+    }
+    if (doc) {
+      opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));
+      toast(`${sel.length} ligne(s) ajoutée(s) au document`); return;
     }
     toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, stk && `${moved} entrée(s) en stock`, supMsg].filter(Boolean).join(' · ') || 'Terminé');
     refresh();

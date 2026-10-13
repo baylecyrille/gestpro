@@ -153,7 +153,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   const updSub = () => { const st = sectionTotals(d.blocks); $$('[data-sub]', box).forEach(n => { const b = d.blocks.find(x => x.id === n.dataset.sub); n.textContent = b && b.sub ? 'Sous-total : ' + eur(st[b.id]) : ''; }); };
   const change = () => { syncLines(d); updSub(); onChange(); };
   box.innerHTML = `<div class="rte-wrap">${toolbarHtml()}</div><div id="blks"></div>
-    <div class="row addbar"><button type="button" class="btn" id="addp">+ Produit</button><button type="button" class="btn" id="addl">+ Ligne libre</button>
+    <div class="row addbar"><button type="button" class="btn" id="addp">+ Produit</button><button type="button" class="btn" id="addl">+ Ligne libre</button><button type="button" class="btn" id="addpdf">📄 Lignes depuis un PDF</button>
       <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="adde" title="Termine la section en cours : les lignes suivantes n'en font plus partie">+ Fin de section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
   bindToolbar(box, () => active, t => { const blk = d.blocks.find(x => x.id === t.closest('.blk')?.dataset.id); if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
   const host = $('#blks', box);
@@ -226,6 +226,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
 
   $('#addl', box).onclick = () => add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
   $('#addp', box).onclick = () => { readHeader(); pickProduct(p => add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }), { sale: true }); };
+  $('#addpdf', box).onclick = () => { readHeader(); import('./supplier-import.js').then(m => m.supplierImportModal({ onLines: ls => ls.forEach(l => add(l)) })); };
   $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: true });
   $('#adde', box).onclick = () => add({ type: 'sectionend' });
   $('#addt', box).onclick = () => add({ type: 'text', html: '' });
