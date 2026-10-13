@@ -75,7 +75,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     <button class="btn primary" id="scanb">▦ Scanner</button>
     <button class="btn" id="add">+ Produit</button>
     <button class="btn" id="imp">Importer</button></div>
-    <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button></div>
+    <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="spdf">📄 Facture fournisseur (PDF)</button></div>
     ${filterBar(FC)}
     <div id="list"></div>`;
   const list = $('#list', body);
@@ -108,6 +108,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
   $('#scanb', body).onclick = lookupScan;
   $('#recv', body).onclick = () => receptionModal(products, locs);
   $('#sout', body).onclick = () => siteOutModal(products, locs);
+  $('#spdf', body).onclick = () => import('./supplier-import.js').then(m => m.supplierImportModal());
 }
 
 export function productModal(p, locs, contacts, products, preset = {}) {
