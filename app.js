@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { DEFAULTS, getS, logoSrc } from './defaults.js';
 import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, filterBar, bindFilters, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
-import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, ZONE_TOKENS, layoutFields, readLayout } from './docs.js';
+import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
@@ -235,12 +235,8 @@ async function renderSettings(el) {
     <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
   </div><button class="btn primary">Enregistrer</button></form>
   <div class="card" id="zcard"><h3 style="margin-top:0">Mise en page des documents</h3>
-    <p class="muted">Textes de toutes les zones imprimées (en-tête, titre, colonnes, totaux, signature…). Ils s'appliquent à tous les documents du type choisi ; un document peut ensuite faire exception. Gras : <code>**texte**</code> · souligné : <code>__texte__</code> · jetons : <code>${ZONE_TOKENS}</code>.</p>
-    <span class="seg">${[['q', 'Devis'], ['i', 'Factures'], ['c', 'Avoirs']].map(([k, l], n) => `<button type="button" class="btn sm ${n ? '' : 'on'}" data-zt="${k}">${l}</button>`).join('')}</span>
-    ${[['q', 'quote'], ['i', 'invoice'], ['c', 'credit']].map(([k, ty], n) => `<div data-zp="${k}" ${n ? 'hidden' : ''}><div class="cols">${zoneDefs({ type: ty }, S, {}, false).filter(d => d.k !== 'client').map(d => `<label class="f full"><span>${e(d.label)}</span>${d.rows > 1 ? `<textarea data-zk="${d.k}" data-zty="${k}" rows="${Math.min(d.rows, 6)}">${e(d.v)}</textarea>` : `<input data-zk="${d.k}" data-zty="${k}" value="${e(d.v)}">`}</label>`).join('')}</div></div>`).join('')}
-    <h4 style="margin:12px 0 4px">Disposition (tailles, alignements, largeur des colonnes)</h4><p class="muted" style="margin:0 0 6px">Laissez vide pour la valeur par défaut. Les colonnes non renseignées restent automatiques.</p>
-    <div class="cols">${layoutFields(S.layout || {}, {}, 'data-ly')}</div>
-    <div class="row"><button type="button" class="btn primary" id="zsave">Enregistrer la mise en page</button><button type="button" class="btn" id="zdef">↺ Textes d'origine (type affiché)</button></div></div>
+    <p class="muted">Composez visuellement vos devis, factures et avoirs sur une page A4 : déplacez les blocs, agrandissez le logo, ajoutez des images ou des textes, modifiez tous les libellés. Le modèle s'applique à tous les documents du type choisi (un document peut ensuite faire exception depuis son aperçu).</p>
+    <div class="row"><button type="button" class="btn primary" data-tpl="quote">🎨 Modifier les devis</button><button type="button" class="btn primary" data-tpl="invoice">🎨 Modifier les factures</button><button type="button" class="btn primary" data-tpl="credit">🎨 Modifier les avoirs</button></div></div>
   <div class="card"><h3 style="margin-top:0">Accès des membres</h3>
     <p>${auth.isActive() ? `Protection <b>active</b> : l'appli demande un nom et un code PIN. Connecté : <b>${e(auth.currentUser()?.name || '')}</b> (${e(auth.PROFILES[auth.currentUser()?.access]?.label || '')}).` : 'Protection <b>inactive</b> : tout le monde a tous les droits sur cet appareil.'}</p>
     <p class="muted">Donnez un profil et un code PIN à chaque membre dans <a href="#/planning/team">Planning › Équipe</a>. La protection démarre dès qu'un administrateur a un code PIN. C'est un verrouillage d'usage : il masque ce qui n'est pas autorisé, mais ne protège pas un accès direct à votre feuille Google Sheets.</p>
@@ -326,19 +322,7 @@ async function renderSettings(el) {
     o.wallpaper = !!o.wallpaper; o.autoCloseSites = !!o.autoCloseSites;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
-  let zty = 'q';
-  $$('[data-zt]', el).forEach(b => b.onclick = () => { zty = b.dataset.zt; $$('[data-zt]', el).forEach(x => x.classList.toggle('on', x === b)); $$('[data-zp]', el).forEach(x => x.hidden = x.dataset.zp !== zty); });
-  const ZT = { q: 'quote', i: 'invoice', c: 'credit' };
-  $('#zsave', el).onclick = async () => {
-    const zones = {};
-    for (const t of ['q', 'i', 'c']) {
-      const base = zoneDefs({ type: ZT[t] }, S, {}, true), o = {};
-      $$(`[data-zty="${t}"]`, el).forEach(i => { const d = base.find(x => x.k === i.dataset.zk); if (d && i.value !== d.v) o[d.k] = i.value; });
-      if (Object.keys(o).length) zones[t] = o;
-    }
-    const layout = readLayout($('#zcard', el), 'data-ly'); await db.saveSettings({ ...S, zones, layout }); toast('Mise en page enregistrée'); refresh();
-  };
-  $('#zdef', el).onclick = () => { const base = zoneDefs({ type: ZT[zty] }, S, {}, true); $$(`[data-zty="${zty}"]`, el).forEach(i => { const d = base.find(x => x.k === i.dataset.zk); if (d) i.value = d.v; }); toast('Textes d\'origine remis – enregistrez'); };
+  $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
   $('#imp', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;

@@ -5,6 +5,7 @@ import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterB
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
+import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
 import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
@@ -192,7 +193,7 @@ export async function renderDoc(el, id, arg) {
   const draw = () => {
     const t = totals(cur);
     el.innerHTML = `<div class="row"><a class="btn ghost" href="${cur.siteId && sites.some(x => x.id === cur.siteId) ? '#/site/' + cur.siteId : '#/docs/' + cur.type}">← Retour</a><span class="sp"></span>
-      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span>
+      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <div id="pvwrap" hidden></div><div id="edwrap">
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}
@@ -211,7 +212,6 @@ export async function renderDoc(el, id, arg) {
     <div class="card lines"><div id="blocks"></div>
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
-    ${zonesHtml()}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew ? actionsHtml() : ''}</div>`;
     bind();
@@ -328,7 +328,7 @@ export async function renderDoc(el, id, arg) {
     let pvChanged = false;
     const renderPv = async () => {
       const c = JSON.parse(JSON.stringify(cur)); pruneBlocks(c);
-      $('#pvpaper', el).innerHTML = await sheetHtml(c, { edit: true });
+      $('#pvin', el).innerHTML = await sheetHtml(c, { edit: true }); fp?.apply();
     };
     const commitZone = (k, val) => {
       const d = zoneDefs(cur, S, curClient()).find(x => x.k === k); if (!d) return;
@@ -337,16 +337,15 @@ export async function renderDoc(el, id, arg) {
       if (Object.keys(z).length) cur.zones = z; else delete cur.zones;
       pvChanged = true;
     };
+    let fp = null;
     const showPv = async on => {
       if (on) {
         readHeader(); pvChanged = false;
-        $('#pvwrap', el).innerHTML = `<p class="muted" style="margin:6px 0">Aperçu tel qu'il sera imprimé. <b>Cliquez sur une zone pour modifier son texte</b> ; ajustez la disposition ci-dessous (rien n'est enregistré avant « Enregistrer »).</p>
-          <details class="card pvtools"><summary><b>Ajuster la disposition</b> <span class="muted">(tailles, alignements, colonnes)</span></summary><div class="cols">${layoutFields(cur.layout || {}, layoutOf(S, null), 'data-lk')}</div><div class="row"><button type="button" class="btn" id="lyreset">↺ Rétablir les réglages généraux</button></div></details>
-          <div class="pvpaper" id="pvpaper"></div>`;
+        $('#pvwrap', el).innerHTML = `<p class="muted" style="margin:6px 0">Aperçu tel qu'il sera imprimé. <b>Cliquez sur un texte pour le modifier</b>, ou ouvrez la <button type="button" class="btn sm" id="vlayout2">🎨 mise en page visuelle</button> pour déplacer les blocs, redimensionner le logo, ajouter des images… (rien n'est enregistré avant « Enregistrer »).</p>
+          <div class="pvpaper" id="pvpaper"><div class="pvin" id="pvin"></div></div>`;
+        $('#vlayout2', el).onclick = openVisual;
         await renderPv();
-        const onLy = async () => { const o = readLayout($('#pvwrap', el), 'data-lk'); if (Object.keys(o).length) cur.layout = o; else delete cur.layout; pvChanged = true; await renderPv(); };
-        $$('[data-lk]', $('#pvwrap', el)).forEach(i => { i.addEventListener('input', onLy); i.addEventListener('change', onLy); });
-        $('#lyreset', el).onclick = () => { $$('[data-lk]', $('#pvwrap', el)).forEach(i => { i.value = ''; }); onLy(); };
+        fp = fitPaper($('#pvpaper', el), $('#pvin', el));
         $('#pvpaper', el).addEventListener('click', ev => {
           const zn = ev.target.closest('.zn'); if (!zn || zn.querySelector('textarea')) return;
           const k = zn.dataset.z, d = zoneDefs(cur, S, curClient()).find(x => x.k === k); if (!d) return;
@@ -360,16 +359,30 @@ export async function renderDoc(el, id, arg) {
       } else if (pvChanged) { pvChanged = false; draw(); return; }
       $('#pvwrap', el).hidden = !on; $('#edwrap', el).hidden = on;
       $('#vedit', el).classList.toggle('on', !on); $('#vprev', el).classList.toggle('on', on);
-      if (on) window.scrollTo?.(0, 0);
+      if (on) { window.scrollTo?.(0, 0); fp?.apply(); }
     };
+    const openVisual = async () => {
+      readHeader();
+      const store = await loadTplStore();
+      const baseTpl = () => normTpl(store[cur.type], cur.type);
+      await openLayoutEditor({
+        title: 'Mise en page – ce document', type: cur.type,
+        ws: { tpl: normTpl(cur.tpl || store[cur.type], cur.type), zones: { ...(cur.zones || {}) }, layout: { ...(cur.layout || {}) } },
+        defaultOf: k => zoneDefs(cur, S, curClient()).find(d => d.k === k)?.v ?? '',
+        base: () => ({ tpl: baseTpl(), zones: {}, layout: {} }),
+        render: (ws, le) => { const c2 = JSON.parse(JSON.stringify(cur)); pruneBlocks(c2); Object.assign(c2, { tpl: ws.tpl, zones: ws.zones, layout: ws.layout }); return sheetHtml(c2, { layoutEdit: le }); },
+        onSave: async ws => {
+          cur.tpl = ws.tpl; if (Object.keys(ws.zones).length) cur.zones = ws.zones; else delete cur.zones;
+          if (Object.keys(ws.layout).length) cur.layout = ws.layout; else delete cur.layout;
+          pvChanged = true; toast('Mise en page appliquée à ce document – pensez à enregistrer');
+          if (!$('#pvwrap', el).hidden) await renderPv(); else draw();
+        }
+      });
+    };
+    $('#vlayout', el).onclick = openVisual;
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
-    $$('[data-zk]', el).forEach(i => i.addEventListener('input', () => { i.dataset.dirty = '1'; }));
-    const zset = (k, v) => { const i = $(`[data-zk="${k}"]`, el); if (i) { i.value = v; delete i.dataset.dirty; } };
-    $$('[data-zr]', el).forEach(b => b.onclick = () => { const d = zoneDefs(cur, S, curClient()).find(x => x.k === b.dataset.zr); if (cur.zones) delete cur.zones[b.dataset.zr]; if (d) zset(d.k, d.v); });
-    $('#zreset', el).onclick = () => { delete cur.zones; zoneDefs(cur, S, curClient()).forEach(d => zset(d.k, d.v)); };
-    $('[name=clientId]', el).addEventListener('change', () => { cur.clientId = $('[name=clientId]', el).value; const d = zoneDefs(cur, S, curClient()).find(x => x.k === 'client'), i = $('[data-zk=client]', el); if (d && i && !i.dataset.dirty && !(cur.zones && 'client' in cur.zones)) i.value = d.v; });
     $('#ssearch', el).oninput = ev => {
       const q = ev.target.value.toLowerCase().trim(), sel = $('[name=siteId]', el), keep = sel.value;
       const rows = sites.filter(x => x.id === keep || !q || siteText(x).toLowerCase().includes(q));
@@ -537,8 +550,9 @@ function zhtml(txt, vars) {
   return h.replace(/\n/g, '<br>');
 }
 
-async function sheetHtml(doc, opts = {}) {
-  const [S, contacts, payments] = await Promise.all([getS(), db.all('contacts'), db.all('payments')]);
+export async function sheetHtml(doc, opts = {}) {
+  const [S0, contacts, payments, store] = await Promise.all([getS(), db.all('contacts'), db.all('payments'), loadTplStore()]);
+  const S = { ...S0, ...(opts.S || {}) };
   setStyles(S);
   const c = contacts.find(x => x.id === doc.clientId) || {};
   const t = totals(doc), paid = paidOf(payments, doc.id);
@@ -547,28 +561,58 @@ async function sheetHtml(doc, opts = {}) {
   const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
   const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: doc.validUntil ? dateFr(doc.validUntil) : '', siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
   const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
-  const ED = !!opts.edit, LY = layoutOf(S, doc);
+  const LE = !!opts.layoutEdit, ED = !!opts.edit && !LE, LY = layoutOf(S, doc);
   const Z = k => { const h = zhtml(Zt(k), vars); return ED ? `<span class="zn" data-z="${k}" title="Cliquer pour modifier">${h || '<i class="zempty">(zone vide – cliquer)</i>'}</span>` : h; };
-  return `<div class="sheet${ED ? ' pvedit' : ''}" style="${layoutStyle(LY)}">
-    <div class="hd"><div class="co"><img src="${logoSrc(S)}" alt=""><div class="nm">${Z('coName')}</div>
-      <p>${Z('coInfo')}</p></div>
-      <div><p class="small" style="margin-top:0">${Z('certs')}</p>
-      <div class="cl">${Z('client')}</div>
-      <p>${Z('chantier')}</p></div></div>
-    <h1>${Z('title')}</h1>
-    <div class="hd"><div><b><u>${richHtml(doc.intro)}</u></b></div><div class="dt">${Z('dateLine')}${isQ && doc.validUntil && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}</div></div>
-    <div style="margin:6px 0">${isC ? '' : richHtml(doc.note)}</div>
-    <table class="${colgroup(LY) ? 'fx' : ''}">${colgroup(LY)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
+  const tpl = normTpl(doc.tpl || store[doc.type], doc.type);
+  const imgs = await imagesOf(tpl);
+  const pos = it => ({ center: 'center top', right: 'right top' }[(it.st || {}).al] || 'left top');
+  const content = it => {
+    switch (it.k) {
+      case 'logo': return `<img src="${logoSrc(S)}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:${pos(it)}">`;
+      case 'image': return imgs[it.img] ? `<img src="${imgs[it.img]}" alt="" style="width:100%;height:100%;object-fit:contain;object-position:${pos(it)}">` : '<span class="zempty">(image)</span>';
+      case 'text': return zhtml(it.t || '', vars);
+      case 'title': return `<h1>${Z('title')}</h1>`;
+      case 'intro': return `<b><u>${richHtml(doc.intro)}</u></b>`;
+      case 'note': return isC ? '' : richHtml(doc.note);
+      case 'dateLine': return `<span class="dl">${Z('dateLine')}</span>${isQ && doc.validUntil && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}`;
+      case 'pay': return `${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}`;
+      case 'creditTxt': return `${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}`;
+      default: return Z(it.k);
+    }
+  };
+  return `<div class="sheet${ED ? ' pvedit' : ''}${LE ? ' lyedit' : ''}" style="${layoutStyle(LY)}">
+    ${canvasHtml(tpl, 'h', content, LE)}
+    <div class="tblwrap"><table class="${colgroup(LY) ? 'fx' : ''}">${colgroup(LY)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
     <tr><td colspan="4">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
     <tr><td colspan="3">${Z('lblTva')}</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
     <tr class="t"><td colspan="4">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
     ${used ? `<tr><td colspan="4">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
-    </tbody></table>
-    ${isQ && (Zt('methods') || ED) ? `<div class="pay">${Z('methods')}</div>` : ''}
-    ${isC ? (Zt('creditTxt') || doc.note || ED ? `<div class="pay">${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}</div>` : '') : `<div class="pay">${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}</div>`}
-    <div class="sig"><div>${Z('sigLeft')}<div class="sph"></div></div>
-    <div>${Z('bank')}</div></div></div>`;
+    </tbody></table></div>
+    ${canvasHtml(tpl, 'f', content, LE)}</div>`;
+}
+
+/* Éditeur visuel : mode « modèle » (Réglages, pour tous les documents d'un type) ou mode « document » */
+export async function editTemplate(type) {
+  const T = { quote: 'q', invoice: 'i', credit: 'c' }[type], NAME = { quote: 'devis', invoice: 'factures', credit: 'avoirs' }[type];
+  const [S, docs, store] = await Promise.all([getS(), db.all('documents'), loadTplStore()]);
+  let sample = docs.filter(d => d.type === type).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+  sample = sample ? JSON.parse(JSON.stringify(sample)) : { id: 'sample', type, number: 'EXEMPLE-001', date: today(), tva: 20, clientId: '', siteRef: 'Rénovation – Maison Dupont', siteAddr: '1 rue des Lilas\n87000 LIMOGES', intro: 'Fourniture et pose de menuiseries', note: '', terms: 'Paiement à 30 jours.', lines: [{ desig: 'Fenêtre PVC 2 vantaux', qty: 2, unit: 'u', pu: 420 }, { desig: 'Pose et finitions', qty: 1, unit: 'forfait', pu: 350 }] };
+  delete sample.zones; delete sample.layout; delete sample.tpl;
+  const base = () => ({ tpl: defaultTpl(type), zones: {}, layout: {} });
+  await openLayoutEditor({
+    title: 'Mise en page – ' + NAME, type,
+    ws: { tpl: normTpl(store[type], type), zones: { ...((S.zones || {})[T] || {}) }, layout: { ...(S.layout || {}) } },
+    defaultOf: k => zoneDefs({ type }, S, {}, true).find(d => d.k === k)?.v ?? '',
+    base,
+    render: (ws, le) => sheetHtml({ ...sample, tpl: ws.tpl }, { layoutEdit: le, S: { zones: { ...(S.zones || {}), [T]: ws.zones }, layout: ws.layout } }),
+    onSave: async ws => {
+      const zones = { ...(S.zones || {}) }; if (Object.keys(ws.zones).length) zones[T] = ws.zones; else delete zones[T];
+      await db.saveSettings({ ...S, zones, layout: ws.layout });
+      await saveTplStore({ ...store, [type]: ws.tpl });
+      toast('Mise en page enregistrée'); refresh();
+    }
+  });
 }
 
 async function printDoc(doc) {
