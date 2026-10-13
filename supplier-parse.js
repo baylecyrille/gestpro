@@ -48,6 +48,8 @@ export function parseSupplierInvoice(pages) {
     if (cur) {
       const left = t.filter(i => i.x < 200).map(i => i.s).join(' ');
       const m = left.match(/R[ée]f\.?\s*:?\s*(\S+)/i);
+      const mc = left.match(/N°\s*commande\s+([^\d\s][^-]*?)\s*-\s*Ligne/i);
+      if (mc && !cur.cmd) cur.cmd = mc[1].trim();
       if (m && !cur.ref) cur.ref = m[1];
       else if (left && !KEYWORD.test(left) && !/Page \d+\/\d+/i.test(l.text) && t[0].x < 100 && !cur.ref && l.t.length <= 2) cur.name += ' ' + left;
     }

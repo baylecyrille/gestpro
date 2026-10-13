@@ -1,6 +1,6 @@
 // Import d'une facture fournisseur PDF : lecture 100 % locale (pdf.js embarqué), contrôle par l'utilisateur, puis catalogue / stock / fournisseur.
 import * as db from './db.js';
-import { e, eur, num, F, modal, closeModal, toast, refresh, $, $$ } from './util.js';
+import { e, eur, num, today, cname, F, modal, closeModal, toast, refresh, $, $$ } from './util.js';
 import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
 
@@ -48,7 +48,7 @@ export async function upsertSupplier(S, inv) {
 }
 
 export async function supplierImportModal(opts = {}) {
-  const [products, locs] = await Promise.all([db.all('products'), db.all('locations')]);
+  const [products, locs, sites, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('sites'), db.all('contacts')]);
   const body = `<p class="muted">Choisissez la facture d'un fournisseur au format PDF. Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
     <label class="f"><span>Facture fournisseur (PDF)</span><input type="file" id="spf" accept="application/pdf,.pdf"></label><div id="spres"></div>`;
   modal('Facture fournisseur (PDF)', body, async (o, f) => (f._go ? f._go() : false), {
@@ -61,42 +61,52 @@ export async function supplierImportModal(opts = {}) {
         let r;
         try { r = await readPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
         if (!r.items.length) { out.innerHTML = '<p class="bad">Aucune ligne de produit reconnue dans ce PDF (PDF scanné en image ou mise en page inhabituelle). Rien n\'a été importé.</p>'; return; }
-        renderReview(f, out, r, products, locs, opts);
+        renderReview(f, out, r, products, locs, opts, sites, contacts);
       };
     }
   });
 }
 
-function renderReview(f, out, r, products, locs, opts = {}) {
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = []) {
   const doc = !!opts.onLines;
   const S = r.supplier, inv = r.invoice;
   const findP = it => products.find(p => it.ref && p.ref && p.ref.toLowerCase() === it.ref.toLowerCase()) || products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
-  const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it) }));
+  const C = Object.fromEntries(contacts.map(c => [c.id, c]));
+  const siteLbl = s => `${s.name}${C[s.clientId] ? ' — ' + cname(C[s.clientId]) : ''}`;
+  const sortedSites = [...sites].sort((a, b) => siteLbl(a).localeCompare(siteLbl(b), 'fr'));
+  const guess = it => { const k = norm(it.cmd); if (k.length < 3) return ''; const hit = sites.filter(s => norm(s.name).includes(k) || norm(cname(C[s.clientId] || {})).includes(k)); return hit.length === 1 ? hit[0].id : ''; };
+  const siteOpts = sel => `<option value="">— aucun —</option>${sortedSites.map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(siteLbl(s))}</option>`).join('')}`;
+  const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it), site: doc ? '' : guess(it) }));
   const nbOn = () => $$('[data-on]:checked', out).length;
   const feeTot = r.fees.reduce((a, x) => a + x.amount, 0);
   out.innerHTML = `
     <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b>${inv.number ? ` · facture ${e(inv.number)}` : ''}${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
       <span class="muted">${[S.address, [S.zip, S.city].filter(Boolean).join(' '), S.phone, S.email, S.siret && 'SIRET ' + S.siret].filter(Boolean).map(e).join(' · ')}</span></div>
     <p class="${r.sumOk === false ? 'bad' : 'muted'}">${r.items.length} ligne(s) lue(s) — total ${eur(r.sum)} HT${r.sumOk === true ? ' ✔ identique au total de la facture' : r.sumOk === false ? ` ⚠ la facture indique ${eur(r.totals.ht0)} : vérifiez les lignes` : ' (total de la facture non trouvé : vérifiez)'}${r.mode === 'texte' ? ' · lecture approximative, contrôlez chaque ligne' : ''}.
-    ${r.fees.length ? `<br>Frais non importés : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
+    ${r.fees.length ? `<br>Frais de la facture (jamais ajoutés au catalogue) : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
     ${rows.some(x => x.price === 0) ? '<br>Les lignes à 0 € (composants d\'un lot déjà facturé) sont décochées.' : ''}</p>
-    <div style="overflow:auto;max-height:42vh"><table class="tbl" style="width:100%;font-size:13px"><thead><tr><th><input type="checkbox" id="spall" checked></th><th>Réf.</th><th>Désignation</th><th>Qté</th><th>Unité</th><th>PU achat HT</th><th></th></tr></thead><tbody>
+    <div style="overflow:auto;max-height:42vh"><table class="tbl" style="width:100%;font-size:13px"><thead><tr><th><input type="checkbox" id="spall" checked></th><th>Réf.</th><th>Désignation</th><th>Qté</th><th>Unité</th><th>PU achat HT</th>${doc ? '' : '<th>Chantier</th>'}<th></th></tr></thead><tbody>
     ${rows.map(x => `<tr data-i="${x.i}" ${x.on ? '' : 'style="opacity:.55"'}><td><input type="checkbox" data-on ${x.on ? 'checked' : ''}></td>
       <td><input data-k="ref" value="${e(x.ref)}" style="width:84px"></td><td><input data-k="name" value="${e(x.name)}" style="min-width:210px;width:100%"></td>
       <td><input data-k="qty" type="number" step="any" value="${x.qty}" style="width:64px"></td>
       <td><select data-k="unit">${UNITS.map(u => `<option ${u === x.unitMapped ? 'selected' : ''}>${u}</option>`).join('')}</select></td>
       <td><input data-k="price" type="number" step="0.01" value="${x.price}" style="width:80px"></td>
+      ${doc ? '' : `<td><select data-k="site" style="max-width:150px">${siteOpts(x.site)}</select>${x.cmd ? `<small class="muted" style="display:block">cmd : ${e(x.cmd)}</small>` : ''}</td>`}
       <td>${x.ex ? '<span class="chip ok">existant</span>' : x.price === 0 ? '<span class="chip">lot</span>' : '<span class="chip warn">nouveau</span>'}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="cols" style="margin-top:10px">
       <label class="f full"><span><input type="checkbox" id="spcat" ${doc ? '' : 'checked'}> ${doc ? 'Aussi créer / mettre à jour ces produits dans le catalogue' : 'Mettre à jour le catalogue (créer les nouveaux produits, actualiser le prix d\'achat des existants)'}</span></label>
       ${F(doc ? 'Marge sur le prix d\'achat (%) → prix de vente de la ligne (produit existant : son prix de vente)' : 'Marge sur les nouveaux produits (%) → prix de vente', 'spm', 30, { type: 'number', step: '1' })}
       ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
+      ${doc ? '' : `<label class="f full"><span>Affecter toutes les lignes cochées à un chantier (rentabilité) — vous pouvez aussi le choisir ligne par ligne ; le chantier est proposé d'après le « N° commande » de la facture quand il correspond</span><select id="spsite">${siteOpts('')}</select></label>
+      ${r.fees.length ? `<label class="f full"><span><input type="checkbox" id="spfees" checked> Répartir les frais (${eur(feeTot)} : port…) sur les chantiers, au prorata des lignes</span></label>` : ''}`}
       <label class="f full"><span><input type="checkbox" id="spsup" ${S.name && !doc ? 'checked' : ''} ${S.name ? '' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
     </div><p id="spcnt" class="muted"></p>`;
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
   const upd = () => { $('#spcnt', out).textContent = `${nbOn()} ligne(s) sélectionnée(s).`; btn.disabled = !nbOn() && !$('#spsup', out).checked; };
   out.onchange = ev => {
+    if (ev.target.id === 'spsite') $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=site]', tr).value = ev.target.value; });
     if (ev.target.id === 'spall') { $$('[data-on]', out).forEach(c => { c.checked = ev.target.checked; c.closest('tr').style.opacity = c.checked ? '' : '.55'; }); }
     if (ev.target.matches('[data-on]')) ev.target.closest('tr').style.opacity = ev.target.checked ? '' : '.55';
     upd();
@@ -105,7 +115,7 @@ function renderReview(f, out, r, products, locs, opts = {}) {
   f._go = async () => {
     const sel = $$('tr[data-i]', out).filter(tr => $('[data-on]', tr).checked).map(tr => {
       const g = k => $(`[data-k=${k}]`, tr).value;
-      return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')) };
+      return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')), site: doc ? '' : g('site') };
     }).filter(x => x.name);
     const cat = $('#spcat', out).checked, stk = !doc && $('#spstk', out).checked, sup = $('#spsup', out).checked, mg = num($('[name=spm]', out).value);
     const loc = doc ? '' : $('#splc', out).value;
@@ -131,14 +141,31 @@ function renderReview(f, out, r, products, locs, opts = {}) {
         if (!live.includes(p)) live.push(saved);
         x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
-        if (stk && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price }); moved++; }
+        if (stk && !x.site && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price }); moved++; }
       }
+    }
+    /* Chantiers : les achats affectés deviennent des charges du chantier (comptées dans la rentabilité) */
+    let charged = 0;
+    const bySite = {};
+    sel.filter(x => x.site && x.qty > 0).forEach(x => (bySite[x.site] = bySite[x.site] || []).push(x));
+    const totAll = sel.reduce((a, x) => a + x.qty * x.price, 0);
+    for (const [sid, xs] of Object.entries(bySite)) {
+      const st = await db.get('sites', sid); if (!st) continue;
+      const date = inv.iso(inv.date) || today(), note = `Facture ${inv.number || ''} ${S.name || ''}`.trim();
+      const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note }));
+      const feeTotal = r.fees.reduce((a, y) => a + y.amount, 0);
+      if (!doc && $('#spfees', out)?.checked && feeTotal && totAll > 0) {
+        const share = Math.round(feeTotal * xs.reduce((a, x) => a + x.qty * x.price, 0) / totAll * 100) / 100;
+        if (share) add.push({ id: db.uid(), pid: '', label: 'Frais de port / divers (quote-part)', qty: 1, unit: 'forfait', cost: share, date, note });
+      }
+      st.charges = [...(st.charges || []), ...add];
+      await db.put('sites', st); charged += xs.length;
     }
     if (doc) {
       opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));
       toast(`${sel.length} ligne(s) ajoutée(s) au document`); return;
     }
-    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, stk && `${moved} entrée(s) en stock`, supMsg].filter(Boolean).join(' · ') || 'Terminé');
+    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, stk && `${moved} entrée(s) en stock`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, supMsg].filter(Boolean).join(' · ') || 'Terminé');
     refresh();
   };
 }
