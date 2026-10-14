@@ -52,26 +52,45 @@ export async function runImport(data) {
 /* Correction des statuts de devis déjà importés.
    Fichier { app: 'gestpro', mode: 'statuts', statuts: { <id du devis>: 'invoiced' | 'accepted' | 'sent' | … } } : il ne contient que des identifiants et des statuts.
    Un fichier peut aussi porter « previous » (statuts d'une correction antérieure) : un devis dont le statut est encore celui que cette correction lui avait donné est de nouveau modifiable.
+   Le même fichier peut porter « chantiers » : { <id du chantier>: 'new' | … } (voir plus bas).
    Garde-fous : seuls les devis importés encore « Facturé » (ou resté tel que la correction précédente l'a laissé), sans facture créée depuis dans l'appli, sont modifiés ; un statut changé à la main reste tel quel. */
 export const QSTAT = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' };
-export const isStatusFile = data => !!data && data.app === 'gestpro' && data.mode === 'statuts' && !!data.statuts && typeof data.statuts === 'object';
+export const SSTAT = { new: 'Nouveau', signed: 'Signé', progress: 'En cours', paid: 'Terminé', lost: 'Perdu' };
+export const isStatusFile = data => !!data && data.app === 'gestpro' && data.mode === 'statuts' && ['statuts', 'chantiers'].some(k => data[k] && typeof data[k] === 'object') && ['statuts', 'chantiers'].every(k => data[k] == null || typeof data[k] === 'object');
+/* Chantiers : un chantier « Signé » dont tous les documents sont des devis importés encore « Envoyé » (aucune facture, aucun avoir, rien créé dans l'appli)
+   est rétabli au statut du fichier (« Nouveau ») ; il est évalué avec les statuts de devis tels qu'ils seront après la correction du même fichier. */
 export async function planStatuts(data) {
   if (!isStatusFile(data)) throw new Error('Ce fichier n\'est pas un fichier de correction des statuts GestPro.');
   const docs = await db.all('documents'), byId = new Map(docs.map(d => [d.id, d])), prev = data.previous && typeof data.previous === 'object' ? data.previous : {};
   const fromApp = new Set(docs.filter(d => d.type === 'invoice' && !d.deposit && d.fromQuote && !d.imported).map(d => d.fromQuote)); // facturé depuis l'import, dans l'appli
   const changes = [], to = {}; let same = 0, edited = 0, missing = 0;
-  for (const [id, st] of Object.entries(data.statuts)) {
+  const eff = new Map(); // statut des devis une fois la correction appliquée
+  for (const [id, st] of Object.entries(data.statuts || {})) {
     const q = byId.get(id);
     if (!q || q.type !== 'quote' || !QSTAT[st]) { missing++; continue; }
     if (q.status === st) { same++; continue; }
     if (!q.imported || (q.status !== 'invoiced' && q.status !== prev[id]) || q.invoiceId || fromApp.has(id)) { edited++; continue; }
-    changes.push([q, st]); to[st] = (to[st] || 0) + 1;
+    changes.push([q, st]); to[st] = (to[st] || 0) + 1; eff.set(id, st);
   }
-  return { changes, to, same, edited, missing, total: Object.keys(data.statuts).length };
+  const sites = { changes: [], to: {}, same: 0, kept: 0, missing: 0, total: Object.keys(data.chantiers || {}).length };
+  if (sites.total) {
+    const all = new Map((await db.all('sites')).map(x => [x.id, x])), onSite = {};
+    docs.forEach(d => { if (d.siteId) (onSite[d.siteId] ||= []).push(d); });
+    for (const [id, st] of Object.entries(data.chantiers)) {
+      const x = all.get(id);
+      if (!x || !SSTAT[st]) { sites.missing++; continue; }
+      if (x.status === st) { sites.same++; continue; }
+      const ds = onSite[id] || [];
+      if (x.status !== 'signed' || !ds.length || !ds.every(d => d.type === 'quote' && d.imported && (eff.get(d.id) || d.status) === 'sent')) { sites.kept++; continue; }
+      sites.changes.push([x, st]); sites.to[st] = (sites.to[st] || 0) + 1;
+    }
+  }
+  return { changes, to, same, edited, missing, total: Object.keys(data.statuts || {}).length, sites };
 }
 export async function runStatuts(data) {
   const plan = await planStatuts(data);
-  const out = plan.changes.map(([q, st]) => ({ ...q, status: st }));
+  const out = plan.changes.map(([q, st]) => ({ ...q, status: st })), outS = plan.sites.changes.map(([x, st]) => ({ ...x, status: st }));
   await db.putMany('documents', out);
-  return { changed: out.length, to: plan.to, kept: plan.edited };
+  await db.putMany('sites', outS);
+  return { changed: out.length, to: plan.to, kept: plan.edited, sites: outS.length, sitesTo: plan.sites.to, sitesKept: plan.sites.kept };
 }
