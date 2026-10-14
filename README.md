@@ -6,6 +6,7 @@ Google Sheets** de votre Drive (un onglet par type de données) et synchronisée
 
 ## Fonctions
 
+- **Filtre par statut des chantiers** : dans « Filtres & tri », boutons Nouveau / Signé / En cours / Terminé / Perdu (plusieurs possibles) avec le nombre de chantiers de chaque statut ; l'onglet (Ouverts, Terminés, Perdus, Tous) délimite toujours la liste.
 - **Chantiers** : fiche centrale (client, architecte / maître d'œuvre, devis, factures, règlements, équipe affectée, jauges d'avancement, plan / itinéraire / Street View, liens, photos et fichiers dans le Drive), achats affectés et **rentabilité** (marge = facturé − matières − achats − main-d'œuvre).
 - **Planning & équipe** : affectations par membre (semaine / mois), heures prévues et réalisées, habilitations avec alertes d'expiration, profils d'accès à code PIN.
 - **Stock** : produits, **codes-barres**, zones › emplacements, entrées / sorties / transferts / inventaires, réception de colis, sortie chantier, alertes de seuil, import Excel / CSV.
