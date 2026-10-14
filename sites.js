@@ -81,8 +81,7 @@ export async function renderSites(el, tab = 'open') {
   const FC = [{ id: 'sort', label: 'Trier par', def: 'recent', options: [['recent', 'Plus récents'], ['name', 'Nom A→Z'], ['client', 'Client A→Z'], ['start', 'Date de début'], ['end', 'Date de fin (proche)'], ['amount', 'Montant du marché'], ['due', 'Reste à payer']] },
     { id: 'status', type: 'multi', label: 'Statuts (cliquez pour filtrer, plusieurs possibles)', options: Object.entries(SS).map(([k, l]) => [k, `${l} (${nbBy[k] || 0})`]) },
     { id: 'client', label: 'Client', options: [['', 'Tous'], ...cl] }, { id: 'late', type: 'check', label: 'En retard' }, { id: 'due', type: 'check', label: 'Reste à payer' }];
-  const list = sites.filter(s => tab === 'all' || (tab === 'open' ? OPEN.includes(s.status) : s.status === tab))
-;
+  const inTab = s => tab === 'all' || (tab === 'open' ? OPEN.includes(s.status) : s.status === tab); // un statut choisi dans le filtre passe avant l'onglet
   el.innerHTML = `<h2>Chantiers</h2>${tabs('#/sites', [['open', 'Ouverts'], ['paid', 'Terminés'], ['lost', 'Perdus'], ['all', 'Tous']], tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (nom, client, adresse)…">${canEdit ? '<a class="btn primary" href="#/site/new">+ Chantier</a>' : ''}</div>
     ${filterBar(FC)}<div id="list"></div>`;
@@ -92,15 +91,16 @@ export async function renderSites(el, tab = 'open') {
   let getF;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
-    const rows = list.filter(s => (!q || [s.name, C[s.clientId]?.name, C[s.moeId]?.name, s.address].join(' ').toLowerCase().includes(q)) && (!F2.client || s.clientId === F2.client) && (!(F2.status || []).length || F2.status.includes(s.status)) && (!F2.late || (OPEN.includes(s.status) && s.end && s.end < today())) && (!F2.due || ST[s.id].resteAPayer > 0.005))
+    const rows = sites.filter(s => ((F2.status || []).length ? F2.status.includes(s.status) : inTab(s)) && (!q || [s.name, C[s.clientId]?.name, C[s.moeId]?.name, s.address].join(' ').toLowerCase().includes(q)) && (!F2.client || s.clientId === F2.client) && (!F2.late || (OPEN.includes(s.status) && s.end && s.end < today())) && (!F2.due || ST[s.id].resteAPayer > 0.005))
       .sort(SORTS[F2.sort] || SORTS.recent);
-    $('#list', el).innerHTML = rows.map(s => {
+    const byStat = (F2.status || []).length && tab !== 'all';
+    $('#list', el).innerHTML = (byStat ? `<p class="cnote">Statut choisi : tous les chantiers de ce statut sont affichés, quel que soit l'onglet.</p>` : '') + (rows.map(s => {
       const st = siteStats(s.id, docs, payments);
       return `<a class="item${lock.lockCls(LK, s.id)}" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
         <div class="s">${e(C[s.clientId]?.name || 'Sans client')}${s.address ? ' · ' + e(s.address.split('\n')[0]) : ''}</div>
         <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}${C[s.moeId] ? ' · ' + e(C[s.moeId].name) : ''}${(s.links || []).length ? ' · 🔗 ' + s.links.length : ''}${(s.files || []).filter(fl.canSee).length ? ' · 📎 ' + (s.files || []).filter(fl.canSee).length : ''}</div>${avatars(s.id)}${gaugesHtml(siteGauges(s, st, money))}</div>
         <div class="r">${lock.lockTag(LK, s.id)}<span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
-    }).join('') || ((F2.status || []).length && tab !== 'all' ? `<div class="empty">Aucun chantier à ce statut dans cet onglet. Essayez l'onglet « Tous ».</div>` : `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`);
+    }).join('') || `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`);
   };
   getF = bindFilters(el, 'sites_', FC, draw);
   draw(); $('#q', el).oninput = draw;
