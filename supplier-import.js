@@ -3,6 +3,7 @@ import * as db from './db.js';
 import { e, eur, num, today, cname, F, modal, closeModal, toast, refresh, $, $$ } from './util.js';
 import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
+import * as fl from './files.js';
 
 let pdfReady = null;
 function loadPdfJs() {
@@ -61,14 +62,14 @@ export async function supplierImportModal(opts = {}) {
         let r;
         try { r = await readPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
         if (!r.items.length) { out.innerHTML = '<p class="bad">Aucune ligne de produit reconnue dans ce PDF (PDF scanné en image ou mise en page inhabituelle). Rien n\'a été importé.</p>'; return; }
-        renderReview(f, out, r, products, locs, opts, sites, contacts);
+        renderReview(f, out, r, products, locs, opts, sites, contacts, file);
       };
     }
   });
 }
 
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = []) {
+function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = [], file = null) {
   const doc = !!opts.onLines;
   const S = r.supplier, inv = r.invoice;
   const findP = it => products.find(p => it.ref && p.ref && p.ref.toLowerCase() === it.ref.toLowerCase()) || products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
@@ -110,6 +111,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
       ${doc ? '' : `<label class="f full"><span>Destination des lignes : tapez pour chercher un chantier (charge comptée dans sa rentabilité) ou un emplacement de stock. Vide = suit l'option « entrée en stock » ci-dessous. Proposé d'après le « N° commande » de la facture quand il correspond ; « Appliquer » le met sur toutes les lignes cochées.</span><span style="display:flex;gap:6px"><input id="spsite" list="spdl" placeholder="chantier ou emplacement…" autocomplete="off" style="flex:1"><button type="button" class="btn" id="spapply">Appliquer</button></span>${dlist}</label>
       ${r.fees.length ? `<label class="f full"><span><input type="checkbox" id="spfees" checked> Répartir les frais (${eur(feeTot)} : port…) sur les chantiers, au prorata des lignes</span></label>` : ''}`}
+      ${!doc && fl.available() && file ? '<label class="f full"><span><input type="checkbox" id="spkeep" checked> Conserver le PDF dans le Drive (GestPro/Achats fournisseurs, et dans le chantier si affecté)</span></label>' : ''}
       <label class="f full"><span><input type="checkbox" id="spsup" ${S.name && !doc ? 'checked' : ''} ${S.name ? '' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
     </div><p id="spcnt" class="muted"></p>`;
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
@@ -179,11 +181,26 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       st.charges = [...(st.charges || []), ...add];
       await db.put('sites', st); charged += xs.length;
     }
+    let kept = '';
+    if (!doc && $('#spkeep', out)?.checked && file) {
+      try {
+        const yr = (inv.iso(inv.date) || today()).slice(0, 4), nm = `${fl.safe(S.name || 'Fournisseur')}_${fl.safe(inv.number || 'facture')}.pdf`;
+        const att = await fl.upload(file, { path: ['GestPro', 'Achats fournisseurs', yr], kind: 'achats', name: nm });
+        const targets = [];
+        if (supplier) targets.push(['contacts', supplier]);
+        if (att.fid) for (const sid of Object.keys(bySite)) { const st = await db.get('sites', sid); if (st) targets.push(['sites', st]); }
+        att.shared = targets.length > 1;
+        if (!att.pending) delete att.path;
+        for (const [store, rec] of targets) { rec.files = [...(rec.files || []), { ...att }]; await db.put(store, rec); }
+        kept = att.pending ? 'PDF en attente d\'envoi' : 'PDF conservé dans le Drive';
+        if (!targets.length) kept += ' (non rattaché : cochez le fournisseur)';
+      } catch (err) { alert('PDF non enregistré dans le Drive : ' + (err.message || err)); }
+    }
     if (doc) {
       opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));
       toast(`${sel.length} ligne(s) ajoutée(s) au document`); return;
     }
-    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, moved && `${moved} entrée(s) en stock`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, supMsg].filter(Boolean).join(' · ') || 'Terminé');
+    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, moved && `${moved} entrée(s) en stock`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, kept, supMsg].filter(Boolean).join(' · ') || 'Terminé');
     refresh();
   };
 }

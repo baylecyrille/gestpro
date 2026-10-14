@@ -26,6 +26,25 @@ function doPost(e) {
     lock.waitLock(25000);
     const req = JSON.parse(e.postData.contents);
     if (req.key !== SECRET) return out_({ error: 'Clé secrète incorrecte' });
+    // --- Fichiers (photos, PDF…) : stockés dans votre Drive, dossier « GestPro » uniquement ---
+    if (req.action === 'fileInfo') return out_({ ok: true, folder: dir_(['GestPro']).getUrl() });
+    if (req.action === 'filePut') {
+      const blob = Utilities.newBlob(Utilities.base64Decode(req.b64), req.mime || 'application/octet-stream', clean_(req.name));
+      const file = dir_(req.path || ['GestPro', 'Autres']).createFile(blob);
+      return out_({ ok: true, id: file.getId(), name: file.getName(), size: file.getSize() });
+    }
+    if (req.action === 'fileGet') {
+      const f = DriveApp.getFileById(String(req.id));
+      if (!inRoot_(f)) return out_({ error: 'Fichier hors du dossier GestPro' });
+      const b = f.getBlob();
+      return out_({ ok: true, name: f.getName(), mime: b.getContentType(), b64: Utilities.base64Encode(b.getBytes()) });
+    }
+    if (req.action === 'fileDel') {
+      const f = DriveApp.getFileById(String(req.id));
+      if (!inRoot_(f)) return out_({ error: 'Fichier hors du dossier GestPro' });
+      f.setTrashed(true);
+      return out_({ ok: true });
+    }
     const ss = SpreadsheetApp.openById(sheetId_());
 
     if (req.action === 'read') {
@@ -69,4 +88,39 @@ function doPost(e) {
 
 function out_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ---- Aides pour les fichiers ----
+const ROOT_NAME = 'GestPro';
+function clean_(n) { return String(n || '').replace(/[\\\/:*?"<>|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90) || 'Sans nom'; }
+// Dossier GestPro/…/… (créé au besoin). Le premier élément est toujours « GestPro ».
+function dir_(path) {
+  let f = DriveApp.getRootFolder();
+  [ROOT_NAME].concat((path || []).slice(1)).forEach(function (n, i) {
+    n = i === 0 ? ROOT_NAME : clean_(n);
+    const it = f.getFoldersByName(n);
+    f = it.hasNext() ? it.next() : f.createFolder(n);
+  });
+  return f;
+}
+// Vrai si le fichier se trouve bien sous GestPro (la clé ne donne jamais accès au reste du Drive)
+function inRoot_(file) {
+  const rootId = DriveApp.getRootFolder().getId();
+  let level = [file];
+  for (let depth = 0; depth < 8 && level.length; depth++) {
+    const next = [];
+    for (let i = 0; i < level.length; i++) {
+      const ps = level[i].getParents();
+      while (ps.hasNext()) {
+        const p = ps.next();
+        if (p.getName() === ROOT_NAME) {
+          const up = p.getParents();
+          while (up.hasNext()) if (up.next().getId() === rootId) return true;
+        }
+        next.push(p);
+      }
+    }
+    level = next;
+  }
+  return false;
 }

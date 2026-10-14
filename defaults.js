@@ -29,6 +29,7 @@ export const DEFAULTS = {
   appName: 'GestPro',
   autoCloseSites: true,
   payDays: 30,
+  photoPx: 2560,
   stSecColor: '#1e5aa8', stSecBg: '#dbe7f7', stLineBg: '#ffffff', stTextBg: '#f6f7f9',
   fbPage: '', fbId: '', fbToken: '',
   googleClientId: '',

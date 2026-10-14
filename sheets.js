@@ -60,7 +60,7 @@ export function setScript(url, key) {
 export function clearScript() { localStorage.removeItem(K.url); localStorage.removeItem(K.skey); localStorage.removeItem(K.last); setStatus(configured() ? 'auth' : 'off'); }
 
 // Appel de la passerelle Apps Script (texte brut : pas de pré-requête CORS)
-async function scriptCall(payload) {
+export async function scriptCall(payload) {
   let r;
   try {
     r = await fetch(localStorage.getItem(K.url), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: localStorage.getItem(K.skey), ...payload }) });

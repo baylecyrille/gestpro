@@ -6,6 +6,7 @@ import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
+import * as fl from './files.js';
 import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
 import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 
@@ -239,6 +240,7 @@ export async function renderDoc(el, id, arg) {
       <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
+    ${!isNew ? '<div id="dfiles"></div>' : ''}
     ${!isNew ? actionsHtml() : ''}</div>`;
     bind();
   };
@@ -406,6 +408,14 @@ export async function renderDoc(el, id, arg) {
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
     mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
+    if ($('#dfiles', el)) {
+      const mainKind = cur.type === 'quote' ? 'devis' : 'factures', st0 = () => sites.find(x => x.id === cur.siteId);
+      fl.filesCard({ host: $('#dfiles', el), title: 'Pièces jointes', canEdit: true, px: S.photoPx || 2560, kinds: ['photos', mainKind, 'autres'],
+        list: () => cur.files || [],
+        path: k => { const st = st0(); return st ? fl.sitePath(st, k) : ['GestPro', k === 'photos' ? 'Photos' : k === 'autres' ? 'Autres' : cur.type === 'quote' ? 'Devis' : 'Factures', String((cur.date || today()).slice(0, 4))]; },
+        add: async a => { if (!a.pending) delete a.path; const fresh = (await db.get('documents', cur.id)) || cur; fresh.files = [...(fresh.files || []), a]; await db.put('documents', fresh); cur.files = fresh.files; const st = st0(); if (st && st.driveDir) await db.put('sites', st); },
+        remove: async a => { const fresh = (await db.get('documents', cur.id)) || cur; fresh.files = (fresh.files || []).filter(x => x.id !== a.id); await db.put('documents', fresh); cur.files = fresh.files; } });
+    }
     $('#ssearch', el).oninput = ev => {
       const q = ev.target.value.toLowerCase().trim(), sel = $('[name=siteId]', el), keep = sel.value;
       const rows = sites.filter(x => x.id === keep || !q || siteText(x).toLowerCase().includes(q));

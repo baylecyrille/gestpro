@@ -228,7 +228,7 @@ async function renderSettings(el) {
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
     ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}
     <label class="f full"><span><input type="checkbox" name="autoCloseSites" ${S.autoCloseSites !== false ? 'checked' : ''}> Terminer automatiquement un chantier quand tout est facturé et réglé</span></label>
-    ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
+    ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Taille des photos envoyées au Drive', 'photoPx', S.photoPx || 2560, { type: 'select', options: [['1600', 'Standard (1600 px, léger)'], ['2560', 'Haute (2560 px, conseillé)'], ['3600', 'Très haute (3600 px)']] })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
     <h3 class="full">Couleurs des lignes de devis / factures</h3>
@@ -276,6 +276,10 @@ async function renderSettings(el) {
   <div class="card"><h3 style="margin-top:0">Modèles de texte</h3><p class="muted">Textes réutilisables (conditions, mentions, remarques) à insérer dans vos devis et factures.</p><div class="row"><button class="btn" id="snip">Gérer les modèles de texte…</button></div></div>
   <div class="card"><h3 style="margin-top:0">Importer des devis / factures</h3><p class="muted">Ajoute à vos données (sans rien remplacer) le contenu d'un fichier d'import GestPro : clients, chantiers, produits, devis, factures et règlements. Le fichier est lu sur cet appareil uniquement.</p>
     <div class="row"><label class="btn"><input type="file" id="addimp" accept=".json" hidden>Choisir un fichier d'import…</label></div></div>
+  <div class="card" id="fcard"><h3 style="margin-top:0">Photos &amp; fichiers (Drive)</h3>
+    <p class="muted">Les photos et pièces jointes (chantiers, devis, factures, factures d'achat) sont envoyées dans votre Google Drive, dossier <b>GestPro</b> (<code>Chantiers/&lt;chantier&gt;/Photos, Devis, Factures, Achats, Autres</code> ; <code>Achats fournisseurs/&lt;année&gt;</code>). Elles sont relues par l'application selon les habilitations : photos et documents de chantier pour tous les membres, devis / factures / achats pour les profils qui voient les montants. Aucun compte Google n'est nécessaire pour les membres.</p>
+    <p id="fstat" class="muted">${sheets.scriptMode() ? 'Connexion par script Apps Script : prêt.' : '⚠ Nécessite la connexion par script Apps Script (carte Google Sheets ci-dessus).'}</p>
+    <div class="row"><button type="button" class="btn" id="ftest" ${sheets.scriptMode() ? '' : 'disabled'}>Tester le Drive</button><span class="muted">OneDrive (Microsoft 365) : prévu ensuite.</span></div></div>
   <div class="card"><h3 style="margin-top:0">Sauvegarde</h3><p class="muted">${sheets.configured() ? 'Vos données sont synchronisées automatiquement avec Google Sheets (« GestPro – Données ») après chaque modification, et disponibles sur vos autres appareils connectés au même classeur. Une copie en fichier reste utile comme sauvegarde supplémentaire.' : 'Google Sheets n\'est pas configuré : les données sont stockées uniquement sur cet appareil. Configurez la synchronisation ci-dessus, ou faites une sauvegarde régulière et transférez-la pour changer de téléphone/ordinateur.'}</p>
     <div class="row"><button class="btn" id="exp">Exporter (JSON)</button><label class="btn"><input type="file" id="imp" accept=".json" hidden>Restaurer…</label>${installEvt ? '<button class="btn primary" id="inst">Installer l\'application</button>' : ''}</div></div>`;
   const gstat = () => {
@@ -284,6 +288,11 @@ async function renderSettings(el) {
     $('#gstat', el).innerHTML = `<b>${lbl}</b>${st.msg ? ' – ' + e(st.msg) : ''}${t ? ` · dernière synchro ${new Date(t).toLocaleString('fr-FR')}` : ''}`;
   };
   gstat();
+  $('#ftest', el)?.addEventListener('click', async () => {
+    const out = $('#fstat', el); out.textContent = 'Test en cours…';
+    try { const r = await sheets.scriptCall({ action: 'fileInfo' }); out.innerHTML = `✔ Drive prêt : dossier <a href="${e(r.folder)}" target="_blank" rel="noopener">GestPro</a> (créé au besoin).`; }
+    catch (err) { out.textContent = /Action inconnue/i.test(err.message) ? '✖ Le script Apps Script n\'est pas à jour : collez la dernière version de Code.gs, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version, et acceptez l\'autorisation Drive.' : '✖ ' + err.message; }
+  });
   $('#gedit', el).onclick = () => {
     const fs = $('#gfs', el), lockedNow = fs.disabled;
     if (lockedNow && !confirm('Modifier la connexion Google Sheets ? Une erreur ici peut interrompre la synchronisation de vos données.')) return;
@@ -327,7 +336,7 @@ async function renderSettings(el) {
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays'].forEach(k => (o[k] = num(o[k])));
+    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper; o.autoCloseSites = !!o.autoCloseSites;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
@@ -460,6 +469,7 @@ sheets.setOnPulled(() => {
     }
   } catch { /* ignore */ }
   sheets.init();
+  import('./files.js').then(m => { m.flushPending().catch(() => {}); window.addEventListener('online', () => m.flushPending().catch(() => {})); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   route();
 })();

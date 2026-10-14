@@ -6,6 +6,8 @@ import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
+import * as fl from './files.js';
+import { getS } from './defaults.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -94,7 +96,7 @@ export async function renderSites(el, tab = 'open') {
       const st = siteStats(s.id, docs, payments);
       return `<a class="item${lock.lockCls(LK, s.id)}" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
         <div class="s">${e(C[s.clientId]?.name || 'Sans client')}${s.address ? ' · ' + e(s.address.split('\n')[0]) : ''}</div>
-        <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}${C[s.moeId] ? ' · ' + e(C[s.moeId].name) : ''}${(s.links || []).length ? ' · 🔗 ' + s.links.length : ''}</div>${avatars(s.id)}${gaugesHtml(siteGauges(s, st, money))}</div>
+        <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}${C[s.moeId] ? ' · ' + e(C[s.moeId].name) : ''}${(s.links || []).length ? ' · 🔗 ' + s.links.length : ''}${(s.files || []).filter(fl.canSee).length ? ' · 📎 ' + (s.files || []).filter(fl.canSee).length : ''}</div>${avatars(s.id)}${gaugesHtml(siteGauges(s, st, money))}</div>
         <div class="r">${lock.lockTag(LK, s.id)}<span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
     }).join('') || `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`;
   };
@@ -136,7 +138,8 @@ export async function renderSite(el, id) {
       ${site.address ? `<div class="row" style="margin:8px 0 0"><a class="btn primary" id="itin" target="_blank" rel="noopener" href="${e(mapsDir(site.address))}">🧭 Itinéraire</a><button class="btn" id="mapbtn" type="button">🗺 Plan</button><button class="btn" id="shbtn" type="button">📤 Envoyer</button></div><div id="mapbox" hidden></div>` : `<p class="muted" style="margin:8px 0 0">📍 Ajoutez l'adresse du chantier (bouton « Modifier ») pour afficher le plan et lancer l'itinéraire.</p>`}
       ${moe ? `<p style="margin:6px 0 0">🏛 <b>${e(moe.name)}</b>${moe.fonction ? ` <small class="muted">${e(moe.fonction)}</small>` : ''}${moe.company ? ` · ${e(moe.company)}` : ''}${moe.phone ? ` · <a href="tel:${e(moe.phone)}">${e(moe.phone)}</a>` : ''}${moe.email ? ` · <a href="mailto:${e(moe.email)}">${e(moe.email)}</a>` : ''}</p>` : ''}
       ${site.note ? `<p class="muted" style="white-space:pre-line">${e(site.note)}</p>` : ''}</div>
-    <h3>Documents &amp; liens</h3><div class="card" id="lnks">${(site.links || []).map((l, i) => `<div class="lnk"><span>🔗</span><a href="${e(l.url)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.url)}</a>${canEdit ? `<button class="btn sm" data-lnkedit="${i}" type="button">✎</button><button class="btn sm danger" data-lnkrm="${i}" type="button">✕</button>` : ''}</div>`).join('') || '<p class="muted" style="margin:0">Aucun lien. Ajoutez le lien d\'un dossier de plans, de photos ou de documents (Google Drive, Dropbox, OneDrive…).</p>'}${canEdit ? '<button class="btn sm" id="lnkadd" type="button" style="margin-top:8px">+ Ajouter un lien</button>' : ''}</div>
+    <div id="sfiles"></div>
+    <h3>Liens</h3><div class="card" id="lnks">${(site.links || []).map((l, i) => `<div class="lnk"><span>🔗</span><a href="${e(l.url)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.url)}</a>${canEdit ? `<button class="btn sm" data-lnkedit="${i}" type="button">✎</button><button class="btn sm danger" data-lnkrm="${i}" type="button">✕</button>` : ''}</div>`).join('') || '<p class="muted" style="margin:0">Aucun lien. Ajoutez le lien d\'un dossier de plans, de photos ou de documents (Google Drive, Dropbox, OneDrive…).</p>'}${canEdit ? '<button class="btn sm" id="lnkadd" type="button" style="margin-top:8px">+ Ajouter un lien</button>' : ''}</div>
     ${gaugesBig(siteGauges(site, st, money), canEdit, site)}
     ${money ? `<div class="grid">
       <div class="kpi"><small>Marché signé (TTC)</small><b>${eur(st.marcheTTC)}</b><small>${eur(st.marcheHT)} HT${st.enAttenteTTC ? ` · ${eur(st.enAttenteTTC)} en attente` : ''}</small></div>
@@ -174,6 +177,11 @@ export async function renderSite(el, id) {
   $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
   $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
+  { const S0 = await getS(), rich = auth.can('sites.money');
+    fl.filesCard({ host: $('#sfiles', el), title: 'Photos & fichiers', canEdit: canEdit || auth.can('sites'), px: S0.photoPx || 2560, kinds: rich ? ['photos', 'autres', 'devis', 'factures', 'achats'] : ['photos', 'autres'],
+      list: () => site.files || [], path: k => fl.sitePath(site, k),
+      add: async a => { if (!a.pending) delete a.path; site.files = [...(site.files || []), a]; await db.put('sites', site); },
+      remove: async a => { site.files = (site.files || []).filter(x => x.id !== a.id); await db.put('sites', site); } }); }
   $('#lnkadd', el)?.addEventListener('click', () => linkModal(site, -1));
   $$('[data-lnkedit]', el).forEach(b => b.onclick = () => linkModal(site, +b.dataset.lnkedit));
   $$('[data-lnkrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Retirer ce lien ?')) return; site.links.splice(+b.dataset.lnkrm, 1); await db.put('sites', site); refresh(); });
