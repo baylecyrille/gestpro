@@ -1,4 +1,4 @@
-const CACHE = 'gestpro-v60';
+const CACHE = 'gestpro-v61';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
   './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './blocks.js', './importer.js', './layout.js', './lock.js', './files.js', './efact.js', './vat.js', './doccheck.js', './docmail.js', './docpdf.js', './facturx-pdf.js', './supplier-import.js', './supplier-parse.js', './facebook.js',

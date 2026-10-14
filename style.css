@@ -103,6 +103,32 @@ dialog::backdrop{background:#0006}
 .discrow .dr{display:flex;gap:6px}
 .discrow .dr input{flex:1;min-width:0}
 .discrow .dr select{width:92px;flex:none}
+/* bouton « Options » de l'éditeur : TVA ligne par ligne, remises */
+.optbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px}
+.optbar .btn.on{background:#eaf1fb;border-color:var(--p2);color:var(--p)}
+.optbar .muted{font-size:12.5px}
+.optpanel{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;border:1px solid var(--bd);border-radius:10px;background:#f7faff;padding:10px 12px;margin-bottom:10px}
+.optpanel[hidden]{display:none}
+.optpanel .og{display:flex;flex-direction:column;gap:7px;min-width:0}
+.optpanel .ck{display:flex;gap:8px;align-items:flex-start;margin:0;cursor:pointer}
+.optpanel .ck input{width:auto;margin-top:3px;flex:none}
+.optpanel .ck small{display:block;color:var(--mut);font-size:12px;font-weight:400}
+.optpanel .f{margin:2px 0 0}
+.optpanel .foot{grid-column:1/-1;margin:0;font-size:12px}
+/* saisie des lignes sans TVA propre (.nv) et/ou sans remise de ligne (.nr) */
+#blks.nv .ln select.vat,#blks.nr .ln .rem{display:none}
+@media(min-width:621px){
+ .lines #blks.nv .ln{grid-template-columns:1fr 70px 70px 90px}
+}
+@media(max-width:620px){
+ .optpanel{grid-template-columns:1fr}
+ .lines #blks.nv .ln{grid-template-columns:1fr 1fr 1fr}
+}
+@container blk (min-width:800px){
+ .lines #blks.nv .ln{grid-template-columns:minmax(160px,1fr) 62px 70px 84px 68px 80px 112px}
+ .lines #blks.nr .ln{grid-template-columns:minmax(160px,1fr) 62px 70px 84px 96px 80px 112px}
+ .lines #blks.nv.nr .ln{grid-template-columns:minmax(160px,1fr) 62px 70px 84px 80px 112px}
+}
 .totals .optrow{font-size:13px;color:var(--mut);font-style:italic;border-top:1px dashed var(--bd);margin-top:6px;padding-top:6px}
 .totals{margin-left:auto;max-width:300px}
 .totals div{display:flex;justify-content:space-between;padding:3px 0}

@@ -11,7 +11,7 @@ import * as auth from './auth.js';
 import * as lock from './lock.js';
 import * as fl from './files.js';
 import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
-import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
+import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, lineStats, clearLineOpt, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
@@ -116,7 +116,7 @@ async function autoCloseSite(siteId) {
 async function makeInvoice(q) {
   const deposits = quoteDeposits(await db.all('documents'), q.id);
   const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending', ...(deposits.length ? { deps: deposits.map(depEntry) } : {}) });
-  ensureBlocks(inv);
+  ensureBlocks(inv); if (q.opts) inv.opts = { ...q.opts };
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
@@ -133,7 +133,7 @@ async function makeDeposit(q, sp, o = {}) {
   const lines = sp.rates.map(x => ({ desig: label + (sp.rates.length > 1 ? ` (TVA ${fmtRate(x.rate)})` : ''), qty: 1, unit: 'forfait', pu: x.ht, tva: String(x.rate), pid: '' }));
   const blocks = [...lines.map(l => ({ type: 'line', ...l })), { type: 'text', html: `Acompte sur le devis n° ${e(q.number)} du ${e(dateFr(q.date))} (montant du devis : ${e(eur(sp.base))} TTC). Cet acompte sera déduit de la facture finale.` }];
   const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: '', tva: q.tva, terms: q.terms, lines, blocks, siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, deposit: { q: q.id, mode: o.mode, value: num(o.value) }, status: 'pending', ...(o.date ? { date: o.date } : {}), ...(o.dueDate ? { dueDate: o.dueDate } : {}) });
-  ensureBlocks(inv);
+  ensureBlocks(inv); if (q.opts) inv.opts = { ...q.opts };
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   if (o.attach) for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
@@ -210,7 +210,7 @@ export async function renderDocs(el, tab = 'quote') {
 
 /* ---------- Éditeur ---------- */
 /* Champs repris quand on duplique un document (ni numéro, ni date, ni règlements, ni pièces jointes, ni lien avec un devis ou une facture) */
-const COPY_KEYS = ['clientId', 'siteId', 'siteRef', 'siteAddr', 'intro', 'note', 'tva', 'terms', 'disc', 'tpl', 'zones', 'layout', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed'];
+const COPY_KEYS = ['clientId', 'siteId', 'siteRef', 'siteAddr', 'intro', 'note', 'tva', 'terms', 'disc', 'tpl', 'zones', 'layout', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed', 'opts'];
 export async function renderDoc(el, id, arg) {
   let cur, isNew = false, copyOf = null;
   if (id === 'new') {
@@ -251,7 +251,7 @@ export async function renderDoc(el, id, arg) {
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
   let payments = allPay.filter(p => p.docId === cur.id);
   const run = {}; el._docRun = run; // identifie cet affichage : les actions différées d'un document déjà quitté s'arrêtent
-  let hdrOpen = isNew || !cur.clientId, sidefit = null, auxT = 0;
+  let hdrOpen = isNew || !cur.clientId, sidefit = null, auxT = 0, optOpen = false;
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* stockage indisponible */ } };
   const sideWanted = () => lsGet('gp_sidepv') !== '0';
@@ -287,6 +287,22 @@ export async function renderDoc(el, id, arg) {
     $('#sidebtn', el)?.classList.toggle('on', sideWanted());
     sidefit = null; if (on) updAux();
   };
+  /* Options de saisie des lignes (bouton « Options ») : TVA ligne par ligne, remise de ligne, remise sur le total.
+     Choix propre au document (cur.opts), repris comme réglage par défaut des prochains documents sur cet appareil.
+     Une saisie qui contient déjà des valeurs reste affichée : on ne cache jamais un montant qui compte dans le total. */
+  const optHas = k => { const st = lineStats(cur); return k === 'tvaLine' ? st.own > 0 : k === 'remLine' ? st.rem > 0 : !!(cur.disc && num(cur.disc.v) > 0); };
+  const optOn = k => optHas(k) || (cur.opts && k in cur.opts ? !!cur.opts[k] : getPref('ed_' + k, '1') !== '0');
+  const optSummary = () => {
+    const r = [optOn('remLine') && 'par ligne', optOn('remTot') && 'sur le total'].filter(Boolean);
+    return (optOn('tvaLine') ? 'TVA par ligne' : 'TVA ' + fmtRate(num(cur.tva))) + ' · ' + (r.length ? 'Remises ' + r.join(' + ') : 'Sans remise');
+  };
+  const optPanelHtml = () => `<div class="og"><b>TVA</b>
+      <label class="ck"><input type="checkbox" data-opt="tvaLine" ${optOn('tvaLine') ? 'checked' : ''}><span>Choisir le taux de TVA ligne par ligne<small>Décoché : toutes les lignes ont le taux du document.</small></span></label>
+      <label class="f"><span>Taux de TVA du document</span><select id="opttva">${TVAS.map(([v, l]) => `<option value="${v}" ${String(num(cur.tva)) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+    <div class="og"><b>Remises</b>
+      <label class="ck"><input type="checkbox" data-opt="remLine" ${optOn('remLine') ? 'checked' : ''}><span>Remise en % sur chaque ligne<small>Décoché : le champ « Remise » disparaît des lignes.</small></span></label>
+      <label class="ck"><input type="checkbox" data-opt="remTot" ${optOn('remTot') ? 'checked' : ''}><span>Remise sur le total du document<small>En % ou en € HT, répartie entre les taux de TVA.</small></span></label></div>
+    <p class="muted foot">Ces choix valent pour ce document et sont proposés aux prochains documents sur cet appareil. Décocher une saisie déjà remplie la remet à zéro (confirmation demandée).</p>`;
   const hdrSummary = () => [cname(curClient()) || 'Aucun client', cur.siteRef, cur.date ? dateFr(cur.date) : '', (isQ ? QS : isC ? CS : IS)[cur.status]].filter(Boolean).join(' · ');
   const discHtml = () => `<label class="f"><span>Remise sur le total</span><div class="dr"><input name="discV" type="number" step="any" min="0" inputmode="decimal" value="${cur.disc && num(cur.disc.v) > 0 ? cur.disc.v : ''}" placeholder="0"><select name="discT"><option value="%" ${cur.disc?.t === '€' ? '' : 'selected'}>%</option><option value="€" ${cur.disc?.t === '€' ? 'selected' : ''}>€ HT</option></select></div></label>`;
   const stickyHtml = t => `<div class="stickybar" id="sbar"><div class="sbt"><span>HT <b id="sbht">${eur(t.ht)}</b></span><span><span id="sbtl">${t.hasDep ? 'Net' : 'TTC'}</span> <b id="sbttc">${eur(t.ttc)}</b></span></div><span class="sp"></span><button type="button" class="btn sm warnbtn" id="sbchk" hidden></button><button type="button" class="btn primary" id="sbsave">Enregistrer</button></div>`;
@@ -314,8 +330,9 @@ export async function renderDoc(el, id, arg) {
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA par défaut du document', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></details>
-    <div class="card lines"><div id="blocks"></div>
-      <div class="discrow" id="discrow">${discHtml()}</div>
+    <div class="card lines"><div class="optbar"><button type="button" class="btn sm${optOpen ? ' on' : ''}" id="optbtn" aria-expanded="${optOpen}" title="Choisir ce qui se saisit sur les lignes : TVA et remises">⚙ Options</button><span class="muted" id="optsum">${e(optSummary())}</span></div>
+      <div class="optpanel" id="optpanel" ${optOpen ? '' : 'hidden'}>${optPanelHtml()}</div><div id="blocks"></div>
+      <div class="discrow" id="discrow">${optOn('remTot') ? discHtml() : ''}</div>
       <div id="depbox">${depBoxHtml()}</div>
       <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
@@ -620,8 +637,24 @@ export async function renderDoc(el, id, arg) {
     $('#vlayout', el).onclick = openVisual;
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
-    const blk = mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
-    $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
+    const blk = mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader, view: () => ({ tva: optOn('tvaLine'), rem: optOn('remLine') }) });
+    $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); const ot = $('#opttva', el); if (ot) ot.value = String(cur.tva); $('#optsum', el).textContent = optSummary(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
+    /* Bouton « Options » */
+    $('#optbtn', el).onclick = () => { optOpen = !optOpen; $('#optpanel', el).hidden = !optOpen; $('#optbtn', el).classList.toggle('on', optOpen); $('#optbtn', el).setAttribute('aria-expanded', String(optOpen)); };
+    $('#opttva', el).onchange = ev => { const h = $('[name=tva]', el); h.value = ev.target.value; h.dispatchEvent(new Event('change', { bubbles: true })); };
+    $$('[data-opt]', el).forEach(c => { c.onchange = () => {
+      const k = c.dataset.opt, on = c.checked; readHeader(); readDisc();
+      if (!on) {
+        const st = lineStats(cur), pl = n => (n > 1 ? 's' : '');
+        if (k === 'tvaLine' && st.diff && !confirm(`${st.diff} ligne${pl(st.diff)} ${st.diff > 1 ? 'ont' : 'a'} un taux de TVA différent de celui du document (${fmtRate(num(cur.tva))}). ${st.diff > 1 ? 'Elles passeront' : 'Elle passera'} au taux du document. Continuer ?`)) { c.checked = true; return; }
+        if (k === 'remLine' && st.rem && !confirm(`${st.rem} ligne${pl(st.rem)} ${st.rem > 1 ? 'ont' : 'a'} une remise. ${st.rem > 1 ? 'Ces remises seront supprimées' : 'Cette remise sera supprimée'}. Continuer ?`)) { c.checked = true; return; }
+        if (k === 'remTot' && optHas(k) && !confirm('La remise sur le total sera supprimée. Continuer ?')) { c.checked = true; return; }
+        if (k === 'remTot') delete cur.disc; else clearLineOpt(cur, k);
+      }
+      cur.opts = { ...(cur.opts || {}), [k]: on ? 1 : 0 }; setPref('ed_' + k, on ? '1' : '0');
+      blk.redraw(); blk.applyView(); $('#discrow', el).innerHTML = optOn('remTot') ? discHtml() : '';
+      $('#optsum', el).textContent = optSummary(); refreshTotals();
+    }; });
     if ($('#dfiles', el)) {
       const mainKind = cur.type === 'quote' ? 'devis' : 'factures', st0 = () => sites.find(x => x.id === cur.siteId);
       fl.filesCard({ host: $('#dfiles', el), title: 'Pièces jointes', canEdit: true, px: S.photoPx || 2560, kinds: ['photos', mainKind, 'autres'],

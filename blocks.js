@@ -52,6 +52,16 @@ export function ensureBlocks(d) {
   return d;
 }
 export function syncLines(d) { d.lines = linesOf(d.blocks); }
+/* Ce que le document contient déjà : taux de TVA propres aux lignes (dont ceux qui diffèrent du taux du document) et remises de ligne */
+export function lineStats(d) {
+  const L = (d.blocks || []).filter(b => b.type === 'line');
+  return { own: L.filter(b => hasOwnRate(b)).length, diff: L.filter(b => hasOwnRate(b) && num(b.tva) !== num(d.tva)).length, rem: L.filter(b => remOf(b) > 0).length };
+}
+/* 'tvaLine' : toutes les lignes reprennent le taux du document · 'remLine' : supprime les remises de ligne */
+export function clearLineOpt(d, k) {
+  for (const b of d.blocks || []) if (b.type === 'line') { if (k === 'tvaLine') delete b.tva; else if (k === 'remLine') delete b.rem; }
+  syncLines(d);
+}
 export function pruneBlocks(d) {
   d.blocks = d.blocks.filter(b => b.type === 'line' ? (b.desig || num(b.pu)) : b.type === 'section' ? plain(b.title) : b.type === 'text' ? plain(b.html) : true);
   syncLines(d);
@@ -153,7 +163,7 @@ function bindToolbar(root, target, after = () => {}) {
 }
 
 /* ---------- Éditeur de blocs ---------- */
-export function mountBlocks(box, d, { onChange, readHeader }) {
+export function mountBlocks(box, d, { onChange, readHeader, view }) {
   let active = null; // éditeur texte actif
   const updSub = () => { const st = sectionTotals(d.blocks); $$('[data-sub]', box).forEach(n => { const b = d.blocks.find(x => x.id === n.dataset.sub); n.textContent = b && b.sub ? 'Sous-total : ' + eur(st[b.id]) : ''; }); };
   const change = () => { syncLines(d); updSub(); onChange(); };
@@ -162,6 +172,8 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="adde" title="Termine la section en cours : les lignes suivantes n'en font plus partie">+ Fin de section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
   bindToolbar(box, () => active, t => { const blk = d.blocks.find(x => x.id === t.closest('.blk')?.dataset.id); if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
   const host = $('#blks', box);
+  /* Options de saisie (bouton « Options » de l'éditeur) : masque le taux de TVA et/ou la remise de chaque ligne (view() → { tva, rem }) */
+  const applyView = () => { const v = (view && view()) || {}; host.classList.toggle('nv', v.tva === false); host.classList.toggle('nr', v.rem === false); };
   const idx = id => d.blocks.findIndex(b => b.id === id);
   const add = (b, at) => { b.id = bid(); at == null ? d.blocks.push(b) : d.blocks.splice(at, 0, b); draw(); change(); return b; };
 
@@ -195,7 +207,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
     updSub();
   };
-  draw();
+  draw(); applyView();
 
   host.addEventListener('input', ev => {
     const row = ev.target.closest('.blk'); if (!row) return; const b = d.blocks[idx(row.dataset.id)]; if (!b) return;
@@ -290,7 +302,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   $('#addt', box).onclick = () => add({ type: 'text', html: '' });
   $('#addb', box).onclick = () => add({ type: 'pagebreak' });
   $('#addm', box).onclick = () => snippetsModal(s => add({ type: 'text', html: sanitize(s.html) }));
-  return { redraw: draw };
+  return { redraw: draw, applyView };
 }
 
 /* ---------- Champs texte enrichi (intitulé, remarque…) ---------- */
