@@ -1,7 +1,8 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
-import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, $, $$ } from './util.js';
+import * as efact from './efact.js';
+import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -232,6 +233,7 @@ export async function renderDoc(el, id, arg) {
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
       ${richField('Intitulé', 'intro', cur.intro)}
       ${richField(isC ? 'Motif de l\'avoir' : 'Remarque', 'note', cur.note, { rows: 3 })}
+      ${!isQ ? F('Nature de l\'opération (facture électronique)', 'opType', cur.opType || '', { type: 'select', options: [['', 'Par défaut (Réglages)'], ['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services']] }) + F('TVA sur les débits', 'vatDebits', cur.vatDebits ?? '', { type: 'select', options: [['', 'Par défaut (Réglages)'], ['1', 'Oui'], ['0', 'Non']] }) + F('Adresse de livraison si différente de celle du client', 'deliveryAddr', cur.deliveryAddr, { type: 'textarea', rows: 2, cls: 'full' }) : ''}
       ${!isQ && !isC ? F('Date limite de règlement', 'dueDate', cur.dueDate || '', { type: 'date' }) : ''}
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
@@ -269,6 +271,7 @@ export async function renderDoc(el, id, arg) {
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
       ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
       <button class="btn danger" id="delete">Supprimer</button></div>${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
   const refreshTotals = () => {
@@ -277,7 +280,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const readHeader = () => {
-    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate'].includes(i.name)) cur[i.name] = i.value; });
+    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
     readZones();
     cur.tva = num(cur.tva);
@@ -446,6 +449,33 @@ export async function renderDoc(el, id, arg) {
     $('#save', el).onclick = save;
     if (isNew) return;
     $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); printDoc(cur); };
+    $('#efact', el)?.addEventListener('click', async () => {
+      readHeader(); pruneBlocks(cur); await db.put('documents', cur);
+      const cli = curClient(), orig = isC && cur.fromInvoice ? DN[cur.fromInvoice] : null;
+      const o = { paid: isC ? 0 : paidOf(payments, cur.id), fromInvoiceNumber: orig?.number || cur.fromInvoiceNumber || '' };
+      const res = efact.check(cur, S, cli, o), blocked = res.some(r => r.level === 'err');
+      const ic = { err: '✖', warn: '⚠', info: 'ℹ', ok: '✔' }, col = { err: 'var(--bad,#c0392b)', warn: '#b7791f', info: '#2c6fb7', ok: '#2f855a' };
+      modal('Facture électronique – ' + (cur.number || ''), `<p class="muted">Contrôle des mentions obligatoires avant dépôt sur une plateforme agréée (Fulll, par exemple). Le fichier est créé sur cet appareil, rien n'est envoyé.</p>
+        ${res.map(r => `<div style="margin:4px 0;color:${col[r.level]}"><b>${ic[r.level]}</b> ${e(r.msg)}${r.fix ? ' <span class="muted">(' + e(r.fix) + ')</span>' : ''}</div>`).join('')}
+        <div class="row" style="margin-top:12px"><button type="button" class="btn primary" id="fxpdf" ${blocked ? 'disabled' : ''}>Télécharger la facture Factur-X (PDF)</button><button type="button" class="btn" id="fxxml" ${blocked ? 'disabled' : ''}>XML seul</button></div>
+        ${blocked ? '<p class="muted">Corrigez les points ✖ puis rouvrez cette fenêtre.</p>' : ''}`, null, {
+        onOpen: f => {
+          const mdl = efact.model(cur, S, cli, o), base = (cur.type === 'credit' ? 'avoir-' : 'facture-') + String(cur.number).replace(/[^\w.-]+/g, '_');
+          $('#fxxml', f).onclick = () => downloadFile(base + '-facturx.xml', efact.facturxXml(mdl), 'text/xml');
+          $('#fxpdf', f).onclick = async ev => {
+            const b = ev.target; b.disabled = true; b.textContent = 'Création du PDF…';
+            try {
+              const fx = await import('./facturx-pdf.js');
+              let logo = null;
+              try { const r = await fetch(logoSrc(S)); const by = new Uint8Array(await r.arrayBuffer()); logo = by[0] === 0x89 ? { bytes: by, type: 'png' } : by[0] === 0xFF ? { bytes: by, type: 'jpg' } : null; } catch (_) { /* sans logo */ }
+              const pdf = await fx.buildFacturX(mdl, cur, S, { logo });
+              downloadFile(base + '-facturx.pdf', pdf, 'application/pdf'); toast('Facture Factur-X créée');
+            } catch (err) { alert('Création impossible : ' + (err.message || err)); }
+            b.disabled = false; b.textContent = 'Télécharger la facture Factur-X (PDF)';
+          };
+        }
+      });
+    });
     $('#delete', el).onclick = async () => {
       if (!confirm('Supprimer ce document et ses règlements ?')) return;
       if (isC) { for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); } }
@@ -509,7 +539,7 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['coName', 'En-tête – nom de l\'entreprise', S.sub || S.company || '', 2, 'qic'],
     ['coInfo', 'En-tête – coordonnées de l\'entreprise', [S.owner ? '**' + S.owner + '**' : '', S.address, S.phone, S.legal, S.email, S.web, S.siret ? 'N°SIRET : ' + S.siret : ''].filter(Boolean).join('\n'), 7, 'qic'],
     ['certs', 'En-tête – RGE / assurances', [S.rge ? '**RGE** Numéro ' + S.rge : '', S.insurance ? 'Assurance Responsabilité Travaux ' + S.insurance : '', S.insurance ? 'Assurance Responsabilité Civile ' + S.insurance : ''].filter(Boolean).join('\n'), 3, 'qic'],
-    ['client', 'Bloc client (destinataire)', [cname(c) || '', c.company ? [c.companyCiv, c.company].filter(Boolean).join(' ') : '', addr].filter(Boolean).join('\n'), 4, 'qic'],
+    ['client', 'Bloc client (destinataire)', [cname(c) || '', c.company ? [c.companyCiv, c.company].filter(Boolean).join(' ') : '', addr, !isQ && efact.sirenOf(c.siret).length === 9 ? 'SIREN : ' + efact.sirenOf(c.siret) : ''].filter(Boolean).join('\n'), 4, 'qic'],
     ['chantier', 'Bloc « Réf chantier »', '**__Réf chantier :__**\n{siteRef}\n**{siteAddr}**', 3, 'qic'],
     ['title', 'Titre du document', T + ' {numero}', 1, 'qic'],
     ['dateLine', 'Ligne ville / date', '**{ville}, le   {date}**', 1, 'qic'],
@@ -593,6 +623,7 @@ export async function sheetHtml(doc, opts = {}) {
   const used = isC ? creditUsed(payments, doc.id) : paid;
   const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
   const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: isQ ? (doc.validUntil ? dateFr(doc.validUntil) : '') : (doc.dueDate ? dateFr(doc.dueDate) : ''), siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
+  const efMent = () => { const m = efact.mentions(doc, S); return m.length ? '<div class="small" style="margin-top:4px">' + m.map(x => e(x)).join('<br>') + '</div>' : ''; };
   const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
   const LE = !!opts.layoutEdit, ED = !!opts.edit && !LE, LY = layoutOf(S, doc);
   const Z = k => { const h = zhtml(Zt(k), vars); return ED ? `<span class="zn" data-z="${k}" title="Cliquer pour modifier">${h || '<i class="zempty">(zone vide – cliquer)</i>'}</span>` : h; };
@@ -608,8 +639,8 @@ export async function sheetHtml(doc, opts = {}) {
       case 'intro': return `<b><u>${richHtml(doc.intro)}</u></b>`;
       case 'note': return isC ? '' : richHtml(doc.note);
       case 'dateLine': return `<span class="dl">${Z('dateLine')}</span>${((isQ && doc.validUntil) || (!isQ && !isC && doc.dueDate)) && (Zt('validLine') || ED) ? `<br><span class="small">${Z('validLine')}</span>` : ''}`;
-      case 'pay': return `${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}`;
-      case 'creditTxt': return `${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}`;
+      case 'pay': return `${Z('payLbl')}<br>${e(doc.terms).replace(/\n/g, '<br>')}${efMent()}`;
+      case 'creditTxt': return `${Z('creditTxt')}${doc.note ? '<br>' + Z('lblMotif') + ' ' + richHtml(doc.note) : ''}${efMent()}`;
       default: return Z(it.k);
     }
   };

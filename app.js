@@ -220,6 +220,8 @@ async function renderSettings(el) {
     ${F('Forme juridique / capital', 'legal', S.legal)}${F('SIRET', 'siret', S.siret)}
     ${F('N° RGE', 'rge', S.rge)}${F('Assurance (n° contrat)', 'insurance', S.insurance)}
     ${F('IBAN', 'iban', S.iban)}${F('BIC', 'bic', S.bic)}
+    ${F('N° TVA intracommunautaire (sinon calculé d\'après le SIRET)', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
+    <label class="f full"><span><input type="checkbox" name="vatDebits" ${S.vatDebits ? 'checked' : ''}> Option pour le paiement de la TVA sur les débits (mention imprimée sur les factures)</span></label>
     <label class="f full"><span>Logo (image – compressé automatiquement ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
     <div class="full"><img src="${logoSrc(S)}" alt="" style="max-height:70px"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
     <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
@@ -338,7 +340,7 @@ async function renderSettings(el) {
     const o = Object.fromEntries(new FormData(ev.target));
     ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
-    o.wallpaper = !!o.wallpaper; o.autoCloseSites = !!o.autoCloseSites;
+    o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites;
     await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));

@@ -15,6 +15,7 @@ export const DEFAULTS = {
   legal: 'EURL au capital de 75000 €',
   rge: '113877',
   insurance: 'AREAS 16063935Z',
+  tvaNum: '', opType: 'mixed', vatDebits: false,
   iban: '',
   bic: '',
   logo: '',
