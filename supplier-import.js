@@ -128,7 +128,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   f._go = async () => {
     const sel = $$('tr[data-i]', out).filter(tr => $('[data-on]', tr).checked).map(tr => {
       const g = k => $(`[data-k=${k}]`, tr).value;
-      return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')), dest: doc ? '' : g('dest').trim() };
+      return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')), tva: r.items[+tr.dataset.i]?.tva, dest: doc ? '' : g('dest').trim() };
     }).filter(x => x.name);
     for (const x of sel) {
       if (!x.dest) continue;
@@ -161,7 +161,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         if (!live.includes(p)) live.push(saved);
         x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
-        if (toStock && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price }); moved++; }
+        if (toStock && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
       }
     }
     /* Chantiers : les achats affectés deviennent des charges du chantier (comptées dans la rentabilité) */
@@ -172,11 +172,11 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     for (const [sid, xs] of Object.entries(bySite)) {
       const st = await db.get('sites', sid); if (!st) continue;
       const date = inv.iso(inv.date) || today(), note = `Facture ${inv.number || ''} ${S.name || ''}`.trim();
-      const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note }));
+      const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }));
       const feeTotal = r.fees.reduce((a, y) => a + y.amount, 0);
       if (!doc && $('#spfees', out)?.checked && feeTotal && totAll > 0) {
         const share = Math.round(feeTotal * xs.reduce((a, x) => a + x.qty * x.price, 0) / totAll * 100) / 100;
-        if (share) add.push({ id: db.uid(), pid: '', label: 'Frais de port / divers (quote-part)', qty: 1, unit: 'forfait', cost: share, date, note });
+        if (share) add.push({ id: db.uid(), pid: '', label: 'Frais de port / divers (quote-part)', qty: 1, unit: 'forfait', cost: share, date, note, purchase: true, tva: 20 });
       }
       st.charges = [...(st.charges || []), ...add];
       await db.put('sites', st); charged += xs.length;

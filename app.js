@@ -48,8 +48,11 @@ export function contactModal(c, kind, onSaved) {
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
   }, { onOpen: f => { addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind === 'client') fillRel(f, c); }, del: isNew ? null : async () => {
-    const docs = await db.all('documents');
-    if (docs.some(d => d.clientId === c.id)) return alert('Ce client a des devis/factures : suppression impossible.');
+    const [docs, sites] = await Promise.all([db.all('documents'), db.all('sites')]);
+    if (docs.some(d => d.clientId === c.id)) return alert('Ce contact a des devis/factures : suppression impossible.');
+    const used = sites.filter(x => x.clientId === c.id || x.moeId === c.id);
+    if (used.length && c.kind === 'client') return alert(`Ce client a ${used.length} chantier(s) (${used.slice(0, 3).map(x => x.name).join(', ')}${used.length > 3 ? '…' : ''}) : supprimez-les ou changez leur client d'abord.`);
+    if (used.length && !confirm(`Ce contact est rattaché à ${used.length} chantier(s). Le supprimer quand même (les chantiers perdent seulement ce lien) ?`)) return;
     await db.del('contacts', c.id); refresh(); } });
 }
 
@@ -108,7 +111,7 @@ async function renderDashboard(el) {
   let per = 'd30', pc = {}; try { per = localStorage.getItem('gp_period') || 'd30'; pc = { from: localStorage.getItem('gp_pfrom') || '', to: localStorage.getItem('gp_pto') || '' }; } catch { /* ignore */ }
   if (!PERIODS.some(p => p[0] === per)) per = 'd30';
   const range = periodRange(per, today(), pc);
-  const sm = summary(range, docs, payments, moves, products);
+  const sm = summary(range, docs, payments, moves, products, sites);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
   const invoices = docs.filter(d => d.type === 'invoice' && counts(d));
@@ -134,7 +137,7 @@ async function renderDashboard(el) {
         <div class="row" style="margin:8px 0 0"><button class="btn sm" id="hidestart">Masquer</button></div></div>` : '';
 
   // courbe 12 mois (CA et achats HT)
-  const ser = monthly(docs, moves, products);
+  const ser = monthly(docs, moves, products, today(), 12, sites);
   const max = Math.max(1, ...ser.map(o => Math.max(o.ca, o.achats)));
   const bw = 600 / ser.length, H = 130;
   const MI = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
@@ -178,11 +181,11 @@ async function renderDashboard(el) {
     <div class="grid">
       <div class="kpi"><small>CA facturé HT (net d'avoirs)</small><b>${eur(sm.ca)}</b><small>${sm.nbFact} facture(s)</small></div>
       <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b></div>
-      <div class="kpi"><small>Achats HT (réceptions de stock)</small><b>${eur(sm.achats)}</b></div>
+      <div class="kpi"><small>Achats HT (stock et chantiers)</small><b>${eur(sm.achats)}</b></div>
       <div class="kpi"><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div>
       <div class="kpi"><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div>
       <div class="kpi ${sm.tvaDue > 0 ? 'warn' : 'ok'}"><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b>${eur(Math.abs(sm.tvaDue))}</b></div></div>
-    <p class="muted" style="margin:4px 0">TVA calculée sur les factures émises (et avoirs) et sur les achats de stock reçus au prix d'achat saisi.</p>
+    <p class="muted" style="margin:4px 0">TVA calculée sur les factures émises (et avoirs) et sur les achats : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit).</p>
     <div class="card"><b>12 derniers mois</b> <span class="muted" style="font-size:12px"><span style="color:var(--p)">■</span> CA HT &nbsp;<span style="color:var(--warn)">■</span> Achats HT</span>${chart}</div>
     ${open.length ? `<h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a>` : ''}
     <h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a>

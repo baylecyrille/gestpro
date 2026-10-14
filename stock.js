@@ -152,7 +152,7 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     if (isNew && num(o.initQty) > 0) await recordMove(saved, { type: 'in', to: o.initLoc, qty: num(o.initQty), note: 'Stock initial' });
     if (onDone) onDone(saved); else refresh();
   }, {
-    del: isNew ? null : async () => { await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
+    del: isNew ? null : async () => { if (total(p) !== 0 && !confirm(`Ce produit a encore ${total(p)} ${p.unit || ''} en stock. Le supprimer quand même ?`)) return; await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
     onOpen: f => {
       const showPhoto = data => {
         const box = $('#pbox', f);

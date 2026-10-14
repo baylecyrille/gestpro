@@ -15,6 +15,7 @@ const PHOTO_TAB = 'Photos';
 const PHOTO_MAX = 45000; // limite d'une cellule Google Sheets : 50 000 caractères
 const META = ['id', 'maj', 'supprime', 'json'];
 const TOMB_DAYS = 60;
+const CELL = 45000; // taille maximale d'un morceau de JSON dans une cellule
 
 const p2 = n => String(n).padStart(2, '0');
 const fdate = u => { const d = new Date(u); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
@@ -236,12 +237,17 @@ export async function sync({ interactive = false } = {}) {
       const found = rows.length ? rows[0].map(String).indexOf('id') : -1;
       const n = found >= 0 ? found : t.cols.length;
       if (found !== t.cols.length) dirty.add(t.store); // en-têtes absents ou ancienne disposition : à (ré)écrire
-      const remote = new Map();
+      const remote = new Map(), more = new Map();
+      // enregistrement volumineux : suite du texte JSON sur des lignes « id~2 », « id~3 »… (une cellule Sheets est limitée à 50 000 caractères)
       rows.slice(1).forEach(r => {
-        const rid = String(r[n] ?? ''); if (!rid) return;
+        const rid = String(r[n] ?? ''), mm = rid.match(/^(.+)~(\d+)$/);
+        if (mm) { const a = more.get(mm[1]) || []; a[+mm[2]] = String(r[n + 3] ?? '').replace(/^#/, ''); more.set(mm[1], a); }
+      });
+      rows.slice(1).forEach(r => {
+        const rid = String(r[n] ?? ''); if (!rid || /~\d+$/.test(rid)) return;
         const u = Number(r[n + 1]) || 0;
         if (r[n + 2]) remote.set(rid, { id: rid, _u: u, _d: 1 });
-        else { try { remote.set(rid, { ...JSON.parse(r[n + 3]), id: rid, _u: u }); } catch { /* ligne illisible ignorée */ } }
+        else { try { remote.set(rid, { ...JSON.parse(String(r[n + 3] ?? '') + (more.get(rid) || []).slice(2).join('') ), id: rid, _u: u }); } catch { /* ligne illisible ignorée */ } }
       });
       const local = new Map((await db.allRaw(t.store)).map(o => [o.id, o]));
       for (const rid of new Set([...local.keys(), ...remote.keys()])) {
@@ -278,8 +284,12 @@ export async function sync({ interactive = false } = {}) {
         for (const o of all) {
           if (o._d) { values.push([...t.cols.map(() => ''), o.id, o._u, 1, '']); continue; }
           const json = JSON.stringify(clean(t.store, o));
-          if (json.length > 48000) throw new Error(`Enregistrement trop volumineux pour une cellule Google Sheets (${t.name}).`);
-          values.push([...t.cols.map(c => { const v = c[1](o, ctx); return v === undefined || v === null ? '' : v; }), o.id, o._u, '', json]);
+          const cells = t.cols.map(c => { const v = c[1](o, ctx); return v === undefined || v === null ? '' : v; });
+          if (json.length <= CELL) { values.push([...cells, o.id, o._u, '', json]); continue; }
+          const parts = json.match(new RegExp(`[\\s\\S]{1,${CELL}}`, 'g'));
+          if (parts.length > 30) throw new Error(`Enregistrement beaucoup trop volumineux (${t.name}).`);
+          values.push([...cells, o.id, o._u, '', parts[0]]);
+          parts.slice(1).forEach((pt, k) => values.push([...t.cols.map(() => ''), `${o.id}~${k + 2}`, o._u, '', '#' + pt]));
         }
         data.push({ name: t.name, range: `'${t.name}'!A1`, values });
       }

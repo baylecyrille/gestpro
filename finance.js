@@ -23,29 +23,33 @@ const sign = d => (d.type === 'credit' ? -1 : 1);
 /* Valeur d'achat d'une réception de stock (HT, TVA) */
 export function purchaseOf(mv, P) {
   const ht = round2(num(mv.qty) * num(mv.unit));
-  const rate = P[mv.productId]?.tva ?? 20;
+  const rate = mv.tva ?? P[mv.productId]?.tva ?? 20; // taux de la facture fournisseur si connu, sinon celui du produit
   return { ht, tva: round2(ht * num(rate) / 100) };
 }
 
-export function summary(range, docs, payments, moves, products) {
+/* Achats affectés directement à un chantier (importés d'une facture fournisseur) : mêmes calculs que les réceptions de stock */
+const chargeBuys = (sites, P) => (sites || []).flatMap(st => (st.charges || []).filter(c => c.purchase).map(c => ({ date: c.date, ...purchaseOf({ qty: c.qty, unit: c.cost, tva: c.tva, productId: c.pid }, P) })));
+
+export function summary(range, docs, payments, moves, products, sites = []) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const sales = docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && d.status !== 'cancelled' && inR(d.date, range));
   const ca = round2(sales.reduce((a, d) => a + sign(d) * totals(d).ht, 0));
   const tvaColl = round2(sales.reduce((a, d) => a + sign(d) * totals(d).tva, 0));
-  const buys = moves.filter(m => m.purchase && inR(m.date, range)).map(m => purchaseOf(m, P));
+  const buys = [...moves.filter(m => m.purchase && inR(m.date, range)).map(m => purchaseOf(m, P)), ...chargeBuys(sites, P).filter(b => inR(b.date, range))];
   const achats = round2(buys.reduce((a, b) => a + b.ht, 0)), tvaDed = round2(buys.reduce((a, b) => a + b.tva, 0));
   const cash = round2(payments.filter(p => inR(p.date, range) && p.method !== 'avoir').reduce((a, p) => a + (p.kind === 'remboursement' ? -1 : 1) * num(p.amount), 0));
   return { ca, tvaColl, achats, tvaDed, tvaDue: round2(tvaColl - tvaDed), cash, nbFact: sales.filter(d => d.type === 'invoice').length };
 }
 
 /* 12 derniers mois : CA HT net et achats HT */
-export function monthly(docs, moves, products, ref = today(), n = 12) {
+export function monthly(docs, moves, products, ref = today(), n = 12, sites = []) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const out = []; let y = +ref.slice(0, 4), m = +ref.slice(5, 7);
   for (let i = 0; i < n; i++) { out.unshift({ ym: `${y}-${String(m).padStart(2, '0')}`, ca: 0, achats: 0 }); if (--m === 0) { m = 12; y--; } }
   const at = Object.fromEntries(out.map(o => [o.ym, o]));
   docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && d.status !== 'cancelled').forEach(d => { const o = at[(d.date || '').slice(0, 7)]; if (o) o.ca = round2(o.ca + sign(d) * totals(d).ht); });
   moves.filter(m2 => m2.purchase).forEach(m2 => { const o = at[(m2.date || '').slice(0, 7)]; if (o) o.achats = round2(o.achats + purchaseOf(m2, P).ht); });
+  chargeBuys(sites, P).forEach(b => { const o = at[(b.date || '').slice(0, 7)]; if (o) o.achats = round2(o.achats + b.ht); });
   return out;
 }
 

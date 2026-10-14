@@ -6,18 +6,17 @@ Google Sheets** de votre Drive (un onglet par type de données) et synchronisée
 
 ## Fonctions
 
-- **Stock** : produits, lecture des **codes-barres** à la caméra (ou douchette USB/Bluetooth), **zones › emplacements**
-  (ex. Atelier › Rack A), entrées / sorties / transferts / inventaires, alertes de seuil, historique des mouvements.
-- **Import Excel / CSV** des produits (liste de factures, catalogue…) avec correspondance de colonnes et fusion des doublons.
-- **Clients & fournisseurs** : fiches, restes dus par client.
-- **Devis & factures** : lignes issues de la base produits ou libres, TVA, conditions de règlement (30 / 30 / 40 par défaut),
-  **encaissements et acomptes**, **devis accepté → facture** (acomptes reportés), déduction du stock, **impression / PDF** au format des factures exemples.
-- **Facebook** : modèles de publication, insertion de produits, photo, partage vers l'appli Facebook, calendrier éditorial,
-  tableau de bord (relevés d'abonnés/portée, courbe, accès rapides Meta Business Suite), publication directe optionnelle via l'API Graph.
-- **Google Sheets** : classeur « GestPro – Données » créé dans votre Drive (onglets Produits, Emplacements, Contacts, Devis_Factures,
-  Reglements, Mouvements_stock, Facebook_publications, Facebook_stats, Reglages). Synchro automatique (après chaque modification,
-  au retour du réseau, à l'ouverture) ; en cas de modification simultanée, la plus récente l'emporte, enregistrement par enregistrement.
-- **Sauvegarde / restauration** JSON dans Réglages (en plus de Google Sheets).
+- **Chantiers** : fiche centrale (client, architecte / maître d'œuvre, devis, factures, règlements, équipe affectée, jauges d'avancement, plan / itinéraire / Street View, liens, photos et fichiers dans le Drive), achats affectés et **rentabilité** (marge = facturé − matières − achats − main-d'œuvre).
+- **Planning & équipe** : affectations par membre (semaine / mois), heures prévues et réalisées, habilitations avec alertes d'expiration, profils d'accès à code PIN.
+- **Stock** : produits, **codes-barres**, zones › emplacements, entrées / sorties / transferts / inventaires, réception de colis, sortie chantier, alertes de seuil, import Excel / CSV.
+- **Factures fournisseurs (PDF)** : lecture des lignes, affectation à un chantier ou à un emplacement de stock, mise à jour du catalogue, fournisseur créé automatiquement, PDF conservé dans le Drive. Les lignes peuvent aussi être reprises dans un devis ou une facture.
+- **Ventes** (devis, factures, avoirs) : lignes produits ou libres, sections, mise en page personnalisable, encaissements et acomptes, devis accepté → facture, avoirs (déduction ou remboursement), pièces jointes, impression / PDF.
+- **Facture électronique** : mentions obligatoires (SIREN client, nature d'opération, TVA sur les débits, adresse de livraison), contrôle avant dépôt et export **Factur-X** (PDF/A-3 + XML EN 16931) à déposer sur une plateforme agréée.
+- **Tableau de bord** : chiffre d'affaires, encaissements, achats (stock et chantiers), TVA collectée / déductible / due, marge des chantiers en cours, planning, alertes.
+- **Contacts** : clients, fournisseurs, architectes / maîtres d'œuvre, équipe.
+- **Facebook** : modèles de publication, calendrier éditorial, statistiques, publication directe optionnelle (API Graph).
+- **Google Sheets / Drive** : un onglet par type de données (les enregistrements trop volumineux sont répartis sur plusieurs lignes), synchronisation automatique entre appareils, plus fichiers et photos dans le dossier « GestPro » du Drive.
+- **Sauvegarde / restauration** JSON dans Réglages.
 
 ## Mise en ligne (GitHub Pages)
 
