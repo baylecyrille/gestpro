@@ -2,7 +2,7 @@
 import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
-import { UNITS, pickProduct } from './stock.js';
+import { UNITS, pickProduct, productModal } from './stock.js';
 
 let SEQ = 0;
 export const bid = () => 'b' + Date.now().toString(36) + (SEQ++).toString(36);
@@ -178,7 +178,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   const draw = () => {
     let open = false;
     host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
-      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
+      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
     updSub();
   };
@@ -201,6 +201,17 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
     if (ev.target.closest('[data-up]')) mv(i, i - 1);
     else if (ev.target.closest('[data-dn]')) mv(i, i + 1);
     else if (ev.target.closest('[data-dup]')) { const c = JSON.parse(JSON.stringify(b)); add(c, i + 1); }
+    else if (ev.target.closest('[data-prod]')) {
+      readHeader();
+      Promise.all([db.get('products', b.pid), db.all('locations'), db.all('contacts'), db.all('products')]).then(([p, locs, ctc, prods]) => {
+        if (!p) { alert('Ce produit n\'existe plus dans le catalogue.'); b.pid = ''; draw(); change(); return; }
+        productModal(p, locs, ctc, prods, {}, saved => {
+          if (!saved) { b.pid = ''; draw(); change(); return; }
+          if (confirm('Reprendre sur cette ligne le nom, l\'unité et le prix de vente de la fiche produit ?')) { b.desig = saved.name; b.unit = saved.unit || b.unit; b.pu = saved.sell || 0; }
+          draw(); change(); toast('Produit enregistré');
+        });
+      });
+    }
     else if (ev.target.closest('[data-rm]')) { d.blocks.splice(i, 1); active = null; draw(); change(); }
     else if (ev.target.closest('[data-tpl]')) {
       const name = prompt('Nom du modèle de texte :'); if (!name) return;

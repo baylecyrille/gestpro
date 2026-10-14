@@ -135,7 +135,7 @@ export async function renderSite(el, id) {
     <div class="card"><div class="row" style="margin:0"><select id="stat" style="width:auto" ${canEdit ? '' : 'disabled'}>${Object.entries(SS).map(([k, l]) => `<option value="${k}" ${k === site.status ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <span class="muted">${site.start ? dateFr(site.start) : 'dates non fixées'}${site.end ? ' → ' + dateFr(site.end) : ''}</span></div>
       <p style="margin:8px 0 0"><b>${e(client?.name || 'Sans client')}</b>${client?.phone ? ` · <a href="tel:${e(client.phone)}">${e(client.phone)}</a>` : ''}<br>${e(site.address || '').replace(/\n/g, '<br>')}</p>
-      ${site.address ? `<div class="row" style="margin:8px 0 0"><a class="btn primary" id="itin" target="_blank" rel="noopener" href="${e(mapsDir(site.address))}">🧭 Itinéraire</a><button class="btn" id="mapbtn" type="button">🗺 Plan</button><button class="btn" id="shbtn" type="button">📤 Envoyer</button></div><div id="mapbox" hidden></div>` : `<p class="muted" style="margin:8px 0 0">📍 Ajoutez l'adresse du chantier (bouton « Modifier ») pour afficher le plan et lancer l'itinéraire.</p>`}
+      ${site.address ? `<div class="row" style="margin:8px 0 0"><button class="btn" id="mapbtn" type="button">🗺 Plan</button><a class="btn primary" id="itin" target="_blank" rel="noopener" href="${e(mapsDir(site.address))}">🧭 Itinéraire</a><button class="btn" id="svbtn" type="button">👁 Street View</button><button class="btn" id="shbtn" type="button">📤 Envoyer</button></div><div id="mapbox" hidden></div>` : `<p class="muted" style="margin:8px 0 0">📍 Ajoutez l'adresse du chantier (bouton « Modifier ») pour afficher le plan et lancer l'itinéraire.</p>`}
       ${moe ? `<p style="margin:6px 0 0">🏛 <b>${e(moe.name)}</b>${moe.fonction ? ` <small class="muted">${e(moe.fonction)}</small>` : ''}${moe.company ? ` · ${e(moe.company)}` : ''}${moe.phone ? ` · <a href="tel:${e(moe.phone)}">${e(moe.phone)}</a>` : ''}${moe.email ? ` · <a href="mailto:${e(moe.email)}">${e(moe.email)}</a>` : ''}</p>` : ''}
       ${site.note ? `<p class="muted" style="white-space:pre-line">${e(site.note)}</p>` : ''}</div>
     <div id="sfiles"></div>
@@ -164,7 +164,15 @@ export async function renderSite(el, id) {
   $('#mapbtn', el)?.addEventListener('click', () => {
     const box = $('#mapbox', el);
     if (!box.hidden) { box.hidden = true; box.innerHTML = ''; return; }
-    box.innerHTML = `<iframe title="Plan" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:260px;border:0;border-radius:10px;margin-top:8px" src="https://maps.google.com/maps?q=${encodeURIComponent(addr1)}&z=15&output=embed"></iframe><p class="muted" style="margin:4px 0 0">Plan affiché par Google Maps (connexion internet nécessaire).</p>`; box.hidden = false;
+    box.innerHTML = `<iframe title="Plan" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:260px;border:0;border-radius:10px;margin-top:8px" src="https://maps.google.com/maps?q=${encodeURIComponent(addr1)}&z=15&output=embed"></iframe><p class="muted" style="margin:4px 0 0">Plan Google Maps (zoom, vue satellite et petit bonhomme Street View dans la carte) · <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr1)}">Ouvrir dans Google Maps</a></p>`; box.hidden = false;
+  });
+  $('#svbtn', el)?.addEventListener('click', async () => {
+    let url = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(addr1);
+    try {
+      const r = await fetch('https://api-adresse.data.gouv.fr/search/?limit=1&q=' + encodeURIComponent(addr1)), j = await r.json(), c = j.features?.[0]?.geometry?.coordinates;
+      if (c) url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${c[1]},${c[0]}`;
+    } catch { /* repli : recherche Google Maps */ }
+    window.open(url, '_blank', 'noopener');
   });
   $('#shbtn', el)?.addEventListener('click', async () => {
     const url = mapsDir(site.address), data = { title: site.name, text: `${site.name} – ${addr1}`, url };

@@ -111,7 +111,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
   $('#spdf', body).onclick = () => import('./supplier-import.js').then(m => m.supplierImportModal());
 }
 
-export function productModal(p, locs, contacts, products, preset = {}) {
+export function productModal(p, locs, contacts, products, preset = {}, onDone = null) {
   const isNew = !p;
   p = p || { stock: {}, tva: 10, unit: 'u', ...preset };
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
@@ -150,9 +150,9 @@ export function productModal(p, locs, contacts, products, preset = {}) {
       saved.photoV = v; await db.put('products', saved); markPhotosDirty();
     }
     if (isNew && num(o.initQty) > 0) await recordMove(saved, { type: 'in', to: o.initLoc, qty: num(o.initQty), note: 'Stock initial' });
-    refresh();
+    if (onDone) onDone(saved); else refresh();
   }, {
-    del: isNew ? null : async () => { await db.del('products', p.id); refresh(); },
+    del: isNew ? null : async () => { await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
     onOpen: f => {
       const showPhoto = data => {
         const box = $('#pbox', f);

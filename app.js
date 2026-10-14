@@ -223,7 +223,7 @@ async function renderSettings(el) {
     <label class="f full"><span>Logo (image – compressé automatiquement ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
     <div class="full"><img src="${logoSrc(S)}" alt="" style="max-height:70px"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
     <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
-    <h3 class="full">Devis &amp; factures</h3>
+    <h3 class="full">Ventes (devis, factures, avoirs)</h3>
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
     ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}

@@ -141,7 +141,7 @@ export async function renderDocs(el, tab = 'quote') {
     { id: 'status', type: 'multi', label: 'Statuts (cliquez pour filtrer, plusieurs possibles)', options: stOpts }, { id: 'client', label: 'Client', options: [['', 'Tous'], ...cl] }, { id: 'from', type: 'date', label: 'Du' }, { id: 'to', type: 'date', label: 'Au' }];
   const SORTS = { dateD: (a, b) => (b.date + b.number).localeCompare(a.date + a.number), dateA: (a, b) => (a.date + a.number).localeCompare(b.date + b.number), num: (a, b) => String(a.number).localeCompare(String(b.number), 'fr', { numeric: true }),
     client: (a, b) => cname(C[a.clientId]).localeCompare(cname(C[b.clientId]), 'fr'), amtD: (a, b) => totals(b).ttc - totals(a).ttc, amtA: (a, b) => totals(a).ttc - totals(b).ttc };
-  el.innerHTML = `<h2>Devis &amp; factures</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
+  el.innerHTML = `<h2>Ventes</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div>${filterBar(FC)}<div id="list"></div>`;
   let getF;
   const okOne = (d, s) => !s || (tab === 'invoice' ? (s === 'unpaid' ? counts(d) && totals(d).ttc - paidOf(payments, d.id) > 0.005 : invState(d, payments) === s) : d.status === s);
@@ -218,7 +218,7 @@ export async function renderDoc(el, id, arg) {
 
   const draw = () => {
     const t = totals(cur);
-    el.innerHTML = `<div class="row"><a class="btn ghost" href="${cur.siteId && sites.some(x => x.id === cur.siteId) ? '#/site/' + cur.siteId : '#/docs/' + cur.type}">← Retour</a><span class="sp"></span>
+    el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a>${cur.siteId && sites.some(x => x.id === cur.siteId) ? `<a class="btn ghost" href="#/site/${cur.siteId}">🏗 Chantier</a>` : ''}<span class="sp"></span>
       <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <div id="pvwrap" hidden></div><div id="edwrap">
