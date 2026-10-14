@@ -10,7 +10,9 @@ Google Sheets** de votre Drive (un onglet par type de données) et synchronisée
 - **Planning & équipe** : affectations par membre (semaine / mois), heures prévues et réalisées, habilitations avec alertes d'expiration, profils d'accès à code PIN.
 - **Stock** : produits, **codes-barres**, zones › emplacements, entrées / sorties / transferts / inventaires, réception de colis, sortie chantier, alertes de seuil, import Excel / CSV.
 - **Factures fournisseurs (PDF)** : lecture des lignes, affectation à un chantier ou à un emplacement de stock, mise à jour du catalogue, fournisseur créé automatiquement, PDF conservé dans le Drive. Les lignes peuvent aussi être reprises dans un devis ou une facture.
-- **Ventes** (devis, factures, avoirs) : lignes produits ou libres, sections, mise en page personnalisable, encaissements et acomptes, devis accepté → facture, avoirs (déduction ou remboursement), pièces jointes, impression / PDF.
+- **Ventes** (devis, factures, avoirs) : lignes produits ou libres, sections, **TVA par ligne** (taux par défaut du document, ventilation par taux dans les totaux, l'impression et la facture électronique), mise en page personnalisable, encaissements et acomptes, devis accepté → facture, avoirs (déduction ou remboursement), pièces jointes, impression / PDF.
+- **TVA à taux réduit (5,5 % / 10 %)** : depuis 2025 l'attestation papier (Cerfa 1301-SD / 1300-SD) n'existe plus ; le client certifie les conditions par une **mention imprimée sur le devis et la facture** (texte modifiable, désactivable par document). À conserver 5 ans avec les justificatifs. Texte à faire valider par votre cabinet comptable.
+- **Envoi par e-mail** : PDF du document (même mise en page que l'impression) ou Factur-X joint, envoyé depuis votre compte Google via le script Apps Script (réponses vers l'e-mail de l'entreprise), ou via le menu de partage / la messagerie du téléphone. Historique des envois sur le document.
 - **Facture électronique** : mentions obligatoires (SIREN client, nature d'opération, TVA sur les débits, adresse de livraison), contrôle avant dépôt et export **Factur-X** (PDF/A-3 + XML EN 16931) à déposer sur une plateforme agréée.
 - **Tableau de bord** : chiffre d'affaires, encaissements, achats (stock et chantiers), TVA collectée / déductible / due, marge des chantiers en cours, planning, alertes.
 - **Contacts** : clients, fournisseurs, architectes / maîtres d'œuvre, équipe.
@@ -45,6 +47,7 @@ La caméra exige HTTPS (fourni par GitHub Pages).
 
 Sécurité : l'URL de déploiement est publique mais toute requête sans la clé secrète est refusée ; ne partagez ni l'URL ni la clé.
 Après toute modification de `Code.gs` : *Déployer → Gérer les déploiements → Modifier → Nouvelle version*.
+Pour l'envoi d'e-mails : dans l'éditeur Apps Script, choisissez la fonction `autoriser`, cliquez ▶ **Exécuter** et acceptez les autorisations (classeur, Drive, envoi d'e-mails), puis redéployez une nouvelle version. Test dans l'appli : *Réglages → E-mails → Envoyer un e-mail de test*. Les envois sont limités à 40 par jour (quota Google : 100 pour un compte gratuit).
 
 ## Autre méthode : OAuth Google (sans Apps Script, avancé – nécessite un projet Google Cloud)
 
@@ -75,6 +78,9 @@ python3 -m http.server 8080   # puis http://localhost:8080
 | `app.js` | routeur, accueil, contacts, réglages, sauvegarde |
 | `js/stock.js` | produits, emplacements, mouvements, scan, import |
 | `js/docs.js` | devis/factures, règlements, conversion, impression |
+| `js/vat.js` | calcul des totaux, TVA par ligne et ventilation par taux |
+| `js/docpdf.js`, `js/docmail.js` | PDF du document (html2canvas + pdf-lib) et envoi par e-mail |
+| `js/efact.js`, `js/facturx-pdf.js` | facture électronique : mentions, contrôle, XML et PDF Factur-X |
 | `js/facebook.js` | publication, calendrier, tableau de bord |
 | `apps-script/Code.gs` | passerelle Apps Script à coller dans votre projet Google |
 | `js/sheets.js` | connexion Google (Apps Script ou OAuth), création du classeur, synchronisation bidirectionnelle |

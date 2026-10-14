@@ -64,12 +64,17 @@ dialog::backdrop{background:#0006}
 .scanner .hint{position:absolute;top:calc(10px + env(safe-area-inset-top));left:0;right:0;text-align:center;color:#fff;margin:0;text-shadow:0 1px 3px #000}
 #toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:#18222f;color:#fff;padding:9px 16px;border-radius:99px;z-index:99;max-width:90vw}
 /* éditeur de document */
-.lines .ln{display:grid;grid-template-columns:1fr 70px 70px 90px 30px;gap:6px;align-items:start;margin-bottom:6px}
+.lines .ln{display:grid;grid-template-columns:1fr 70px 70px 90px 98px;gap:6px;align-items:start;margin-bottom:6px}
 .lines .ln.h{font-size:12px;color:var(--mut)}
+.lines .ln select.vat{padding-left:4px;padding-right:2px;font-size:13px}
+.lines .ln select.vat.inh{color:var(--mut)}
+.totals .trate small{font-weight:400}
+.redbox{border:1px solid var(--bd);border-left:4px solid #c9a227;background:#fffbea;border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.redbox .f{margin:6px 0}
 .lines .ln .tot{text-align:right;padding-top:9px;grid-column:2/-1;font-weight:600}
 @media(max-width:620px){
  .cols{grid-template-columns:1fr}
- .lines .ln{grid-template-columns:1fr 1fr 1fr 28px;border:1px solid var(--bd);border-radius:10px;padding:8px}
+ .lines .ln{grid-template-columns:1fr 1fr 1fr 1fr;border:1px solid var(--bd);border-radius:10px;padding:8px}
  .lines .ln .d{grid-column:1/-1}
  .lines .ln.h{display:none}
  .lines .ln .tot{grid-column:1/-1}

@@ -3,6 +3,7 @@ import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
 import { UNITS, pickProduct, productModal } from './stock.js';
+import { RATES, fmtRate, rateOf, hasOwnRate, multiRate } from './vat.js';
 
 let SEQ = 0;
 export const bid = () => 'b' + Date.now().toString(36) + (SEQ++).toString(36);
@@ -45,7 +46,7 @@ export const plain = html => { const d = new DOMParser().parseFromString('<body>
 export const linesOf = bl => bl.filter(b => b.type === 'line');
 /* S'assure que d.blocks existe (migration des anciennes lignes) et que d.lines en est le reflet. */
 export function ensureBlocks(d) {
-  if (!Array.isArray(d.blocks)) d.blocks = (d.lines || []).map(l => ({ id: bid(), type: 'line', pid: l.pid || '', desig: l.desig || '', qty: l.qty, unit: l.unit || 'u', pu: l.pu }));
+  if (!Array.isArray(d.blocks)) d.blocks = (d.lines || []).map(l => ({ id: bid(), type: 'line', pid: l.pid || '', desig: l.desig || '', qty: l.qty, unit: l.unit || 'u', pu: l.pu, ...(hasOwnRate(l) ? { tva: l.tva } : {}) }));
   d.blocks.forEach(b => { if (!b.id) b.id = bid(); });
   d.lines = linesOf(d.blocks);
   return d;
@@ -72,8 +73,8 @@ const LIGHT = ['#dbe7f7', '#fde8e8', '#e6f4ea', '#fff4cc', '#ece6f8', '#eeeeee',
 const pal = (attr, cols, title) => `<details class="pal"><summary title="${title}">${attr === 'fc' ? 'A' : '▇'}</summary><div class="palbox">${cols.map(c => `<button type="button" class="sw" data-${attr}="${c}" style="background:${c}"></button>`).join('')}<label class="sw custom" title="Autre couleur"><input type="color" data-${attr}-x value="#c62f2f"><i>+</i></label></div></details>`;
 const secStyle = b => [`color:${b.color || STY.secColor}`, `background:${b.bg === 'none' ? 'transparent' : b.bg || STY.secBg}`, b.bold !== false && 'font-weight:700', b.italic && 'font-style:italic', b.align && `text-align:${b.align}`].filter(Boolean).join(';');
 export function printRows(d) {
-  const st = sectionTotals(d.blocks);
-  const subRow = sec => `<tr class="subt"><td colspan="4" style="text-align:right;font-style:italic">Sous-total ${e(sec.title)}</td><td class="n"><i>${eur(st[sec.id])}</i></td></tr>`;
+  const st = sectionTotals(d.blocks), vat = multiRate(d.lines || linesOf(d.blocks), d.tva), NC = vat ? 6 : 5;
+  const subRow = sec => `<tr class="subt"><td colspan="${NC - 1}" style="text-align:right;font-style:italic">Sous-total ${e(sec.title)}</td><td class="n"><i>${eur(st[sec.id])}</i></td></tr>`;
   const out = []; let open = null;
   for (const b of d.blocks) {
     if (b.type === 'section') { if (open) out.push({ _sub: open }); open = b.sub ? b : null; }
@@ -85,10 +86,10 @@ export function printRows(d) {
     if (b._sub) return subRow(b._sub);
     const bgl = STY.lineBg && STY.lineBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.lineBg)}"` : '';
     const bgt = STY.textBg && STY.textBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.textBg)}"` : '';
-    if (b.type === 'line') return `<tr${bgl}><td>${e(b.desig)}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td><td class="n">${eur(num(b.qty) * num(b.pu))}</td></tr>`;
-    if (b.type === 'section') return `<tr class="sec"><td colspan="5" style="${e(secStyle(b))}">${e(b.title)}</td></tr>`;
-    if (b.type === 'text') return `<tr class="txt"><td colspan="5"${bgt}>${sanitize(b.html)}</td></tr>`;
-    if (b.type === 'pagebreak') return '<tr class="pbk" style="page-break-after:always;break-after:page"><td colspan="5" style="border:0;padding:0;height:0"></td></tr>';
+    if (b.type === 'line') return `<tr${bgl}><td>${e(b.desig)}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td>${vat ? `<td class="n">${e(fmtRate(rateOf(b, d.tva)))}</td>` : ''}<td class="n">${eur(num(b.qty) * num(b.pu))}</td></tr>`;
+    if (b.type === 'section') return `<tr class="sec"><td colspan="${NC}" style="${e(secStyle(b))}">${e(b.title)}</td></tr>`;
+    if (b.type === 'text') return `<tr class="txt"><td colspan="${NC}"${bgt}>${sanitize(b.html)}</td></tr>`;
+    if (b.type === 'pagebreak') return `<tr class="pbk" style="page-break-after:always;break-after:page"><td colspan="${NC}" style="border:0;padding:0;height:0"></td></tr>`;
     return '';
   }).join('');
 }
@@ -160,11 +161,13 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
   const idx = id => d.blocks.findIndex(b => b.id === id);
   const add = (b, at) => { b.id = bid(); at == null ? d.blocks.push(b) : d.blocks.splice(at, 0, b); draw(); change(); return b; };
 
+  const vatOpts = b => `<option value="" ${hasOwnRate(b) ? '' : 'selected'}>déf. ${e(fmtRate(num(d.tva)))}</option>${RATES.map(([v, l]) => `<option value="${v}" ${hasOwnRate(b) && String(parseFloat(b.tva)) === v ? 'selected' : ''}>${l}</option>`).join('')}`;
   const inner = b => {
     if (b.type === 'line') return `<div class="ln"><div class="d"><input data-k="desig" value="${e(b.desig)}" placeholder="Désignation"></div>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${b.qty}" placeholder="Qté">
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
-      <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT"><div class="tot" data-t>${eur(num(b.qty) * num(b.pu))}</div></div>`;
+      <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT">
+      <select data-k="tva" class="vat${hasOwnRate(b) ? '' : ' inh'}" title="Taux de TVA de cette ligne">${vatOpts(b)}</select><div class="tot" data-t>${eur(num(b.qty) * num(b.pu))}</div></div>`;
     if (b.type === 'section') return `<div class="sec-ed"><input data-k="title" value="${e(b.title)}" placeholder="Titre de la section" style="${e(secStyle(b))}">
       <b class="subv" data-sub="${b.id}">${b.sub ? 'Sous-total : ' + eur(sectionTotals(d.blocks)[b.id]) : ''}</b>
       <span class="mini">${pal('sc', COLOR_NAMES.map(c => c[0]).concat('#ffffff'), 'Couleur du texte')}${pal('sb', LIGHT.concat(COLOR_NAMES.map(c => c[0])), 'Couleur de fond')}
@@ -190,6 +193,7 @@ export function mountBlocks(box, d, { onChange, readHeader }) {
     if (ev.target.matches('[data-sc-x],[data-sb-x]')) { if (ev.target.hasAttribute('data-sc-x')) b.color = ev.target.value; else b.bg = ev.target.value; $('[data-k=title]', row).setAttribute('style', secStyle(b)); change(); return; }
     const k = ev.target.dataset.k; if (!k) return;
     b[k] = ev.target.value;
+    if (k === 'tva') { if (b.tva === '') delete b.tva; ev.target.classList.toggle('inh', !hasOwnRate(b)); }
     if (b.type === 'line') $('[data-t]', row).textContent = eur(num(b.qty) * num(b.pu));
     if (b.type === 'section') { const inp = $('[data-k=title]', row); inp.setAttribute('style', secStyle(b)); }
     change();

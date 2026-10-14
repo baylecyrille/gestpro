@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
 import * as efact from './efact.js';
+import { sums, fmtRate, reducedRates, listRates, RATES } from './vat.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
@@ -32,12 +33,11 @@ const normStatus = d => { if (d.type === 'invoice' && d.status === 'issued') d.s
 const CS = { draft: 'Brouillon', issued: 'Émis' };
 const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte bleue'], ['virement', 'Virement'], ['autre', 'Autre'], ['avoir', 'Avoir (imputation)']];
 const REAL_METHODS = METHODS.filter(m => m[0] !== 'avoir');
-const TVAS = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
+const TVAS = RATES;
 
+/* Totaux d'un document : un taux de TVA par ligne (sinon celui du document) ; `rates` = ventilation par taux */
 export function totals(doc) {
-  const ht = round2((doc.lines || []).reduce((a, l) => a + num(l.qty) * num(l.pu), 0));
-  const tva = round2(ht * num(doc.tva) / 100);
-  return { ht, tva, ttc: round2(ht + tva) };
+  return sums(doc.lines || [], doc.tva);
 }
 export const paidOf = (payments, docId) => round2(payments.filter(p => p.docId === docId).reduce((a, p) => a + num(p.amount), 0));
 export function payState(doc, payments) {
@@ -218,7 +218,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const draw = () => {
-    const t = totals(cur);
+    const t = totals(cur); redKey = redRates().join('|');
     el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a>${cur.siteId && sites.some(x => x.id === cur.siteId) ? `<a class="btn ghost" href="#/site/${cur.siteId}">🏗 Chantier</a>` : ''}<span class="sp"></span>
       <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
@@ -236,10 +236,10 @@ export async function renderDoc(el, id, arg) {
       ${!isQ ? `<details class="full" ${cur.opType || cur.vatDebits || cur.deliveryAddr ? 'open' : ''}><summary class="muted" style="cursor:pointer;margin:4px 0">Facture électronique : nature d'opération, TVA sur les débits, adresse de livraison</summary><div class="cols">${F('Nature de l\'opération', 'opType', cur.opType || '', { type: 'select', options: [['', 'Par défaut (Réglages)'], ['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services']] })}${F('TVA sur les débits', 'vatDebits', cur.vatDebits ?? '', { type: 'select', options: [['', 'Par défaut (Réglages)'], ['1', 'Oui'], ['0', 'Non']] })}${F('Adresse de livraison si différente de celle du client', 'deliveryAddr', cur.deliveryAddr, { type: 'textarea', rows: 2, cls: 'full' })}</div></details>` : ''}
       ${!isQ && !isC ? F('Date limite de règlement', 'dueDate', cur.dueDate || '', { type: 'date' }) : ''}
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
-      ${F('TVA', 'tva', cur.tva, { type: 'select', options: TVAS })}
+      ${F('TVA par défaut du document', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></div>
     <div class="card lines"><div id="blocks"></div>
-      <div class="totals"><div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div><div><span>TVA ${cur.tva} %</span><b id="ttva">${eur(t.tva)}</b></div><div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div></div></div>
+      <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew ? '<div id="dfiles"></div>' : ''}
@@ -271,16 +271,30 @@ export async function renderDoc(el, id, arg) {
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
       ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
-      <button class="btn danger" id="delete">Supprimer</button></div>${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
+      <button class="btn danger" id="delete">Supprimer</button></div>${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
+  /* Totaux de l'éditeur : une ligne de TVA par taux présent */
+  const totalsHtml = t => `<div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht)}</small>` : ''}</span><b>${eur(r.tva)}</b></div>`).join('')}<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>`;
+  /* Taux réduit : rappel de la mention que le client certifie (remplace l'ancienne attestation) */
+  const redRates = () => (cur.type === 'credit' ? [] : reducedRates(cur.lines, cur.tva));
+  const redHintHtml = () => {
+    const r = redRates(); if (!r.length) return '';
+    return `<div class="redbox"><b>TVA à taux réduit (${e(listRates(r))})</b> — l'attestation papier (Cerfa) n'existe plus : le client certifie les conditions par une mention sur le ${isQ ? 'devis (à signer « Bon pour accord »)' : 'document'}, imprimée automatiquement.
+      <label class="f" style="margin-top:6px"><span>Mention du client</span><select name="tvaRed"><option value="" ${cur.tvaRed ? '' : 'selected'}>Imprimer la mention (conseillé)</option><option value="0" ${cur.tvaRed === '0' ? 'selected' : ''}>Ne pas l'imprimer sur ce document</option></select></label>
+      <span class="muted">Texte modifiable dans « Mise en page – zones ». Conservez le devis, les factures et les photos des travaux 5 ans.</span></div>`;
+  };
+  let redKey = redRates().join('|');
   const refreshTotals = () => {
     const t = totals(cur);
-    $('#tht', el).textContent = eur(t.ht); $('#ttva', el).textContent = eur(t.tva); $('#tttc', el).textContent = eur(t.ttc);
+    $('#totbox', el).innerHTML = totalsHtml(t);
+    const k = redRates().join('|');
+    if (k !== redKey) { redKey = k; const sel = $('[name=tvaRed]', el); if (sel) cur.tvaRed = sel.value; $('#redhint', el).innerHTML = redHintHtml(); }
   };
 
   const readHeader = () => {
-    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr'].includes(i.name)) cur[i.name] = i.value; });
+    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
     readZones();
     cur.tva = num(cur.tva);
@@ -410,7 +424,8 @@ export async function renderDoc(el, id, arg) {
     $('#vlayout', el).onclick = openVisual;
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
-    mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
+    const blk = mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader });
+    $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
     if ($('#dfiles', el)) {
       const mainKind = cur.type === 'quote' ? 'devis' : 'factures', st0 = () => sites.find(x => x.id === cur.siteId);
       fl.filesCard({ host: $('#dfiles', el), title: 'Pièces jointes', canEdit: true, px: S.photoPx || 2560, kinds: ['photos', mainKind, 'autres'],
@@ -449,10 +464,14 @@ export async function renderDoc(el, id, arg) {
     $('#save', el).onclick = save;
     if (isNew) return;
     $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); printDoc(cur); };
+    $('#mailbtn', el)?.addEventListener('click', async () => {
+      readHeader(); pruneBlocks(cur); await db.put('documents', cur);
+      (await import('./docmail.js')).mailModal({ doc: cur, S, client: curClient(), payments, DN, onSent: () => refresh() });
+    });
     $('#efact', el)?.addEventListener('click', async () => {
       readHeader(); pruneBlocks(cur); await db.put('documents', cur);
       const cli = curClient(), orig = isC && cur.fromInvoice ? DN[cur.fromInvoice] : null;
-      const o = { paid: isC ? 0 : paidOf(payments, cur.id), fromInvoiceNumber: orig?.number || cur.fromInvoiceNumber || '' };
+      const o = { paid: isC ? 0 : paidOf(payments, cur.id), fromInvoiceNumber: orig?.number || cur.fromInvoiceNumber || '', vatNote: vatNoteOf(cur, S) };
       const res = efact.check(cur, S, cli, o), blocked = res.some(r => r.level === 'err');
       const ic = { err: '✖', warn: '⚠', info: 'ℹ', ok: '✔' }, col = { err: 'var(--bad,#c0392b)', warn: '#b7791f', info: '#2c6fb7', ok: '#2f855a' };
       modal('Facture électronique – ' + (cur.number || ''), `<p class="muted">Contrôle des mentions obligatoires avant dépôt sur une plateforme agréée (Fulll, par exemple). Le fichier est créé sur cet appareil, rien n'est envoyé.</p>
@@ -465,16 +484,7 @@ export async function renderDoc(el, id, arg) {
           $('#fxpdf', f).onclick = async ev => {
             const b = ev.target; b.disabled = true; b.textContent = 'Création du PDF…';
             try {
-              const fx = await import('./facturx-pdf.js');
-              let logo = null;
-              try { // le logo (PNG, JPG, WebP ou SVG) est converti en PNG pour le PDF
-                const img = new Image(); img.src = logoSrc(S); await img.decode();
-                const w0 = img.naturalWidth || 600, h0 = img.naturalHeight || 200, k = Math.min(1, 900 / Math.max(w0, h0));
-                const cv = document.createElement('canvas'); cv.width = Math.round(w0 * k); cv.height = Math.round(h0 * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-                const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
-                logo = { bytes: new Uint8Array(await blob.arrayBuffer()), type: 'png' };
-              } catch (_) { /* sans logo */ }
-              const pdf = await fx.buildFacturX(mdl, cur, S, { logo });
+              const pdf = await (await import('./docmail.js')).facturxBytes(cur, S, cli, o);
               downloadFile(base + '-facturx.pdf', pdf, 'application/pdf'); toast('Facture Factur-X créée');
             } catch (err) { alert('Création impossible : ' + (err.message || err)); }
             b.disabled = false; b.textContent = 'Télécharger la facture Factur-X (PDF)';
@@ -536,7 +546,10 @@ export async function renderDoc(el, id, arg) {
    Chaque zone imprimée a un texte par défaut (calculé depuis les Réglages / le client / le document).
    doc.zones ne contient que les zones modifiées à la main pour CE document.
    Balisage : **gras**  __souligné__ ; jetons : {numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic} */
-export const ZONE_TOKENS = '{numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic}';
+export const ZONE_TOKENS = '{numero} {date} {ville} {validite} {siteRef} {siteAddr} {company} {iban} {bic} {taux}';
+/* Mention remplaçant l'attestation de TVA réduite (loi de finances 2025) : le client certifie les conditions sur le devis ou la facture. */
+export const TVA_RED_TXT = `**Attestation du client – TVA à taux réduit ({taux})**
+Le client atteste que les travaux portent sur un local à usage d'habitation achevé depuis plus de deux ans, qu'ils ne concourent pas à la production d'un immeuble neuf (pas de construction nouvelle, de surélévation ni d'agrandissement de plus de 10 % de la surface de plancher), et que les travaux et équipements facturés à ce taux remplissent les conditions d'application du taux réduit de TVA. À défaut, le client est redevable du complément de TVA.`;
 export function zoneDefs(doc, S, c = {}, base = false) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit', ty = isQ ? 'q' : isC ? 'c' : 'i';
   const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
@@ -554,10 +567,12 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['thQty', 'Tableau – colonne 2', 'Qté', 1, 'qic'],
     ['thUnit', 'Tableau – colonne 3', 'Unité', 1, 'qic'],
     ['thPu', 'Tableau – colonne 4', 'Prix unit.', 1, 'qic'],
-    ['thHt', 'Tableau – colonne 5', 'Prix H.T', 1, 'qic'],
+    ['thHt', 'Tableau – dernière colonne', 'Prix H.T', 1, 'qic'],
+    ['thTva', 'Tableau – colonne TVA (si plusieurs taux)', 'TVA', 1, 'qic'],
     ['lblHt', 'Totaux – libellé HT', 'Total HT', 1, 'qic'],
     ['lblTva', 'Totaux – libellé TVA', 'TVA', 1, 'qic'],
     ['lblTtc', 'Totaux – libellé TTC', isC ? 'Total TTC de l\'avoir' : 'Total TTC', 1, 'qic'],
+    ['vatRed', 'Mention du client – TVA à taux réduit (travaux dans un logement)', TVA_RED_TXT, 6, 'qi'],
     ['lblPaid', 'Totaux – déjà réglé', isC ? 'Déjà déduit / remboursé' : 'Déjà réglé', 1, 'ic'],
     ['lblLeft', 'Totaux – reste', isC ? 'Reste à votre crédit' : 'Reste à payer', 1, 'ic'],
     ['methods', 'Moyens de paiement acceptés', '**Moyens de paiement acceptés :** ' + REAL_METHODS.filter(m => m[0] !== 'autre').map(m => m[1]).join(', ') + '.', 2, 'q'],
@@ -569,6 +584,13 @@ export function zoneDefs(doc, S, c = {}, base = false) {
   ];
   const so = (!base && S.zones && S.zones[ty]) || {}; // réglages généraux (Réglages > Mise en page des documents)
   return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v: k in so ? so[k] : v, rows }));
+}
+/* Texte de la mention « TVA réduite » tel qu'imprimé (vide si elle n'a pas lieu d'être) */
+export function vatNoteOf(doc, S) {
+  if (doc.type === 'credit' || doc.tvaRed === '0') return '';
+  const r = reducedRates(doc.lines, doc.tva); if (!r.length) return '';
+  const ov = doc.zones || {}, txt = 'vatRed' in ov ? ov.vatRed : (zoneDefs(doc, S).find(x => x.k === 'vatRed')?.v ?? '');
+  return String(txt).replace(/\{taux\}/g, listRates(r)).replace(/\*\*|__/g, '').trim();
 }
 /* Disposition (tailles, alignements, colonnes) : valeurs vides = défaut. Réglages (S.layout) puis exception par document (doc.layout). */
 export const LAYOUT = [
@@ -598,10 +620,11 @@ function layoutStyle(LY) {
   }
   return out.join(';');
 }
-function colgroup(LY) {
+function colgroup(LY, vat) {
   const cols = [['cQty', 9], ['cUnit', 8], ['cPu', 14], ['cHt', 14]];
   if (!cols.some(([k]) => LY[k] != null)) return '';
-  return '<colgroup><col>' + cols.map(([k, dv]) => `<col style="width:${lyNum(LAYOUT.find(d => d[0] === k), LY[k] ?? dv) ?? dv}%">`).join('') + '</colgroup>';
+  const col = ([k, dv]) => `<col style="width:${lyNum(LAYOUT.find(d => d[0] === k), LY[k] ?? dv) ?? dv}%">`;
+  return '<colgroup><col>' + cols.slice(0, 3).map(col).join('') + (vat ? '<col style="width:9%">' : '') + col(cols[3]) + '</colgroup>';
 }
 export function layoutFields(vals, base, attr) {
   return LAYOUT.map(d => d[2] === 'sel'
@@ -628,7 +651,7 @@ export async function sheetHtml(doc, opts = {}) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
   const used = isC ? creditUsed(payments, doc.id) : paid;
   const defs = zoneDefs(doc, S, c), ov = doc.zones || {};
-  const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: isQ ? (doc.validUntil ? dateFr(doc.validUntil) : '') : (doc.dueDate ? dateFr(doc.dueDate) : ''), siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '' };
+  const vars = { numero: doc.number || '', date: dateFr(doc.date), ville: S.city || '', validite: isQ ? (doc.validUntil ? dateFr(doc.validUntil) : '') : (doc.dueDate ? dateFr(doc.dueDate) : ''), siteRef: doc.siteRef || '', siteAddr: doc.siteAddr || '', company: S.company || '', iban: S.iban || '', bic: S.bic || '', taux: listRates(reducedRates(doc.lines, doc.tva).length ? reducedRates(doc.lines, doc.tva) : [10]) };
   const efMent = () => { const m = efact.mentions(doc, S); return m.length ? '<div class="small" style="margin-top:4px">' + m.map(x => e(x)).join('<br>') + '</div>' : ''; };
   const Zt = k => k in ov ? ov[k] : (defs.find(d => d.k === k)?.v ?? '');
   const LE = !!opts.layoutEdit, ED = !!opts.edit && !LE, LY = layoutOf(S, doc);
@@ -650,14 +673,18 @@ export async function sheetHtml(doc, opts = {}) {
       default: return Z(it.k);
     }
   };
+  const multi = t.rates.length > 1, NC = multi ? 6 : 5;
+  const redOn = !isC && doc.tvaRed !== '0' && (LE || reducedRates(doc.lines, doc.tva).length > 0) && (ED || String(Zt('vatRed')).trim());
+  const vatMent = redOn ? `<tr class="vatm"><td colspan="${NC}" class="small">${Z('vatRed')}</td></tr>` : '';
   return `<div class="sheet${ED ? ' pvedit' : ''}${LE ? ' lyedit' : ''}" style="${layoutStyle(LY)}">
     ${canvasHtml(tpl, 'h', content, LE)}
-    <div class="tblwrap"><table class="${colgroup(LY) ? 'fx' : ''}">${colgroup(LY)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th><th>${Z('thHt')}</th></tr></thead><tbody>
+    <div class="tblwrap"><table class="${colgroup(LY, multi) ? 'fx' : ''}">${colgroup(LY, multi)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th>${multi ? `<th>${Z('thTva')}</th>` : ''}<th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
-    <tr><td colspan="4">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
-    <tr><td colspan="3">${Z('lblTva')}</td><td class="n">${doc.tva.toString().replace('.', ',')} %</td><td class="n">${eur(t.tva)}</td></tr>
-    <tr class="t"><td colspan="4">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
-    ${used ? `<tr><td colspan="4">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="4">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
+    <tr><td colspan="${NC - 1}">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
+    ${t.rates.map(r => `<tr><td colspan="${NC - 2}">${Z('lblTva')}${multi ? ` <span class="small">(sur ${eur(r.ht)} HT)</span>` : ''}</td><td class="n">${fmtRate(r.rate)}</td><td class="n">${eur(r.tva)}</td></tr>`).join('')}
+    <tr class="t"><td colspan="${NC - 1}">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
+    ${used ? `<tr><td colspan="${NC - 1}">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="${NC - 1}">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
+    ${vatMent}
     </tbody></table></div>
     ${canvasHtml(tpl, 'f', content, LE)}</div>`;
 }

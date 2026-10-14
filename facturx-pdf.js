@@ -114,12 +114,13 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   y -= 6;
 
   // --- Tableau
-  const cols = { q: MX + CW - 150 - 60 - 55, u: MX + CW - 150 - 60, p: MX + CW - 150, t: MX + CW };
+  const multi = m.taxes.length > 1, RB = multi ? 200 : 150; // largeur du bloc de droite (prix, TVA, total)
+  const cols = { q: MX + CW - RB - 60 - 55, u: MX + CW - RB - 60, p: MX + CW - RB, t: MX + CW };
   const head = () => {
     if (y < 110) newPage();
     pg.drawRectangle({ x: MX, y: y - 5, width: CW, height: 17, color: BLUE });
     const wh = rgb(1, 1, 1);
-    text('DÉSIGNATION', MX + 5, y, B, 8.5, wh); right('Qté', cols.q + 38, y, B, 8.5, wh); text('Unité', cols.u + 6, y, B, 8.5, wh); right('Prix unit. HT', cols.p + 78, y, B, 8.5, wh); right('Total HT', cols.t - 5, y, B, 8.5, wh);
+    text('DÉSIGNATION', MX + 5, y, B, 8.5, wh); right('Qté', cols.q + 38, y, B, 8.5, wh); text('Unité', cols.u + 6, y, B, 8.5, wh); right('Prix unit. HT', cols.p + 78, y, B, 8.5, wh); if (multi) right('TVA', cols.p + 78 + 52, y, B, 8.5, wh); right('Total HT', cols.t - 5, y, B, 8.5, wh);
     y -= 20;
   };
   head();
@@ -129,7 +130,7 @@ export async function buildFacturX(m, doc, S, opts = {}) {
     const h = ls.length * 11.5 + 5;
     if (y - h < 80) { newPage(); head(); }
     ls.forEach((ln, i) => text(ln, MX + 5, y - i * 11.5, F, 9));
-    right(qtyFmt(l.qty), cols.q + 38, y, F, 9); text(clean(l.unit), cols.u + 6, y, F, 9); right(money(l.pu), cols.p + 78, y, F, 9); right(money(l.total), cols.t - 5, y, F, 9);
+    right(qtyFmt(l.qty), cols.q + 38, y, F, 9); text(clean(l.unit), cols.u + 6, y, F, 9); right(money(l.pu), cols.p + 78, y, F, 9); if (multi) right(String(l.rate).replace('.', ',') + ' %', cols.p + 78 + 52, y, F, 9); right(money(l.total), cols.t - 5, y, F, 9);
     y -= h; pg.drawLine({ start: { x: MX, y: y + 7 }, end: { x: MX + CW, y: y + 7 }, thickness: 0.4, color: LINE });
   }
   // --- Totaux
@@ -137,12 +138,13 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   y -= 6;
   const tx = W - MX - 200;
   const trow = (a, b, bold, bg) => { if (bg) pg.drawRectangle({ x: tx, y: y - 5, width: 200, height: 17, color: BG }); text(a, tx + 6, y, bold ? B : F, bold ? 10.5 : 9.5); right(b, W - MX - 6, y, bold ? B : F, bold ? 10.5 : 9.5); y -= 18; };
-  trow('Total HT', money(m.ht)); trow(`TVA ${String(m.rate).replace('.', ',')} %`, money(m.tva)); trow('Total TTC', money(m.ttc), true, true);
+  trow('Total HT', money(m.ht)); m.taxes.forEach(x => trow(`TVA ${String(x.rate).replace('.', ',')} %${multi ? ' (sur ' + money(x.basis) + ')' : ''}`, money(x.amount))); trow('Total TTC', money(m.ttc), true, true);
   if (m.prepaid) { trow(m.isCredit ? 'Déjà déduit / remboursé' : 'Déjà réglé', money(-m.prepaid)); trow(m.isCredit ? 'Reste à votre crédit' : 'Reste à payer', money(m.due_amount), true); }
   y -= 8;
 
   // --- Règlement et mentions légales
   if (!m.isCredit && m.terms) { if (y < 120) newPage(); text('Règlement', MX, y, B, 9.5); y -= 12; para(m.terms, MX, CW, F, 8.5); y -= 4; }
+  if (m.vatNote) { if (y < 120) newPage(); para(m.vatNote, MX, CW, F, 8, BLACK); y -= 3; }
   if (m.notes) { para(m.notes, MX, CW, F, 8.5); y -= 3; }
   if (!m.isCredit && m.iban) { para(`Virement : IBAN ${m.iban.replace(/(.{4})/g, '$1 ').trim()}${m.bic ? ' – BIC ' + m.bic : ''}`, MX, CW, B, 8.5); y -= 3; }
   if (!m.isCredit) para(`${NOTES.PMD} ${NOTES.PMT} ${NOTES.AAB}`, MX, CW, F, 7.5, GREY);

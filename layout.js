@@ -20,7 +20,7 @@ export const BLOCKS = {
 };
 /* Clé de texte (zones) modifiable d'un bloc ; les autres blocs (logo, intitulé, remarque) viennent du document */
 const ZK = { coName: 'coName', coInfo: 'coInfo', certs: 'certs', client: 'client', chantier: 'chantier', title: 'title', dateLine: 'dateLine', methods: 'methods', pay: 'payLbl', creditTxt: 'creditTxt', sigLeft: 'sigLeft', bank: 'bank' };
-export const TBL_ZONES = [['thDes', 'Colonne 1'], ['thQty', 'Colonne 2'], ['thUnit', 'Colonne 3'], ['thPu', 'Colonne 4'], ['thHt', 'Colonne 5'], ['lblHt', 'Libellé total HT'], ['lblTva', 'Libellé TVA'], ['lblTtc', 'Libellé total TTC'], ['lblPaid', 'Libellé « déjà réglé »'], ['lblLeft', 'Libellé « reste à payer »']];
+export const TBL_ZONES = [['thDes', 'Colonne 1'], ['thQty', 'Colonne 2'], ['thUnit', 'Colonne 3'], ['thPu', 'Colonne 4'], ['thHt', 'Dernière colonne (prix HT)'], ['thTva', 'Colonne TVA (si plusieurs taux)'], ['lblHt', 'Libellé total HT'], ['lblTva', 'Libellé TVA'], ['lblTtc', 'Libellé total TTC'], ['lblPaid', 'Libellé « déjà réglé »'], ['lblLeft', 'Libellé « reste à payer »']];
 const TBL_LY = [['fs', 'Taille du texte (px)', 9, 18, 0.5, 12.5], ['pad', 'Hauteur des lignes (px)', 1, 16, 1, 5], ['cQty', 'Largeur Qté (%)', 4, 30, 1, ''], ['cUnit', 'Largeur Unité (%)', 4, 30, 1, ''], ['cPu', 'Largeur Prix unit. (%)', 6, 30, 1, ''], ['cHt', 'Largeur Prix H.T (%)', 6, 30, 1, '']];
 
 const I = (k, x, y, w, h, z) => ({ id: k, k, z, x, y, w, h });
@@ -138,6 +138,7 @@ export async function openLayoutEditor(o) {
     if (sel === ':tbl') {
       return `<h4>Tableau des lignes</h4><p class="muted">Le tableau s'étend entre l'en-tête et le pied de page. Modifiez ici ses titres, libellés et dimensions.</p>
         <div class="cols">${TBL_ZONES.map(([kz, l]) => `<label class="f full"><span>${l}</span><input data-tz="${kz}" value="${e(tx(kz))}"></label>`).join('')}
+        ${o.type !== 'credit' ? `<label class="f full"><span>Mention du client – TVA à taux réduit (imprimée sous les totaux quand un taux de 5,5 ou 10 % est utilisé ; vide = pas de mention)</span><textarea rows="7" data-tz="vatRed">${e(tx('vatRed'))}</textarea></label>` : ''}
         ${TBL_LY.map(([kl, l, mn, mx, st, df]) => `<label class="f"><span>${l}</span><input type="number" data-ly="${kl}" min="${mn}" max="${mx}" step="${st}" value="${ws.layout[kl] ?? ''}" placeholder="${df === '' ? 'auto' : df}"></label>`).join('')}</div>`;
     }
     const it = sel && item(sel);

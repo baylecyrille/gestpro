@@ -11,6 +11,7 @@ import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
+import { MAIL_DEFAULTS, MAIL_TOKENS, mailError } from './docmail.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -240,6 +241,12 @@ async function renderSettings(el) {
     ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Taille des photos envoyées au Drive', 'photoPx', S.photoPx || 2560, { type: 'select', options: [['1600', 'Standard (1600 px, léger)'], ['2560', 'Haute (2560 px, conseillé)'], ['3600', 'Très haute (3600 px)']] })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
+    <h3 class="full">E-mails (envoi des devis, factures et avoirs)</h3>
+    ${F('Objet par défaut', 'mailSubject', S.mailSubject || '', { cls: 'full', ph: MAIL_DEFAULTS.subject })}
+    ${F('Message par défaut', 'mailBody', S.mailBody || '', { type: 'textarea', rows: 6, cls: 'full', ph: MAIL_DEFAULTS.body })}
+    <p class="muted full">Laissez vide pour le texte conseillé (en gris). Jetons automatiques : <code>${e(MAIL_TOKENS)}</code>. L'envoi part de votre compte Google (script Apps Script) ; les réponses arrivent sur l'e-mail de l'entreprise ci-dessus.</p>
+    <label class="f full"><span><input type="checkbox" name="mailBcc" ${S.mailBcc === false ? '' : 'checked'}> M'envoyer une copie cachée (Cci) de chaque e-mail envoyé</span></label>
+    <div class="full row" style="margin:0"><button type="button" class="btn" id="mtest" ${sheets.scriptMode() ? '' : 'disabled'}>✉ Envoyer un e-mail de test à l'adresse de l'entreprise</button><span id="mtstat" class="muted"></span></div>
     <h3 class="full">Couleurs des lignes de devis / factures</h3>
     ${colorField('Section : texte', 'stSecColor', S.stSecColor, 'full')}${colorField('Section : fond', 'stSecBg', S.stSecBg, 'full')}
     ${colorField('Ligne produit : fond', 'stLineBg', S.stLineBg, 'full')}${colorField('Texte / commentaire : fond', 'stTextBg', S.stTextBg, 'full')}
@@ -302,6 +309,15 @@ async function renderSettings(el) {
     try { const r = await sheets.scriptCall({ action: 'fileInfo' }); out.innerHTML = `✔ Drive prêt : dossier <a href="${e(r.folder)}" target="_blank" rel="noopener">GestPro</a> (créé au besoin).`; }
     catch (err) { out.textContent = /Action inconnue/i.test(err.message) ? '✖ Le script Apps Script n\'est pas à jour : collez la dernière version de Code.gs, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version, et acceptez l\'autorisation Drive.' : '✖ ' + err.message; }
   });
+  $('#mtest', el)?.addEventListener('click', async () => {
+    const out = $('#mtstat', el), to = ($('[name=email]', el).value || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { out.textContent = '✖ Renseignez d\'abord l\'e-mail de l\'entreprise (et enregistrez).'; return; }
+    out.textContent = 'Envoi en cours…';
+    try {
+      const r = await sheets.scriptCall({ action: 'mail', to, subject: 'Test GestPro', body: 'Ceci est un e-mail de test envoyé par GestPro : l\'envoi des devis et factures est opérationnel.', replyTo: to, fromName: $('[name=company]', el)?.value || '' });
+      out.textContent = `✔ E-mail de test envoyé à ${to}${r.from ? ' depuis ' + r.from : ''}${r.left != null ? ` (${r.left} envois restants aujourd'hui)` : ''}.`;
+    } catch (err) { out.textContent = '✖ ' + mailError(err).split('\n')[0]; }
+  });
   $('#gedit', el).onclick = () => {
     const fs = $('#gfs', el), lockedNow = fs.disabled;
     if (lockedNow && !confirm('Modifier la connexion Google Sheets ? Une erreur ici peut interrompre la synchronisation de vos données.')) return;
@@ -348,7 +364,7 @@ async function renderSettings(el) {
     const o = Object.fromEntries(new FormData(ev.target));
     ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
-    o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites;
+    o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites; o.mailBcc = !!o.mailBcc;
     let logoV = S.logoV;
     if ((logo || '') !== (S.logo || '')) { // le logo vit dans sa propre feuille (onglet Photos) : il est synchronisé à part, sans limite de cellule
       logoV = Date.now(); await db.put('photos', { id: 'logo', data: logo || '', v: logoV }); sheets.markPhotosDirty();
