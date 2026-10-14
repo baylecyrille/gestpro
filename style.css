@@ -192,6 +192,9 @@ dialog::backdrop{background:#0006}
 
 .cloud{font:inherit;font-size:12px;border:0;border-radius:99px;padding:3px 10px;background:#ffffff33;color:#fff;cursor:pointer}
 .cloud.ok{background:#1b8a4b}.cloud.err,.cloud.auth{background:#c77700}
+.hbtn{font:inherit;font-weight:700;font-size:15px;width:30px;height:30px;flex:none;border:1.5px solid #ffffffcc;border-radius:50%;padding:0;background:transparent;color:#fff;cursor:pointer;line-height:1}
+.hbtn:hover,.hbtn:focus-visible{background:#ffffff33}
+body.locked #help{display:none}
 .steps li{margin-bottom:6px}
 
 .scanner .ctl{display:flex;gap:6px;padding:8px 10px;background:#111;flex-wrap:wrap;align-items:center}
@@ -492,3 +495,24 @@ nav#nav a,nav#nav button{max-width:160px}
 .invbanner{margin:0 0 12px;padding:9px 12px;border:1px solid #ecd9a0;border-left:4px solid #e0a82e;border-radius:10px;background:#fff8e5;font-size:14px}
 .invnote{margin:4px 2px 8px;font-size:13px;color:var(--mut)}
 .invnote .lnk{border:0;background:none;padding:0;color:var(--p);font:inherit;text-decoration:underline;cursor:pointer}
+
+/* Aide contextuelle */
+.help .hintro{margin:0 0 10px;color:var(--mut)}
+.help details{border:1px solid var(--bd);border-radius:10px;margin:0 0 8px;background:#fff}
+.help summary{cursor:pointer;padding:9px 12px;font-weight:600;color:var(--p);list-style:none}
+.help summary::-webkit-details-marker{display:none}
+.help summary::before{content:'▸';display:inline-block;width:1.1em}
+.help details[open]>summary::before{content:'▾'}
+.help details>div{padding:0 12px 10px}
+.help p{margin:0 0 8px}
+.help ul,.help ol{margin:0 0 8px;padding-left:20px}
+.help li{margin-bottom:3px}
+.help a{color:var(--p)}
+.help .warnnote{background:#fff1d9;border-radius:8px;padding:6px 10px;color:#7a4a00}
+.help .htab{width:100%;border-collapse:collapse;font-size:13.5px;margin:0 0 8px}
+.help .htab th,.help .htab td{border:1px solid var(--bd);padding:5px 8px;text-align:left;vertical-align:top}
+.help .htab th{background:#eaf1fb;color:var(--p)}
+.help .hmore{margin:14px 0 6px;font-size:13px;color:var(--mut);font-weight:600}
+.help .hchips{display:flex;flex-wrap:wrap;gap:6px}
+.help .hchip{font:inherit;font-size:13px;border:1px solid var(--bd);background:#eaf1fb;color:var(--p);border-radius:99px;padding:4px 11px;cursor:pointer}
+.help .hchip:hover{background:#dbe8f8}

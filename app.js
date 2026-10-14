@@ -471,6 +471,7 @@ function applyAccess() {
   if (me) { const fn = me.first || me.name.split(' ')[0]; u.innerHTML = (me.photo ? `<img class="av" src="${e(me.photo)}" alt="">` : `<span class="av ini">${e(fn.slice(0, 1).toUpperCase())}</span>`) + e(fn); }
 }
 $('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.logout(); route(); } };
+$('#help').onclick = () => import('./help.js').then(m => m.openHelp()).catch(err => toast(err.message || 'Aide indisponible'));
 
 /* Une seule fois : sort la civilité (Mr, Mme, SARL…) du champ « Nom » des fiches existantes */
 async function migrateCiv() {
