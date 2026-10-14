@@ -112,23 +112,37 @@ async function loadBitmap(file) {
   });
 }
 export async function compressImage(file, { mode = 'photo', maxChars = 30000 } = {}) {
+  if (mode === 'logo') {
+    // logo : conservé tel quel s'il est assez léger (qualité d'origine) ; sinon redimensionné le moins possible (PNG sans perte, puis WebP)
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name || '');
+    if (isSvg) { const u = await readFileUrl(file); if (u.length <= maxChars) return u; throw new Error('Ce logo SVG est trop lourd : utilisez un PNG ou un JPG.'); }
+    const bmp0 = await loadBitmap(file);
+    const w0 = bmp0.width || bmp0.naturalWidth, h0 = bmp0.height || bmp0.naturalHeight;
+    if (/^image\/(png|jpeg|webp)$/.test(file.type) && file.size * 1.37 <= maxChars && Math.max(w0, h0) <= 1600) return readFileUrl(file);
+    let best = '';
+    for (const max of [1400, 1100, 900, 700, 520, 400, 300]) {
+      const k = Math.min(1, max / Math.max(w0, h0));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+      c.getContext('2d').drawImage(bmp0, 0, 0, c.width, c.height);
+      const png = c.toDataURL('image/png'); if (png.length <= maxChars) return png;
+      for (const q of [0.92, 0.85, 0.75]) { const w = c.toDataURL('image/webp', q); if (w.startsWith('data:image/webp') && w.length <= maxChars) return w; }
+      best = png;
+    }
+    return best;
+  }
   const bmp = await loadBitmap(file);
   const bw = bmp.width || bmp.naturalWidth, bh = bmp.height || bmp.naturalHeight;
-  const sizes = mode === 'photo' ? [480, 400, 320, 260, 200, 160] : [480, 400, 320, 260, 200, 160];
+  const sizes = [480, 400, 320, 260, 200, 160];
   let out = '';
   for (const max of sizes) {
     const k = Math.min(1, max / Math.max(bw, bh));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(bw * k)); c.height = Math.max(1, Math.round(bh * k));
     const ctx = c.getContext('2d');
-    if (mode === 'photo') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); }
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     ctx.drawImage(bmp, 0, 0, c.width, c.height);
-    if (mode === 'photo') {
-      for (const q of [0.72, 0.6, 0.5, 0.4]) { out = c.toDataURL('image/jpeg', q); if (out.length <= maxChars) return out; }
-    } else {
-      for (const q of [0.85, 0.7]) { const w = c.toDataURL('image/webp', q); if (w.startsWith('data:image/webp') && w.length <= maxChars) return w; }
-      out = c.toDataURL('image/png'); if (out.length <= maxChars) return out;
-    }
+    for (const q of [0.72, 0.6, 0.5, 0.4]) { out = c.toDataURL('image/jpeg', q); if (out.length <= maxChars) return out; }
   }
   return out; // le plus petit obtenu
 }
@@ -322,10 +336,10 @@ export function addressAutocomplete(input, onPick) {
 export const getPref = (k, d = '') => { try { const v = localStorage.getItem('gp_f_' + k); return v === null ? d : v; } catch { return d; } };
 export const setPref = (k, v) => { try { localStorage.setItem('gp_f_' + k, v); } catch { /* ignore */ } };
 export function filterBar(ctl) {
-  return `<div class="row filt">${ctl.map(c => c.type === 'multi' ? `<div class="f multi" data-f="${c.id}"><span>${e(c.label)}</span><div class="tgs">${c.options.map(([v, l]) => `<button type="button" class="tg" data-v="${e(v)}" aria-pressed="false">${e(l)}</button>`).join('')}</div></div>`
+  return `<div class="fbar"><div class="frow"><button type="button" class="btn sm" data-ftoggle aria-expanded="false">⚙ Filtres &amp; tri<span class="fcount" hidden></span></button><span class="fsum"></span><button type="button" class="btn sm" data-fclear hidden>✕ Effacer</button></div><div class="row filt" hidden>${ctl.map(c => c.type === 'multi' ? `<div class="f multi" data-f="${c.id}"><span>${e(c.label)}</span><div class="tgs">${c.options.map(([v, l]) => `<button type="button" class="tg" data-v="${e(v)}" aria-pressed="false">${e(l)}</button>`).join('')}</div></div>`
     : c.type === 'check' ? `<label class="chk2"><input type="checkbox" data-f="${c.id}"> ${e(c.label)}</label>`
     : c.type === 'date' ? `<label class="f sm"><span>${e(c.label)}</span><input type="date" data-f="${c.id}"></label>`
-    : `<label class="f sm"><span>${e(c.label)}</span><select data-f="${c.id}">${c.options.map(([v, l]) => `<option value="${e(v)}">${e(l)}</option>`).join('')}</select></label>`).join('')}<button type="button" class="btn sm" data-freset>Réinitialiser</button></div>`;
+    : `<label class="f sm"><span>${e(c.label)}</span><select data-f="${c.id}">${c.options.map(([v, l]) => `<option value="${e(v)}">${e(l)}</option>`).join('')}</select></label>`).join('')}<button type="button" class="btn sm" data-freset>Réinitialiser</button></div></div>`;
 }
 export function bindFilters(root, pre, ctl, onChange) {
   const node = c => root.querySelector(`[data-f="${c.id}"]`);
@@ -334,6 +348,25 @@ export function bindFilters(root, pre, ctl, onChange) {
   const apply = (c, v) => { const n = node(c); if (c.type === 'multi') { const on = String(v || '').split(',').filter(Boolean); n.querySelectorAll('.tg').forEach(b => b.setAttribute('aria-pressed', on.includes(b.dataset.v) ? 'true' : 'false')); } else if (c.type === 'check') n.checked = v === '1' || v === true; else { n.value = v; if (n.value !== v) n.value = c.def ?? ''; } };
   ctl.filter(c => c.type === 'multi').forEach(c => { apply(c, getPref(pre + c.id, '')); node(c).addEventListener('click', ev => { const b = ev.target.closest('.tg'); if (!b) return; b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); setPref(pre + c.id, mget(c).join(',')); onChange(get()); }); });
   ctl.filter(c => c.type !== 'multi').forEach(c => { apply(c, getPref(pre + c.id, c.type === 'check' ? '0' : (c.def ?? ''))); node(c).addEventListener('change', () => { setPref(pre + c.id, c.type === 'check' ? (node(c).checked ? '1' : '0') : node(c).value); onChange(get()); }); });
-  root.querySelector('[data-freset]').onclick = () => { ctl.forEach(c => { const d = c.type === 'multi' ? '' : c.type === 'check' ? '0' : (c.def ?? ''); apply(c, d); setPref(pre + c.id, d); }); onChange(get()); };
+  const dflt = c => (c.def ?? c.options?.[0]?.[0] ?? '');
+  const lbl = c => { // texte résumant un filtre actif
+    const v = get()[c.id];
+    if (c.type === 'multi') return v.map(x => c.options.find(o => o[0] === x)?.[1] || x).join(', ');
+    if (c.type === 'check') return c.label;
+    if (c.type === 'date') return `${c.label} ${v}`;
+    return `${c.label} : ${c.options.find(o => String(o[0]) === String(v))?.[1] ?? v}`;
+  };
+  const active = () => ctl.filter(c => c.id !== 'sort' && (c.type === 'multi' ? get()[c.id].length : c.type === 'check' ? get()[c.id] : c.type === 'date' ? get()[c.id] : String(get()[c.id]) !== String(dflt(c))));
+  const badge = () => {
+    const a = active(), n = root.querySelector('.fcount'), sm = root.querySelector('.fsum'), cl = root.querySelector('[data-fclear]');
+    n.hidden = !a.length; n.textContent = a.length; cl.hidden = !a.length; sm.textContent = a.length ? a.map(lbl).join(' · ') : '';
+  };
+  const filt = root.querySelector('.fbar .filt'), tg = root.querySelector('[data-ftoggle]');
+  tg.onclick = () => { filt.hidden = !filt.hidden; tg.setAttribute('aria-expanded', String(!filt.hidden)); };
+  const reset = () => { ctl.forEach(c => { const d = c.type === 'multi' ? '' : c.type === 'check' ? '0' : (c.def ?? ''); apply(c, d); setPref(pre + c.id, d); }); badge(); onChange(get()); };
+  root.querySelector('[data-freset]').onclick = reset;
+  root.querySelector('[data-fclear]').onclick = reset;
+  root.querySelector('.fbar').addEventListener('click', badge); root.querySelector('.fbar').addEventListener('change', badge);
+  badge();
   return get;
 }

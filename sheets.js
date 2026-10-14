@@ -159,7 +159,7 @@ export async function useSheet(input) {
 const clean = (store, rec) => {
   const { _u, _d, ...r } = rec;
   if (store === 'fbposts') delete r.image;
-  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); if ((r.value.logo || '').length > 40000 || (r.value.logo && JSON.stringify(r).length > 47000)) delete r.value.logo; }
+  if (store === 'settings') { r.value = { ...r.value }; LOCAL_ONLY.forEach(k => delete r.value[k]); delete r.value.logo; } // le logo voyage par l'onglet Photos (voir syncPhotos)
   return r;
 };
 
@@ -183,32 +183,49 @@ async function readOne(name, interactive) {
 // - écriture : une photo a été ajoutée / modifiée / retirée sur cet appareil
 async function syncPhotos(interactive) {
   const products = await db.all('products');
+  const S = await getS();
+  const tplRec = await db.get('settings', 'tpl');
+  const tplIds = new Set([...JSON.stringify(tplRec?.value || {}).matchAll(/"img":"(tpl[\w-]+)"/g)].map(m => m[1])); // images des modèles de documents
   const local = new Map((await db.allRaw('photos')).filter(o => !o._d).map(o => [o.id, o]));
+  // logo déjà présent dans les réglages mais pas encore dans sa feuille : on le range (version 1 = plus ancienne que tout envoi réel)
+  if (S.logo && !local.has('logo')) { const o = { id: 'logo', data: S.logo, v: 1, _u: Date.now() }; await db.putRaw('photos', o); local.set('logo', o); localStorage.setItem(K.photo, '1'); }
   const lv = id => local.get(id)?.v || 0;
-  const needPull = products.some(p => (p.photoV || 0) > lv(p.id));
+  const needPull = products.some(p => (p.photoV || 0) > lv(p.id)) || (S.logoV || 0) > lv('logo') || [...tplIds].some(id => !local.has(id));
   const pending = localStorage.getItem(K.photo) === '1';
   if (!needPull && !pending) return 0;
 
   const rows = await readOne(PHOTO_TAB, interactive);
-  const remote = new Map();
-  rows.slice(1).forEach(r => {
-    const id = String(r[0] ?? ''); if (!id) return;
-    remote.set(id, { id, v: Number(r[1]) || 0, data: r[2] ? '' : String(r[3] ?? '') });
+  const remote = new Map(), more = new Map();
+  rows.slice(1).forEach(r => { // une grosse image occupe plusieurs lignes « id~2 », « id~3 »…
+    const id = String(r[0] ?? ''), mm = id.match(/^(.+)~(\d+)$/);
+    if (mm) { const a = more.get(mm[1]) || []; a[+mm[2]] = String(r[3] ?? '').replace(/^#/, ''); more.set(mm[1], a); }
   });
-  let pulled = 0, rewrite = !rows.length || String(rows[0][0] ?? '') !== 'id';
+  rows.slice(1).forEach(r => {
+    const id = String(r[0] ?? ''); if (!id || /~\d+$/.test(id)) return;
+    remote.set(id, { id, v: Number(r[1]) || 0, data: r[2] ? '' : String(r[3] ?? '') + (more.get(id) || []).slice(2).join('') });
+  });
+  let pulled = 0, rewrite = !rows.length || String(rows[0][0] ?? '') !== 'id', logoIn = null;
   for (const id of new Set([...local.keys(), ...remote.keys()])) {
     const l = local.get(id), m = remote.get(id);
-    if (m && m.v > (l?.v || 0)) { await db.putRaw('photos', { id, data: m.data, v: m.v, _u: Date.now() }); local.set(id, { id, data: m.data, v: m.v }); pulled++; }
-    else if (l && (l.v || 0) > (m?.v || 0)) rewrite = true;
+    if (m && m.v > (l?.v || 0)) {
+      await db.putRaw('photos', { id, data: m.data, v: m.v, _u: Date.now() }); local.set(id, { id, data: m.data, v: m.v }); pulled++;
+      if (id === 'logo') logoIn = m;
+    } else if (l && (l.v || 0) > (m?.v || 0)) rewrite = true;
+  }
+  if (logoIn) { // le logo reçu devient celui de cet appareil (sans toucher à l'horodatage des réglages)
+    const rec = await db.get('settings', 'main');
+    if (rec) { rec.value = { ...rec.value, logo: logoIn.data, logoV: logoIn.v }; await db.putRaw('settings', rec); }
   }
   if (rewrite) {
-    const alive = new Set(products.map(p => p.id));
+    const alive = new Set([...products.map(p => p.id), 'logo', ...tplIds]);
     const values = [['id', 'maj', 'supprime', 'json']];
     for (const [id, o] of local) {
       if (!alive.has(id)) continue;
       if (!o.data) { values.push([id, o.v || 0, 1, '']); continue; }
-      if (o.data.length > PHOTO_MAX) continue; // trop lourde pour une cellule : reste locale
-      values.push([id, o.v || 0, '', o.data]);
+      const parts = o.data.match(new RegExp(`[\\s\\S]{1,${PHOTO_MAX}}`, 'g'));
+      if (parts.length > 30) continue; // démesurée : reste locale
+      values.push([id, o.v || 0, '', parts[0]]);
+      parts.slice(1).forEach((pt, k) => values.push([`${id}~${k + 2}`, o.v || 0, '', '#' + pt]));
     }
     await writeTabs([{ name: PHOTO_TAB, range: `'${PHOTO_TAB}'!A1`, values }], interactive);
   }

@@ -15,7 +15,8 @@ import * as lock from './lock.js';
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
   const nm = (S.appName || '').trim() || 'GestPro';
-  const br = document.querySelector('.brand'); if (br) br.textContent = nm;
+  const bn = document.querySelector('.brand .bname'); if (bn) bn.textContent = nm;
+  const bl = document.querySelector('.brand .blogo img'); if (bl) bl.src = logoSrc(S);
   document.title = nm + ' – Stock, devis, factures';
   const r = document.documentElement.style;
   if (S.wallpaper === false) { r.setProperty('--logo', 'none'); return; }
@@ -136,16 +137,21 @@ async function renderDashboard(el) {
         ${steps.map(([l, ok, h]) => `<div>${ok ? '✅' : '⬜'} ${ok ? `<s class="muted">${e(l)}</s>` : `<a href="${h}">${e(l)}</a>`}</div>`).join('')}
         <div class="row" style="margin:8px 0 0"><button class="btn sm" id="hidestart">Masquer</button></div></div>` : '';
 
-  // courbe 12 mois (CA et achats HT)
+  // courbe 12 mois (CA et achats HT) : repères de montant, mois lisibles, valeurs du mois en cours en légende
   const ser = monthly(docs, moves, products, today(), 12, sites);
-  const max = Math.max(1, ...ser.map(o => Math.max(o.ca, o.achats)));
-  const bw = 600 / ser.length, H = 130;
-  const MI = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-  const chart = `<svg viewBox="0 0 600 ${H + 22}" style="width:100%;height:auto" role="img" aria-label="Chiffre d'affaires et achats sur 12 mois">
-    ${ser.map((o, i) => { const x = i * bw, h1 = Math.max(0, o.ca) / max * H, h2 = o.achats / max * H;
-      return `<rect x="${x + 4}" y="${H - h1}" width="${bw / 2 - 5}" height="${h1}" rx="2" fill="var(--p)"><title>${o.ym} · CA ${eur(o.ca)}</title></rect><rect x="${x + bw / 2}" y="${H - h2}" width="${bw / 2 - 5}" height="${h2}" rx="2" fill="var(--warn)"><title>${o.ym} · achats ${eur(o.achats)}</title></rect>
-      <text x="${x + bw / 2}" y="${H + 14}" font-size="11" text-anchor="middle" fill="var(--mut)">${MI[+o.ym.slice(5) - 1]}</text>`; }).join('')}
-    <line x1="0" x2="600" y1="${H}" y2="${H}" stroke="var(--bd)"/></svg>`;
+  const rawMax = Math.max(1, ...ser.map(o => Math.max(o.ca, o.achats)));
+  const step = 10 ** Math.floor(Math.log10(rawMax)), max = Math.ceil(rawMax / step) * step; // sommet « rond » de l'échelle
+  const bw = 600 / ser.length, H = 130, X0 = 0;
+  const MI = ['jan', 'fév', 'mar', 'avr', 'mai', 'juin', 'juil', 'août', 'sep', 'oct', 'nov', 'déc'];
+  const kfmt = v => (v >= 1000 ? (v / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' k€' : Math.round(v) + ' €');
+  const cur = ser[ser.length - 1];
+  const chart = `<svg viewBox="0 0 600 ${H + 24}" style="width:100%;height:auto" role="img" aria-label="Chiffre d'affaires et achats sur 12 mois">
+    ${[0.5, 1].map(f => `<line x1="${X0}" x2="600" y1="${H - H * f}" y2="${H - H * f}" stroke="var(--bd)" stroke-dasharray="3 4"/><text x="${X0 + 2}" y="${H - H * f - 4}" font-size="13" fill="var(--mut)">${kfmt(max * f)}</text>`).join('')}
+    ${ser.map((o, i) => { const x = i * bw, h1 = Math.max(0, o.ca) / max * H, h2 = o.achats / max * H, last = i === ser.length - 1;
+      return `<rect x="${x + 5}" y="${H - h1}" width="${bw / 2 - 6}" height="${h1}" rx="3" fill="var(--p)" opacity="${last ? 1 : .78}"><title>${o.ym} · CA ${eur(o.ca)}</title></rect><rect x="${x + bw / 2 + 1}" y="${H - h2}" width="${bw / 2 - 6}" height="${h2}" rx="3" fill="var(--warn)" opacity="${last ? 1 : .78}"><title>${o.ym} · achats ${eur(o.achats)}</title></rect>
+      <text x="${x + bw / 2}" y="${H + 17}" font-size="14" text-anchor="middle" font-weight="${last ? 700 : 400}" fill="${last ? 'var(--tx)' : 'var(--mut)'}">${MI[+o.ym.slice(5) - 1]}</text>`; }).join('')}
+    <line x1="${X0}" x2="600" y1="${H}" y2="${H}" stroke="var(--bd)"/></svg>
+    <p class="cnote" style="margin:2px 0 0">${MI[+cur.ym.slice(5) - 1]}. en cours : CA <b>${eur(cur.ca)}</b> · achats <b>${eur(cur.achats)}</b></p>`;
 
   // chantiers ouverts avec marge
   const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
@@ -178,14 +184,13 @@ async function renderDashboard(el) {
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
     <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${per === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" id="pfrom" value="${e(pc.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" id="pto" value="${e(pc.to)}"></label></div>` : `<p class="muted" style="margin:0">Du ${dateFr(range.from)} au ${dateFr(range.to)}</p>`}
-    <div class="grid">
+    <div class="hero">
       <div class="kpi"><small>CA facturé HT (net d'avoirs)</small><b>${eur(sm.ca)}</b><small>${sm.nbFact} facture(s)</small></div>
-      <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b></div>
-      <div class="kpi"><small>Achats HT (stock et chantiers)</small><b>${eur(sm.achats)}</b></div>
-      <div class="kpi"><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div>
-      <div class="kpi"><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div>
-      <div class="kpi ${sm.tvaDue > 0 ? 'warn' : 'ok'}"><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b>${eur(Math.abs(sm.tvaDue))}</b></div></div>
-    <p class="muted" style="margin:4px 0">TVA calculée sur les factures émises (et avoirs) et sur les achats : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit).</p>
+      <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b><small>sur la période</small></div>
+      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser (toutes factures)</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a></div>
+    <div class="card"><b>Achats &amp; TVA</b>
+      <div class="mini" style="margin-top:8px"><div><small>Achats HT (stock et chantiers)</small><b>${eur(sm.achats)}</b></div><div><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div><div><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div><div><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b class="${sm.tvaDue > 0 ? 'warn' : 'ok'}">${eur(Math.abs(sm.tvaDue))}</b></div></div>
+      <p class="cnote">TVA calculée sur les factures émises (et avoirs) et sur les achats : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit).</p></div>
     <div class="card"><b>12 derniers mois</b> <span class="muted" style="font-size:12px"><span style="color:var(--p)">■</span> CA HT &nbsp;<span style="color:var(--warn)">■</span> Achats HT</span>${chart}</div>
     ${open.length ? `<h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a>` : ''}
     <h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a>
@@ -196,7 +201,6 @@ async function renderDashboard(el) {
     ${startCard}
     <h3>En un coup d'œil</h3><div class="grid">
       <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC</small></a>
-      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a>
       <a class="kpi" href="#/sites"><small>Chantiers ouverts</small><b>${sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).length}</b></a>
       <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
       <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>`;
@@ -225,8 +229,8 @@ async function renderSettings(el) {
     ${F('IBAN', 'iban', S.iban)}${F('BIC', 'bic', S.bic)}
     ${F('N° TVA intracommunautaire (sinon calculé d\'après le SIRET)', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
     <label class="f full"><span><input type="checkbox" name="vatDebits" ${S.vatDebits ? 'checked' : ''}> Option pour le paiement de la TVA sur les débits (mention imprimée sur les factures)</span></label>
-    <label class="f full"><span>Logo (image – compressé automatiquement ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
-    <div class="full"><img src="${logoSrc(S)}" alt="" style="max-height:70px"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
+    <label class="f full"><span>Logo (PNG, JPG, WebP ou SVG – qualité conservée et partagé entre vos appareils ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
+    <div class="full"><img id="logoprev" src="${logoSrc(S)}" alt="" style="max-height:70px;max-width:100%"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
     <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
     <h3 class="full">Ventes (devis, factures, avoirs)</h3>
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
@@ -332,9 +336,10 @@ async function renderSettings(el) {
   $('#logo', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
     try {
-      logo = await compressImage(f, { mode: 'logo', maxChars: 30000 });
-      if (logo.length > 40000) throw new Error('Logo trop détaillé : utilisez une image plus simple.');
-      toast(`Logo compressé (${Math.round(logo.length * 0.75 / 1024)} Ko) – enregistrez`);
+      logo = await compressImage(f, { mode: 'logo', maxChars: 250000 });
+      if (logo.length > 260000) throw new Error('Logo trop lourd : utilisez une image plus petite.');
+      $('#logoprev', el).src = logo;
+      toast(`Logo prêt (${Math.round(logo.length * 0.75 / 1024)} Ko, qualité conservée) – enregistrez`);
     } catch (err) { logo = S.logo; alert(err.message); }
   };
   $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez'); });
@@ -344,7 +349,11 @@ async function renderSettings(el) {
     ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites;
-    await db.saveSettings({ ...S, ...o, logo }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
+    let logoV = S.logoV;
+    if ((logo || '') !== (S.logo || '')) { // le logo vit dans sa propre feuille (onglet Photos) : il est synchronisé à part, sans limite de cellule
+      logoV = Date.now(); await db.put('photos', { id: 'logo', data: logo || '', v: logoV }); sheets.markPhotosDirty();
+    }
+    await db.saveSettings({ ...S, ...o, logo, logoV }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
@@ -406,9 +415,16 @@ function showLogin() {
   };
 }
 
+/* Menu « Plus » (contacts, Facebook, réglages) */
+function closeMore() { const m = $('#more'); if (m) m.hidden = true; $('#morebtn')?.setAttribute('aria-expanded', 'false'); }
+$('#morebtn').addEventListener('click', ev => { ev.stopPropagation(); const m = $('#more'); m.hidden = !m.hidden; ev.currentTarget.setAttribute('aria-expanded', String(!m.hidden)); });
+document.addEventListener('click', ev => { if (!ev.target.closest('#more')) closeMore(); });
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMore(); });
+
 function applyAccess() {
   const ok = { dashboard: auth.can('dashboard'), sites: auth.can('sites'), planning: auth.can('planning'), stock: auth.can('stock'), docs: auth.can('quotes') || auth.can('invoices') || auth.can('credits'), contacts: auth.can('contacts'), facebook: auth.can('facebook'), settings: auth.can('settings') };
-  $$('#nav a').forEach(a => (a.hidden = ok[a.dataset.r] === false));
+  $$('#nav a, #more a').forEach(a => (a.hidden = ok[a.dataset.r] === false));
+  $('#morebtn').hidden = $$('#more a').every(a => a.hidden); closeMore();
   const u = $('#user'), me = auth.currentUser();
   u.hidden = !me;
   if (me) { const fn = me.first || me.name.split(' ')[0]; u.innerHTML = (me.photo ? `<img class="av" src="${e(me.photo)}" alt="">` : `<span class="av ini">${e(fn.slice(0, 1).toUpperCase())}</span>`) + e(fn); }
@@ -438,7 +454,8 @@ async function route() {
   const redirect = auth.guard(name, a);
   if (redirect) { location.hash = redirect; return; }
   const key = name === 'doc' ? 'docs' : name === 'site' ? 'sites' : name;
-  $$('#nav a').forEach(x => x.classList.toggle('on', x.dataset.r === key));
+  $$('#nav a, #more a').forEach(x => x.classList.toggle('on', x.dataset.r === key));
+  $('#morebtn').classList.toggle('on', $$('#more a.on').length > 0); closeMore();
   const el = $('#view');
   try { await (routes[name] || routes.dashboard)(el, a, b); }
   catch (err) { console.error(err); el.innerHTML = `<div class="card">Erreur : ${e(err.message)}</div>`; }

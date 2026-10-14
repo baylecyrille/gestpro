@@ -280,7 +280,7 @@ export async function openLayoutEditor(o) {
   fileIn.addEventListener('change', async () => {
     const f = fileIn.files[0], mode = fileIn.dataset.mode || ''; fileIn.value = ''; if (!f) return;
     try {
-      const data = await compressImage(f, { mode: 'logo', maxChars: 30000 });
+      const data = await compressImage(f, { mode: 'logo', maxChars: 150000 });
       const id = 'tpl' + db.uid(); await db.put('photos', { id, data, v: Date.now() });
       const ratio = await new Promise(res => { const im = new Image(); im.onload = () => res(im.naturalHeight / (im.naturalWidth || 1)); im.onerror = () => res(0.75); im.src = data; });
       if (mode === 'replace') { const it = sel && item(sel); if (it) { push(); it.img = id; await redraw(); } }

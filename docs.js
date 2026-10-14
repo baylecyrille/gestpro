@@ -467,7 +467,13 @@ export async function renderDoc(el, id, arg) {
             try {
               const fx = await import('./facturx-pdf.js');
               let logo = null;
-              try { const r = await fetch(logoSrc(S)); const by = new Uint8Array(await r.arrayBuffer()); logo = by[0] === 0x89 ? { bytes: by, type: 'png' } : by[0] === 0xFF ? { bytes: by, type: 'jpg' } : null; } catch (_) { /* sans logo */ }
+              try { // le logo (PNG, JPG, WebP ou SVG) est converti en PNG pour le PDF
+                const img = new Image(); img.src = logoSrc(S); await img.decode();
+                const w0 = img.naturalWidth || 600, h0 = img.naturalHeight || 200, k = Math.min(1, 900 / Math.max(w0, h0));
+                const cv = document.createElement('canvas'); cv.width = Math.round(w0 * k); cv.height = Math.round(h0 * k); cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+                logo = { bytes: new Uint8Array(await blob.arrayBuffer()), type: 'png' };
+              } catch (_) { /* sans logo */ }
               const pdf = await fx.buildFacturX(mdl, cur, S, { logo });
               downloadFile(base + '-facturx.pdf', pdf, 'application/pdf'); toast('Facture Factur-X créée');
             } catch (err) { alert('Création impossible : ' + (err.message || err)); }
