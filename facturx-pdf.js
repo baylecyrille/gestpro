@@ -127,9 +127,11 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   const dw = cols.q - MX - 60;
   for (const l of m.lines) {
     const ls = wrap(l.name, F, 9, dw);
-    const h = ls.length * 11.5 + 5;
+    const rk = l.allow ? `Remise ${String(l.rem).replace('.', ',')} % : ${money(-l.allow)}` : '';
+    const h = ls.length * 11.5 + (rk ? 10 : 0) + 5;
     if (y - h < 80) { newPage(); head(); }
     ls.forEach((ln, i) => text(ln, MX + 5, y - i * 11.5, F, 9));
+    if (rk) text(rk, MX + 5, y - ls.length * 11.5 + 2, F, 7.5, GREY);
     right(qtyFmt(l.qty), cols.q + 38, y, F, 9); text(clean(l.unit), cols.u + 6, y, F, 9); right(money(l.pu), cols.p + 78, y, F, 9); if (multi) right(String(l.rate).replace('.', ',') + ' %', cols.p + 78 + 52, y, F, 9); right(money(l.total), cols.t - 5, y, F, 9);
     y -= h; pg.drawLine({ start: { x: MX, y: y + 7 }, end: { x: MX + CW, y: y + 7 }, thickness: 0.4, color: LINE });
   }
@@ -138,6 +140,7 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   y -= 6;
   const tx = W - MX - 200;
   const trow = (a, b, bold, bg) => { if (bg) pg.drawRectangle({ x: tx, y: y - 5, width: 200, height: 17, color: BG }); text(a, tx + 6, y, bold ? B : F, bold ? 10.5 : 9.5); right(b, W - MX - 6, y, bold ? B : F, bold ? 10.5 : 9.5); y -= 18; };
+  if (m.allowTotal) { trow('Total HT avant remise', money(m.lineTotal)); trow('Remise' + (m.discPct ? ' ' + String(m.discPct).replace('.', ',') + ' %' : ''), money(-m.allowTotal)); }
   trow('Total HT', money(m.ht)); m.taxes.forEach(x => trow(`TVA ${String(x.rate).replace('.', ',')} %${multi ? ' (sur ' + money(x.basis) + ')' : ''}`, money(x.amount))); trow('Total TTC', money(m.ttc), true, true);
   if (m.prepaid) { trow(m.isCredit ? 'Déjà déduit / remboursé' : 'Déjà réglé', money(-m.prepaid)); trow(m.isCredit ? 'Reste à votre crédit' : 'Reste à payer', money(m.due_amount), true); }
   y -= 8;

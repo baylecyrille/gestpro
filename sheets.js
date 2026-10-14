@@ -21,9 +21,9 @@ const CELL = 45000; // taille maximale d'un morceau de JSON dans une cellule
 const p2 = n => String(n).padStart(2, '0');
 const fdate = u => { const d = new Date(u); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
 const sum = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
-const ttc = d => sums(d.lines, d.tva).ttc;
-const ht = d => sums(d.lines, d.tva).ht;
-const tauxOf = d => sums(d.lines, d.tva).rates.map(x => x.rate).join(' / ');
+const ttc = d => sums(d.lines, d.tva, d.disc).ttc;
+const ht = d => sums(d.lines, d.tva, d.disc).ht;
+const tauxOf = d => sums(d.lines, d.tva, d.disc).rates.map(x => x.rate).join(' / ');
 
 export const TABS = [
   { store: 'products', name: 'Produits', cols: [['Référence', r => r.ref], ['Désignation', r => r.name], ['Code-barres', r => r.barcode], ['Catégorie', r => r.category], ['Unité', r => r.unit], ['Prix achat HT', r => r.buy], ['Prix vente HT', r => r.sell], ['TVA %', r => r.tva], ['Seuil alerte', r => r.min], ['Stock total', r => sum(r.stock)]] },

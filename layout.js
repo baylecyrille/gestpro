@@ -20,7 +20,7 @@ export const BLOCKS = {
 };
 /* Clé de texte (zones) modifiable d'un bloc ; les autres blocs (logo, intitulé, remarque) viennent du document */
 const ZK = { coName: 'coName', coInfo: 'coInfo', certs: 'certs', client: 'client', chantier: 'chantier', title: 'title', dateLine: 'dateLine', methods: 'methods', pay: 'payLbl', creditTxt: 'creditTxt', sigLeft: 'sigLeft', bank: 'bank' };
-export const TBL_ZONES = [['thDes', 'Colonne 1'], ['thQty', 'Colonne 2'], ['thUnit', 'Colonne 3'], ['thPu', 'Colonne 4'], ['thHt', 'Dernière colonne (prix HT)'], ['thTva', 'Colonne TVA (si plusieurs taux)'], ['lblHt', 'Libellé total HT'], ['lblTva', 'Libellé TVA'], ['lblTtc', 'Libellé total TTC'], ['lblPaid', 'Libellé « déjà réglé »'], ['lblLeft', 'Libellé « reste à payer »']];
+export const TBL_ZONES = [['thDes', 'Colonne 1'], ['thQty', 'Colonne 2'], ['thUnit', 'Colonne 3'], ['thPu', 'Colonne 4'], ['thHt', 'Dernière colonne (prix HT)'], ['thTva', 'Colonne TVA (si plusieurs taux)'], ['lblGross', 'Libellé « total HT avant remise »'], ['lblDisc', 'Libellé « remise »'], ['lblHt', 'Libellé total HT'], ['lblTva', 'Libellé TVA'], ['lblTtc', 'Libellé total TTC'], ['lblOpt', 'Libellé « options non comprises »'], ['lblPaid', 'Libellé « déjà réglé »'], ['lblLeft', 'Libellé « reste à payer »']];
 const TBL_LY = [['fs', 'Taille du texte (px)', 9, 18, 0.5, 12.5], ['pad', 'Hauteur des lignes (px)', 1, 16, 1, 5], ['cQty', 'Largeur Qté (%)', 4, 30, 1, ''], ['cUnit', 'Largeur Unité (%)', 4, 30, 1, ''], ['cPu', 'Largeur Prix unit. (%)', 6, 30, 1, ''], ['cHt', 'Largeur Prix H.T (%)', 6, 30, 1, '']];
 
 const I = (k, x, y, w, h, z) => ({ id: k, k, z, x, y, w, h });

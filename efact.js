@@ -1,6 +1,6 @@
 // Facturation électronique (réforme France 2026-2027) : mentions obligatoires, contrôle avant envoi, XML Factur-X (profil EN 16931).
 // Fonctions pures (sans accès au navigateur) : testables hors ligne.
-import { rateOf, byRate, reducedRates } from './vat.js';
+import { rateOf, sums, reducedRates, isOpt, grossHt, lineDisc, lineHt, remOf } from './vat.js';
 const num = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0;
 const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
 const xe = s => String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -48,21 +48,23 @@ export function splitAddress(txt, zipHint, cityHint) {
 
 /* Modèle unique de la facture (utilisé par le XML et le PDF) */
 export function model(doc, S, client = {}, opts = {}) {
-  const src = (doc.lines || []).filter(l => String(l.desig || '').trim() || num(l.pu));
+  const src = (doc.lines || []).filter(l => !isOpt(l) && (String(l.desig || '').trim() || num(l.pu)));
   const lines = src.map((l, i) => {
     const rate = rateOf(l, doc.tva);
-    return { n: i + 1, name: String(l.desig || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Article', qty: num(l.qty) || 0, unit: l.unit || 'u', unitCode: UNIT[l.unit] || 'C62', pu: r2(num(l.pu)), total: r2(num(l.qty) * num(l.pu)), rate, cat: rate > 0 ? 'S' : 'Z' };
+    return { n: i + 1, name: String(l.desig || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Article', qty: num(l.qty) || 0, unit: l.unit || 'u', unitCode: UNIT[l.unit] || 'C62', pu: Math.round(num(l.pu) * 10000) / 10000, gross: grossHt(l), rem: remOf(l), allow: lineDisc(l), total: lineHt(l), rate, cat: rate > 0 ? 'S' : 'Z' };
   });
-  // Ventilation par taux (BG-23) : un groupe par taux utilisé, même à base nulle
-  const taxes = byRate(src, doc.tva, true).map(x => ({ rate: x.rate, cat: x.rate > 0 ? 'S' : 'Z', basis: x.ht, amount: x.tva }));
-  const ht = r2(taxes.reduce((a, x) => a + x.basis, 0)), tva = r2(taxes.reduce((a, x) => a + x.amount, 0)), ttc = r2(ht + tva);
+  // Ventilation par taux (BG-23) : un groupe par taux utilisé, même à base nulle ; la remise sur le total est répartie par taux (BG-20)
+  const T = sums(src, doc.tva, doc.disc, true);
+  const taxes = T.rates.map(x => ({ rate: x.rate, cat: x.rate > 0 ? 'S' : 'Z', basis: x.ht, amount: x.tva, gross: x.gross, allow: x.disc }));
+  const ht = T.ht, tva = T.tva, ttc = T.ttc, lineTotal = T.gross, allowTotal = T.disc;
+  const discPct = doc.disc && doc.disc.t !== '€' ? Math.min(100, num(doc.disc.v)) : 0;
   const prepaid = r2(opts.paid || 0);
   const co = splitAddress(S.address); if (!co.city) co.city = S.city || '';
   const cl = splitAddress([client.address, [client.zip, client.city].filter(Boolean).join(' ')].filter(Boolean).join('\n'), client.zip, client.city);
   const isC = doc.type === 'credit';
   return {
     isCredit: isC, typeCode: isC ? '381' : '380', number: doc.number || '', date: doc.date || '', due: doc.dueDate || '', currency: 'EUR',
-    lines, taxes, ht, tva, ttc, prepaid, due_amount: r2(ttc - prepaid), vatNote: String(opts.vatNote || '').trim(),
+    lines, taxes, ht, tva, ttc, lineTotal, allowTotal, discPct, prepaid, due_amount: r2(ttc - prepaid), vatNote: String(opts.vatNote || '').trim(),
     seller: { name: S.company || '', siren: sirenOf(S.siret), siret: digits(S.siret), vat: tvaIntra(S), addr: co, email: S.email || '', phone: S.phone || '' },
     buyer: { name: cname(client) || 'Client', siren: sirenOf(client.siret), siret: digits(client.siret), addr: cl, email: client.email || '' },
     delivery: String(doc.deliveryAddr || '').trim() ? splitAddress(doc.deliveryAddr) : null,
@@ -94,6 +96,8 @@ export function check(doc, S, client = {}, opts = {}) {
     if (m.vatNote) add('ok', 'Mention du client pour la TVA à taux réduit imprimée');
     else add('warn', 'Taux réduit utilisé sans la mention du client (attestation) : ajoutez-la sur la facture, ou assurez-vous qu\'elle figure sur le devis signé');
   }
+  if ((doc.lines || []).some(isOpt)) add('info', 'Lignes en option : non comptées, absentes du fichier');
+  if (m.allowTotal) add('ok', 'Remise sur le total ' + (m.taxes.length > 1 ? 'répartie entre les taux de TVA' : 'indiquée dans le fichier') + ' (' + m.allowTotal.toFixed(2).replace('.', ',') + ' € HT)');
   if (doc.type === 'credit' && !opts.fromInvoiceNumber) add('warn', 'Avoir sans facture d\'origine rattachée');
   // Client
   if (!client || !client.id) add('err', 'Client non renseigné');
@@ -146,7 +150,7 @@ ${m.lines.map(l => `    <ram:IncludedSupplyChainTradeLineItem>
       <ram:SpecifiedTradeProduct><ram:Name>${xe(l.name)}</ram:Name></ram:SpecifiedTradeProduct>
       <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${l.pu.toFixed(4).replace(/0{1,2}$/, '')}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="${l.unitCode}">${l.qty}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
-      <ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>${l.cat}</ram:CategoryCode><ram:RateApplicablePercent>${l.rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax><ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${amt(l.total)}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
+      <ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>${l.cat}</ram:CategoryCode><ram:RateApplicablePercent>${l.rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax>${l.allow ? `<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator><ram:CalculationPercent>${l.rem}</ram:CalculationPercent><ram:BasisAmount>${amt(l.gross)}</ram:BasisAmount><ram:ActualAmount>${amt(l.allow)}</ram:ActualAmount><ram:ReasonCode>95</ram:ReasonCode><ram:Reason>Remise</ram:Reason></ram:SpecifiedTradeAllowanceCharge>` : ''}<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${amt(l.total)}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>
     </ram:IncludedSupplyChainTradeLineItem>`).join('\n')}
     <ram:ApplicableHeaderTradeAgreement>
       <ram:SellerTradeParty>
@@ -163,10 +167,12 @@ ${m.lines.map(l => `    <ram:IncludedSupplyChainTradeLineItem>
       <ram:PaymentReference>${xe(m.number)}</ram:PaymentReference>
       <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
       <ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>${m.iban ? '58' : '1'}</ram:TypeCode>${m.iban ? `<ram:PayeePartyCreditorFinancialAccount><ram:IBANID>${xe(m.iban)}</ram:IBANID></ram:PayeePartyCreditorFinancialAccount>${m.bic ? `<ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>${xe(m.bic)}</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>` : ''}` : ''}</ram:SpecifiedTradeSettlementPaymentMeans>
-${m.taxes.map(x => `      <ram:ApplicableTradeTax><ram:CalculatedAmount>${amt(x.amount)}</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode><ram:BasisAmount>${amt(x.basis)}</ram:BasisAmount><ram:CategoryCode>${x.cat}</ram:CategoryCode><ram:RateApplicablePercent>${x.rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax>`).join('\n')}
+${m.taxes.map(x => `      <ram:ApplicableTradeTax><ram:CalculatedAmount>${amt(x.amount)}</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode><ram:BasisAmount>${amt(x.basis)}</ram:BasisAmount><ram:CategoryCode>${x.cat}</ram:CategoryCode><ram:RateApplicablePercent>${x.rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax>`).join('\n')}${m.taxes.filter(x => x.allow).map(x => `
+      <ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator>${m.discPct && r2(x.gross * m.discPct / 100) === x.allow ? `<ram:CalculationPercent>${m.discPct}</ram:CalculationPercent><ram:BasisAmount>${amt(x.gross)}</ram:BasisAmount>` : ''}<ram:ActualAmount>${amt(x.allow)}</ram:ActualAmount><ram:ReasonCode>95</ram:ReasonCode><ram:Reason>Remise</ram:Reason><ram:CategoryTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>${x.cat}</ram:CategoryCode><ram:RateApplicablePercent>${x.rate}</ram:RateApplicablePercent></ram:CategoryTradeTax></ram:SpecifiedTradeAllowanceCharge>`).join('')}
       ${m.terms || m.due ? `<ram:SpecifiedTradePaymentTerms>${m.terms ? `<ram:Description>${xe(m.terms.slice(0, 500))}</ram:Description>` : ''}${m.due ? `<ram:DueDateDateTime><udt:DateTimeString format="102">${d102(m.due)}</udt:DateTimeString></ram:DueDateDateTime>` : ''}</ram:SpecifiedTradePaymentTerms>` : ''}
       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-        <ram:LineTotalAmount>${amt(m.ht)}</ram:LineTotalAmount>
+        <ram:LineTotalAmount>${amt(m.lineTotal)}</ram:LineTotalAmount>${m.allowTotal ? `
+        <ram:AllowanceTotalAmount>${amt(m.allowTotal)}</ram:AllowanceTotalAmount>` : ''}
         <ram:TaxBasisTotalAmount>${amt(m.ht)}</ram:TaxBasisTotalAmount>
         <ram:TaxTotalAmount currencyID="EUR">${amt(m.tva)}</ram:TaxTotalAmount>
         <ram:GrandTotalAmount>${amt(m.ttc)}</ram:GrandTotalAmount>${m.prepaid > 0 ? `

@@ -437,10 +437,24 @@ $('#morebtn').addEventListener('click', ev => { ev.stopPropagation(); const m = 
 document.addEventListener('click', ev => { if (!ev.target.closest('#more')) closeMore(); });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMore(); });
 
+/* Barre du bas : les 8 sections quand la largeur le permet, sinon 5 sections + menu « Plus » */
+const NAV_EXTRA = ['contacts', 'facebook', 'settings'];
+function layoutNav() {
+  const nav = $('#nav'), more = $('#more'), btn = $('#morebtn'); if (!nav || !more || !btn) return;
+  const all = [...nav.querySelectorAll('a'), ...more.querySelectorAll('a')];
+  const extras = all.filter(a => NAV_EXTRA.includes(a.dataset.r)).sort((a, b) => NAV_EXTRA.indexOf(a.dataset.r) - NAV_EXTRA.indexOf(b.dataset.r));
+  const base = all.filter(a => !NAV_EXTRA.includes(a.dataset.r) && !a.hidden).length, extra = extras.filter(a => !a.hidden).length;
+  const wide = window.innerWidth >= (base + extra) * 68;
+  if (wide) { extras.forEach(a => nav.insertBefore(a, btn)); btn.hidden = true; closeMore(); }
+  else { extras.forEach(a => more.appendChild(a)); btn.hidden = extras.every(a => a.hidden); }
+}
+let navRaf = 0;
+window.addEventListener('resize', () => { cancelAnimationFrame(navRaf); navRaf = requestAnimationFrame(layoutNav); });
+
 function applyAccess() {
   const ok = { dashboard: auth.can('dashboard'), sites: auth.can('sites'), planning: auth.can('planning'), stock: auth.can('stock'), docs: auth.can('quotes') || auth.can('invoices') || auth.can('credits'), contacts: auth.can('contacts'), facebook: auth.can('facebook'), settings: auth.can('settings') };
   $$('#nav a, #more a').forEach(a => (a.hidden = ok[a.dataset.r] === false));
-  $('#morebtn').hidden = $$('#more a').every(a => a.hidden); closeMore();
+  layoutNav(); closeMore();
   const u = $('#user'), me = auth.currentUser();
   u.hidden = !me;
   if (me) { const fn = me.first || me.name.split(' ')[0]; u.innerHTML = (me.photo ? `<img class="av" src="${e(me.photo)}" alt="">` : `<span class="av ini">${e(fn.slice(0, 1).toUpperCase())}</span>`) + e(fn); }
@@ -472,7 +486,7 @@ async function route() {
   const key = name === 'doc' ? 'docs' : name === 'site' ? 'sites' : name;
   $$('#nav a, #more a').forEach(x => x.classList.toggle('on', x.dataset.r === key));
   $('#morebtn').classList.toggle('on', $$('#more a.on').length > 0); closeMore();
-  const el = $('#view');
+  const el = $('#view'); el.classList.remove('wide');
   try { await (routes[name] || routes.dashboard)(el, a, b); }
   catch (err) { console.error(err); el.innerHTML = `<div class="card">Erreur : ${e(err.message)}</div>`; }
   window.scrollTo(0, 0);

@@ -454,7 +454,7 @@ export async function siteOutModal(products, locs, preset = {}) {
         // besoins = lignes (liées au stock) des devis acceptés / facturés du chantier, moins ce qui est déjà sorti
         $('#needs', f).onclick = () => {
           const sid = f.elements.siteId.value, want = {};
-          docs.filter(d => d.type === 'quote' && d.siteId === sid && ['accepted', 'invoiced'].includes(d.status)).forEach(d => d.lines.forEach(l => { if (l.pid) want[l.pid] = (want[l.pid] || 0) + num(l.qty); }));
+          docs.filter(d => d.type === 'quote' && d.siteId === sid && ['accepted', 'invoiced'].includes(d.status)).forEach(d => d.lines.forEach(l => { if (l.pid && !(l.opt === true || l.opt === 1 || l.opt === '1')) want[l.pid] = (want[l.pid] || 0) + num(l.qty); }));
           moves.filter(m => m.siteId === sid && m.type === 'out').forEach(m => { if (want[m.productId] !== undefined) want[m.productId] -= num(m.qty); });
           let n = 0;
           for (const [pid, q] of Object.entries(want)) {

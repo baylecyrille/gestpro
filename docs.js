@@ -2,7 +2,8 @@
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
 import * as efact from './efact.js';
-import { sums, fmtRate, reducedRates, listRates, RATES } from './vat.js';
+import { sums, fmtRate, reducedRates, listRates, RATES, isOpt } from './vat.js';
+import { checkDoc } from './doccheck.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
@@ -35,9 +36,9 @@ const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte b
 const REAL_METHODS = METHODS.filter(m => m[0] !== 'avoir');
 const TVAS = RATES;
 
-/* Totaux d'un document : un taux de TVA par ligne (sinon celui du document) ; `rates` = ventilation par taux */
+/* Totaux d'un document : un taux de TVA par ligne (sinon celui du document), remises de ligne et sur le total, lignes en option exclues ; `rates` = ventilation par taux */
 export function totals(doc) {
-  return sums(doc.lines || [], doc.tva);
+  return sums(doc.lines || [], doc.tva, doc.disc);
 }
 export const paidOf = (payments, docId) => round2(payments.filter(p => p.docId === docId).reduce((a, p) => a + num(p.amount), 0));
 export function payState(doc, payments) {
@@ -94,7 +95,7 @@ async function autoCloseSite(siteId) {
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
 async function makeInvoice(q) {
-  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)), blocks: q.blocks ? copyBlocks(q.blocks) : undefined, siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
   ensureBlocks(inv);
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
@@ -164,13 +165,25 @@ export async function renderDocs(el, tab = 'quote') {
 }
 
 /* ---------- Éditeur ---------- */
+/* Champs repris quand on duplique un document (ni numéro, ni date, ni règlements, ni pièces jointes, ni lien avec un devis ou une facture) */
+const COPY_KEYS = ['clientId', 'siteId', 'siteRef', 'siteAddr', 'intro', 'note', 'tva', 'terms', 'disc', 'tpl', 'zones', 'layout', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed'];
 export async function renderDoc(el, id, arg) {
-  let cur, isNew = false;
+  let cur, isNew = false, copyOf = null;
   if (id === 'new') {
-    const [ty, sid] = String(arg || '').split('-'); // « quote-<id chantier> » : créé depuis la fiche chantier
-    cur = await newDoc(ty === 'invoice' ? 'invoice' : ty === 'credit' ? 'credit' : 'quote'); if (cur.type === 'invoice') cur.status = 'pending'; if (cur.type === 'credit') { cur.status = 'issued'; cur.terms = ''; cur.intro = 'Avoir'; } isNew = true;
-    const st = sid && await db.get('sites', sid);
-    if (st) Object.assign(cur, { siteId: st.id, clientId: st.clientId, siteRef: st.name, siteAddr: st.address });
+    const cp = /^copy:(.+)$/.exec(String(arg || ''));
+    if (cp) { // duplication d'un devis ou d'une facture
+      const src = await db.get('documents', cp[1]);
+      if (!src || src.type === 'credit') { el.innerHTML = '<div class="empty">Document à dupliquer introuvable.</div>'; return; }
+      ensureBlocks(src);
+      const keep = {}; for (const k of COPY_KEYS) if (src[k] !== undefined && src[k] !== null) keep[k] = JSON.parse(JSON.stringify(src[k]));
+      cur = await newDoc(src.type, { ...keep, blocks: copyBlocks(src.blocks) }); if (cur.type === 'invoice') cur.status = 'pending';
+      copyOf = src; isNew = true;
+    } else {
+      const [ty, sid] = String(arg || '').split('-'); // « quote-<id chantier> » : créé depuis la fiche chantier
+      cur = await newDoc(ty === 'invoice' ? 'invoice' : ty === 'credit' ? 'credit' : 'quote'); if (cur.type === 'invoice') cur.status = 'pending'; if (cur.type === 'credit') { cur.status = 'issued'; cur.terms = ''; cur.intro = 'Avoir'; } isNew = true;
+      const st = sid && await db.get('sites', sid);
+      if (st) Object.assign(cur, { siteId: st.id, clientId: st.clientId, siteRef: st.name, siteAddr: st.address });
+    }
   }
   else cur = await db.get('documents', id);
   if (!cur) { el.innerHTML = '<div class="empty">Document introuvable.</div>'; return; }
@@ -193,6 +206,12 @@ export async function renderDoc(el, id, arg) {
   const isQ = cur.type === 'quote', isC = cur.type === 'credit';
   const DN = Object.fromEntries(allDocs.map(d => [d.id, d]));
   let payments = allPay.filter(p => p.docId === cur.id);
+  const run = {}; el._docRun = run; // identifie cet affichage : les actions différées d'un document déjà quitté s'arrêtent
+  let hdrOpen = isNew || !cur.clientId, sidefit = null, auxT = 0;
+  const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* stockage indisponible */ } };
+  const sideWanted = () => lsGet('gp_sidepv') !== '0';
+  const sideOn = () => sideWanted() && typeof matchMedia === 'function' && matchMedia('(min-width:1200px)').matches; // aperçu à côté : grands écrans uniquement
 
   const siteLabel = x => {
     const nums = allDocs.filter(q => q.siteId === x.id && q.number).sort((a, b) => a.date.localeCompare(b.date)).map(q => q.number).slice(0, 3).join(', ');
@@ -217,14 +236,27 @@ export async function renderDoc(el, id, arg) {
     if (Object.keys(z).length) cur.zones = z; else delete cur.zones;
   };
 
+  const applySide = () => {
+    if (el._docRun !== run || !$('#edwrap', el)) return;
+    const on = sideOn();
+    el.classList.toggle('wide', on); $('#edwrap', el).classList.toggle('split', on); $('#sidepv', el).hidden = !on;
+    $('#sidebtn', el)?.classList.toggle('on', sideWanted());
+    sidefit = null; if (on) updAux();
+  };
+  const hdrSummary = () => [cname(curClient()) || 'Aucun client', cur.siteRef, cur.date ? dateFr(cur.date) : '', (isQ ? QS : isC ? CS : IS)[cur.status]].filter(Boolean).join(' · ');
+  const discHtml = () => `<label class="f"><span>Remise sur le total</span><div class="dr"><input name="discV" type="number" step="any" min="0" inputmode="decimal" value="${cur.disc && num(cur.disc.v) > 0 ? cur.disc.v : ''}" placeholder="0"><select name="discT"><option value="%" ${cur.disc?.t === '€' ? '' : 'selected'}>%</option><option value="€" ${cur.disc?.t === '€' ? 'selected' : ''}>€ HT</option></select></div></label>`;
+  const stickyHtml = t => `<div class="stickybar" id="sbar"><div class="sbt"><span>HT <b id="sbht">${eur(t.ht)}</b></span><span>TTC <b id="sbttc">${eur(t.ttc)}</b></span></div><span class="sp"></span><button type="button" class="btn sm warnbtn" id="sbchk" hidden></button><button type="button" class="btn primary" id="sbsave">Enregistrer</button></div>`;
+
   const draw = () => {
-    const t = totals(cur); redKey = redRates().join('|');
+    const t = totals(cur); redKey = redRates().join('|'); sidefit = null;
+    const split = sideOn();
+    el.classList.toggle('wide', split);
     el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a>${cur.siteId && sites.some(x => x.id === cur.siteId) ? `<a class="btn ghost" href="#/site/${cur.siteId}">🏗 Chantier</a>` : ''}<span class="sp"></span>
-      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
+      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn sidebtn${sideWanted() ? ' on' : ''}" id="sidebtn" title="Afficher l'aperçu du document à côté de l'éditeur (grands écrans)">▥ Aperçu à côté</button><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
-    <div id="pvwrap" hidden></div><div id="edwrap">
-    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}
-    <div class="card"><div class="cols">
+    <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
+    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
+    <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
       <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
       ${F('Date', 'date', cur.date, { type: 'date' })}
@@ -237,13 +269,15 @@ export async function renderDoc(el, id, arg) {
       ${!isQ && !isC ? F('Date limite de règlement', 'dueDate', cur.dueDate || '', { type: 'date' }) : ''}
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA par défaut du document', 'tva', cur.tva, { type: 'select', options: TVAS })}
-    </div></div>
+    </div></details>
     <div class="card lines"><div id="blocks"></div>
+      <div class="discrow" id="discrow">${discHtml()}</div>
       <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew ? '<div id="dfiles"></div>' : ''}
-    ${!isNew ? actionsHtml() : ''}</div>`;
+    ${!isNew ? actionsHtml() : ''}${stickyHtml(t)}</div>
+    <aside id="sidepv" ${split ? '' : 'hidden'}><div class="sph"><b>Aperçu</b><span class="sp"></span><button type="button" class="btn sm" id="sidefull" title="Aperçu plein écran, où l'on peut cliquer sur un texte pour le modifier">⤢ Plein écran</button></div><div class="pvpaper" id="sidepaper"><div class="pvin" id="sidein"></div></div></aside></div>`;
     bind();
   };
 
@@ -271,12 +305,13 @@ export async function renderDoc(el, id, arg) {
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
       ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${!isC && cur.number ? '<button class="btn" id="dupbtn" title="Crée un nouveau brouillon à partir de ce document">⧉ Dupliquer</button>' : ''}
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
       <button class="btn danger" id="delete">Supprimer</button></div>${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
-  /* Totaux de l'éditeur : une ligne de TVA par taux présent */
-  const totalsHtml = t => `<div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht)}</small>` : ''}</span><b>${eur(r.tva)}</b></div>`).join('')}<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>`;
+  /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, options à part */
+  const totalsHtml = t => `${t.disc ? `<div><span>Total HT avant remise</span><b>${eur(t.gross)}</b></div><div class="trate"><span>Remise${cur.disc && cur.disc.t !== '€' ? ' ' + fmtRate(Math.min(100, num(cur.disc.v))) : ''}</span><b>− ${eur(t.disc)}</b></div>` : ''}<div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht)}</small>` : ''}</span><b>${eur(r.tva)}</b></div>`).join('')}<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>${t.opt ? `<div class="optrow"><span>Options non comprises (HT)</span><b>${eur(t.opt)}</b></div>` : ''}`;
   /* Taux réduit : rappel de la mention que le client certifie (remplace l'ancienne attestation) */
   const redRates = () => (cur.type === 'credit' ? [] : reducedRates(cur.lines, cur.tva));
   const redHintHtml = () => {
@@ -289,20 +324,57 @@ export async function renderDoc(el, id, arg) {
   const refreshTotals = () => {
     const t = totals(cur);
     $('#totbox', el).innerHTML = totalsHtml(t);
+    const sb = $('#sbht', el); if (sb) { sb.textContent = eur(t.ht); $('#sbttc', el).textContent = eur(t.ttc); }
     const k = redRates().join('|');
     if (k !== redKey) { redKey = k; const sel = $('[name=tvaRed]', el); if (sel) cur.tvaRed = sel.value; $('#redhint', el).innerHTML = redHintHtml(); }
+    schedAux();
+  };
+  /* Contrôles du document (avant enregistrement ou à la demande) */
+  const runChecks = () => { const probe = JSON.parse(JSON.stringify(cur)); pruneBlocks(probe); return checkDoc(probe, { client: curClient(), others: allDocs }); };
+  const checksHtml = list => list.map(r => `<div class="chk ${r.level}"><b>${r.level === 'err' ? '✖' : '⚠'}</b> ${e(r.msg)}</div>`).join('');
+  const confirmChecks = list => new Promise(res => {
+    let ok = false;
+    const d = modal('Avant d\'enregistrer', `<p class="muted" style="margin-top:0">Quelques points à vérifier :</p>${checksHtml(list)}`, () => { ok = true; }, { submitLabel: 'Enregistrer quand même' });
+    d.addEventListener('close', () => res(ok), { once: true });
+  });
+  /* Mises à jour différées (après une frappe) : pastille des contrôles et aperçu à côté */
+  const schedAux = () => { clearTimeout(auxT); auxT = setTimeout(updAux, 350); };
+  const updAux = async () => {
+    if (el._docRun !== run || !$('#edwrap', el)) return;
+    readHeader(); const hs = $('#hdrsum', el); if (hs) hs.textContent = hdrSummary();
+    const probe = JSON.parse(JSON.stringify(cur)); pruneBlocks(probe);
+    const res = checkDoc(probe, { client: curClient(), others: allDocs }), chip = $('#sbchk', el);
+    if (chip) { chip.hidden = !res.length; chip.textContent = '⚠ ' + res.length; chip.title = res.map(r => r.msg).join('\n'); chip.classList.toggle('bad', res.some(r => r.level === 'err')); }
+    if (sideOn() && $('#sidein', el)) {
+      const html = await sheetHtml(probe);
+      if (el._docRun !== run || !$('#sidein', el)) return;
+      $('#sidein', el).innerHTML = html;
+      if (sidefit) sidefit.apply(); else sidefit = fitPaper($('#sidepaper', el), $('#sidein', el));
+    }
+  };
+  /* Remise sur le total */
+  const readDisc = () => {
+    const v = $('[name=discV]', el), tt = $('[name=discT]', el); if (!v || !tt) return;
+    if (num(v.value) > 0) cur.disc = { t: tt.value === '€' ? '€' : '%', v: num(v.value) }; else delete cur.disc;
   };
 
   const readHeader = () => {
     $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
-    readZones();
+    readZones(); readDisc();
     cur.tva = num(cur.tva);
   };
 
   const save = async () => {
     readHeader();
-    if (!cur.clientId) { toast('Choisissez un client'); return false; }
+    const res = runChecks(), errs = res.filter(r => r.level === 'err');
+    if (errs.length) {
+      toast(errs[0].msg); const h = $('#hdr', el); if (h && errs.some(r => r.code !== 'disc100')) { h.open = true; hdrOpen = true; }
+      if (errs.length > 1) modal('À corriger avant d\'enregistrer', checksHtml(errs), null);
+      return false;
+    }
+    const warns = res.filter(r => r.level === 'warn' && !(cur.ack || []).includes(r.code));
+    if (warns.length) { if (!(await confirmChecks(warns))) return false; cur.ack = [...new Set([...(cur.ack || []), ...warns.map(r => r.code)])]; }
     if (!cur.number && (cur.type === 'quote' || cur.status !== 'draft')) cur.number = await nextNumber(cur.type);
     pruneBlocks(cur);
     await db.put('documents', cur);
@@ -319,7 +391,7 @@ export async function renderDoc(el, id, arg) {
     ${F('Motif', 'reason', '', { ph: 'ex : malfaçon, remise accordée, erreur de facturation…' })}`,
     async o => {
       const cr = await newDoc('credit', { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', intro: 'Avoir sur facture ' + cur.number, note: o.reason, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number,
-        lines: o.mode === 'total' ? JSON.parse(JSON.stringify(cur.lines)) : [{ desig: 'Remise / geste commercial', qty: 1, unit: 'u', pu: 0 }] });
+        lines: o.mode === 'total' ? JSON.parse(JSON.stringify(cur.lines)) : [{ desig: 'Remise / geste commercial', qty: 1, unit: 'u', pu: 0 }], ...(o.mode === 'total' && cur.disc ? { disc: { ...cur.disc } } : {}) });
       cr.number = await nextNumber('credit'); await db.put('documents', cr);
       toast(`Avoir ${cr.number} créé`); go('#/doc/' + cr.id);
     }, { submitLabel: 'Créer l\'avoir' });
@@ -367,6 +439,15 @@ export async function renderDoc(el, id, arg) {
 
   const bind = () => {
     bindRichFields(el);
+    const hdr = $('#hdr', el);
+    hdr.addEventListener('toggle', () => { hdrOpen = hdr.open; });
+    hdr.addEventListener('change', () => { readHeader(); $('#hdrsum', el).textContent = hdrSummary(); });
+    $('.edmain', el).addEventListener('input', schedAux);
+    $('#discrow', el).addEventListener('input', () => { readDisc(); refreshTotals(); });
+    $('#sbsave', el).onclick = save;
+    $('#sbchk', el).onclick = () => { readHeader(); const r = runChecks(); modal('Points à vérifier', r.length ? checksHtml(r) : '<p>Aucun point à signaler.</p>', null); };
+    $('#sidebtn', el).onclick = () => { lsSet('gp_sidepv', sideWanted() ? '0' : '1'); applySide(); };
+    $('#sidefull', el).onclick = () => showPv(true);
     let pvChanged = false;
     const renderPv = async () => {
       const c = JSON.parse(JSON.stringify(cur)); pruneBlocks(c);
@@ -462,8 +543,10 @@ export async function renderDoc(el, id, arg) {
       draw();
     };
     $('#save', el).onclick = save;
+    updAux();
     if (isNew) return;
     $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); printDoc(cur); };
+    $('#dupbtn', el)?.addEventListener('click', async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); go('#/doc/new/copy:' + cur.id); });
     $('#mailbtn', el)?.addEventListener('click', async () => {
       readHeader(); pruneBlocks(cur); await db.put('documents', cur);
       (await import('./docmail.js')).mailModal({ doc: cur, S, client: curClient(), payments, DN, onSent: () => refresh() });
@@ -525,6 +608,8 @@ export async function renderDoc(el, id, arg) {
       if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
+        const nopt = (cur.lines || []).filter(isOpt).length;
+        if (nopt && !confirm(`${nopt === 1 ? 'Une ligne est en option et ne sera pas reprise' : nopt + ' lignes sont en option et ne seront pas reprises'} dans la facture (décochez « Option » sur le devis pour celles que le client a acceptées). Créer la facture ?`)) return;
         if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
         const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);
@@ -538,6 +623,7 @@ export async function renderDoc(el, id, arg) {
       });
     }
   };
+  try { matchMedia('(min-width:1200px)').addEventListener('change', applySide); } catch { /* ancien navigateur */ }
   draw();
 }
 
@@ -570,9 +656,12 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['thHt', 'Tableau – dernière colonne', 'Prix H.T', 1, 'qic'],
     ['thTva', 'Tableau – colonne TVA (si plusieurs taux)', 'TVA', 1, 'qic'],
     ['lblHt', 'Totaux – libellé HT', 'Total HT', 1, 'qic'],
+    ['lblGross', 'Totaux – libellé HT avant remise', 'Total HT avant remise', 1, 'qic'],
+    ['lblDisc', 'Totaux – libellé remise', 'Remise', 1, 'qic'],
     ['lblTva', 'Totaux – libellé TVA', 'TVA', 1, 'qic'],
     ['lblTtc', 'Totaux – libellé TTC', isC ? 'Total TTC de l\'avoir' : 'Total TTC', 1, 'qic'],
     ['vatRed', 'Mention du client – TVA à taux réduit (travaux dans un logement)', TVA_RED_TXT, 6, 'qi'],
+    ['lblOpt', 'Totaux – options non comprises', 'Options non comprises dans le total (HT)', 1, 'qi'],
     ['lblPaid', 'Totaux – déjà réglé', isC ? 'Déjà déduit / remboursé' : 'Déjà réglé', 1, 'ic'],
     ['lblLeft', 'Totaux – reste', isC ? 'Reste à votre crédit' : 'Reste à payer', 1, 'ic'],
     ['methods', 'Moyens de paiement acceptés', '**Moyens de paiement acceptés :** ' + REAL_METHODS.filter(m => m[0] !== 'autre').map(m => m[1]).join(', ') + '.', 2, 'q'],
@@ -680,9 +769,11 @@ export async function sheetHtml(doc, opts = {}) {
     ${canvasHtml(tpl, 'h', content, LE)}
     <div class="tblwrap"><table class="${colgroup(LY, multi) ? 'fx' : ''}">${colgroup(LY, multi)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th>${multi ? `<th>${Z('thTva')}</th>` : ''}<th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
+    ${t.disc ? `<tr><td colspan="${NC - 1}">${Z('lblGross')}</td><td class="n">${eur(t.gross)}</td></tr><tr><td colspan="${NC - 1}">${Z('lblDisc')}${doc.disc && doc.disc.t !== '€' ? ' ' + e(fmtRate(Math.min(100, num(doc.disc.v)))) : ''}</td><td class="n">− ${eur(t.disc)}</td></tr>` : ''}
     <tr><td colspan="${NC - 1}">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
     ${t.rates.map(r => `<tr><td colspan="${NC - 2}">${Z('lblTva')}${multi ? ` <span class="small">(sur ${eur(r.ht)} HT)</span>` : ''}</td><td class="n">${fmtRate(r.rate)}</td><td class="n">${eur(r.tva)}</td></tr>`).join('')}
     <tr class="t"><td colspan="${NC - 1}">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
+    ${t.opt && !isC ? `<tr class="optt"><td colspan="${NC - 1}"><i>${Z('lblOpt')}</i></td><td class="n"><i>${eur(t.opt)}</i></td></tr>` : ''}
     ${used ? `<tr><td colspan="${NC - 1}">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="${NC - 1}">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     ${vatMent}
     </tbody></table></div>
