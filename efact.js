@@ -1,6 +1,6 @@
 // Facturation électronique (réforme France 2026-2027) : mentions obligatoires, contrôle avant envoi, XML Factur-X (profil EN 16931).
 // Fonctions pures (sans accès au navigateur) : testables hors ligne.
-import { rateOf, sums, reducedRates, isOpt, grossHt, lineDisc, lineHt, remOf, depsOf, depTva } from './vat.js';
+import { rateOf, sums, reducedRates, isOpt, grossHt, lineDisc, lineHt, remOf, depsOf, depTva, refOn } from './vat.js';
 const num = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0;
 const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
 const xe = s => String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -51,7 +51,7 @@ export function model(doc, S, client = {}, opts = {}) {
   const src = (doc.lines || []).filter(l => !isOpt(l) && (String(l.desig || '').trim() || num(l.pu)));
   const lines = src.map((l, i) => {
     const rate = rateOf(l, doc.tva);
-    return { n: i + 1, name: String(l.desig || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Article', qty: num(l.qty) || 0, unit: l.unit || 'u', unitCode: UNIT[l.unit] || 'C62', pu: Math.round(num(l.pu) * 10000) / 10000, gross: grossHt(l), rem: remOf(l), allow: lineDisc(l), total: lineHt(l), rate, cat: rate > 0 ? 'S' : 'Z' };
+    return { n: i + 1, ref: refOn(doc) ? String(l.ref ?? '').replace(/\s+/g, ' ').trim() : '', name: String(l.desig || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Article', qty: num(l.qty) || 0, unit: l.unit || 'u', unitCode: UNIT[l.unit] || 'C62', pu: Math.round(num(l.pu) * 10000) / 10000, gross: grossHt(l), rem: remOf(l), allow: lineDisc(l), total: lineHt(l), rate, cat: rate > 0 ? 'S' : 'Z' };
   });
   // Ventilation par taux (BG-23) : un groupe par taux utilisé, même à base nulle ; la remise sur le total est répartie par taux (BG-20)
   const deps = depsOf(doc), isC = doc.type === 'credit';
@@ -157,7 +157,7 @@ export function facturxXml(m) {
   <rsm:SupplyChainTradeTransaction>
 ${m.lines.map(l => `    <ram:IncludedSupplyChainTradeLineItem>
       <ram:AssociatedDocumentLineDocument><ram:LineID>${l.n}</ram:LineID></ram:AssociatedDocumentLineDocument>
-      <ram:SpecifiedTradeProduct><ram:Name>${xe(l.name)}</ram:Name></ram:SpecifiedTradeProduct>
+      <ram:SpecifiedTradeProduct>${l.ref ? `<ram:SellerAssignedID>${xe(l.ref)}</ram:SellerAssignedID>` : ''}<ram:Name>${xe(l.name)}</ram:Name></ram:SpecifiedTradeProduct>
       <ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>${l.pu.toFixed(4).replace(/0{1,2}$/, '')}</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
       <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="${l.unitCode}">${l.qty}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
       <ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>${l.cat}</ram:CategoryCode><ram:RateApplicablePercent>${l.rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax>${l.allow ? `<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator><udt:Indicator>false</udt:Indicator></ram:ChargeIndicator><ram:CalculationPercent>${l.rem}</ram:CalculationPercent><ram:BasisAmount>${amt(l.gross)}</ram:BasisAmount><ram:ActualAmount>${amt(l.allow)}</ram:ActualAmount><ram:ReasonCode>95</ram:ReasonCode><ram:Reason>Remise</ram:Reason></ram:SpecifiedTradeAllowanceCharge>` : ''}<ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>${amt(l.total)}</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement>

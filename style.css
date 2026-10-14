@@ -104,10 +104,10 @@ dialog::backdrop{background:#0006}
 .discrow .dr input{flex:1;min-width:0}
 .discrow .dr select{width:92px;flex:none}
 /* bouton « Options » de l'éditeur : TVA ligne par ligne, remises */
-.optbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px}
-.optbar .btn.on{background:#eaf1fb;border-color:var(--p2);color:var(--p)}
-.optbar .muted{font-size:12.5px}
-.optpanel{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;border:1px solid var(--bd);border-radius:10px;background:#f7faff;padding:10px 12px;margin-bottom:10px}
+.optbtn[hidden]{display:none}
+.optbtn.on{background:#eaf1fb;border-color:var(--p2);color:var(--p)}
+.optpanel{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px 22px;border:1px solid var(--bd);border-radius:10px;background:#f7faff;padding:10px 12px;margin:0 0 12px}
+.optpanel .og.sideog{display:none}
 .optpanel[hidden]{display:none}
 .optpanel .og{display:flex;flex-direction:column;gap:7px;min-width:0}
 .optpanel .ck{display:flex;gap:8px;align-items:flex-start;margin:0;cursor:pointer}
@@ -115,12 +115,36 @@ dialog::backdrop{background:#0006}
 .optpanel .ck small{display:block;color:var(--mut);font-size:12px;font-weight:400}
 .optpanel .f{margin:2px 0 0}
 .optpanel .foot{grid-column:1/-1;margin:0;font-size:12px}
+.optpanel .og>b{font-size:13px}
+/* informations internes sous chaque ligne : référence, photo, prix d'achat, marge, stock */
+.lines .ln .d{display:flex;gap:6px;align-items:center;min-width:0}
+.lines .ln .d>input[data-k=desig]{flex:1;min-width:0}
+.lines .ln .d .lref{width:84px;flex:none;min-width:0}
+.lines .ln .lth{flex:none;width:38px;height:38px;border-radius:7px;overflow:hidden;background:#eef2f8;display:inline-flex}
+.lines .ln .lth:empty{display:none}
+.lines .ln .lth img{width:100%;height:100%;object-fit:cover}
+.lines .ln .mx{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;font-size:12.5px;color:var(--mut)}
+.lines .ln .mx[hidden]{display:none}
+.lines .ln .mx .pa{display:inline-flex;align-items:center;gap:5px;margin:0}
+.lines .ln .mx .pa input{width:86px;padding:4px 6px}
+.lines .ln .mx [data-mg]:empty,.lines .ln .mx [data-stk]:empty{display:none}
+.lines .ln .mx .pos{color:var(--ok);font-weight:600}
+.lines .ln .mx .neg,.margbox .neg{color:var(--bad);font-weight:600}
+.margbox .pos{color:var(--ok)}
+.lines .ln .mx .stk.low{color:var(--bad);font-weight:600}
+.totals .margbox{display:block;border-top:1px dashed var(--bd);margin-top:8px;padding-top:6px;font-size:13px}
+.totals .margbox>div{padding:2px 0}
+.totals .margbox>b{display:block}
+.totals .margbox small{display:block;font-size:11.5px}
 /* saisie des lignes sans TVA propre (.nv) et/ou sans remise de ligne (.nr) */
 #blks.nv .ln select.vat,#blks.nr .ln .rem{display:none}
 @media(min-width:621px){
  .lines #blks.nv .ln{grid-template-columns:1fr 70px 70px 90px}
 }
 @media(max-width:620px){
+ .lines .ln .d{flex-wrap:wrap}
+ .lines .ln .d>input[data-k=desig]{flex:1 1 100%;order:3}
+ .lines .ln .d .lref{flex:1;width:auto;max-width:170px}
  .optpanel{grid-template-columns:1fr}
  .lines #blks.nv .ln{grid-template-columns:1fr 1fr 1fr}
 }
@@ -422,10 +446,10 @@ details.hdr[open] .hdrtog{transform:rotate(180deg)}
 .stickybar .warnbtn.bad{background:#fde5e5;border-color:var(--bad);color:var(--bad)}
 .stickybar .warnbtn[hidden]{display:none}
 .chk{margin:6px 0}.chk.warn{color:#8a5a00}.chk.err{color:var(--bad)}
-.sidebtn{display:none}
+
 #sidepv{display:none}
 @media(min-width:1200px){
- .sidebtn{display:inline-block}.sidebtn.on{background:#eaf1fb;border-color:var(--p2);color:var(--p)}
+ .optpanel .og.sideog{display:flex}
  #view.wide{max-width:1560px}
  #edwrap.split{display:grid;grid-template-columns:minmax(0,1fr) clamp(380px,34vw,640px);gap:16px;align-items:start}
  #edwrap.split #sidepv{display:block;position:sticky;top:64px;max-height:calc(100vh - 150px);overflow:auto}

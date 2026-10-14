@@ -2,8 +2,8 @@
 import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
-import { UNITS, pickProduct, productModal } from './stock.js';
-import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt } from './vat.js';
+import { UNITS, pickProduct, productModal, total as stockOf } from './stock.js';
+import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt, hasCost, lineMargin, refOn } from './vat.js';
 
 let SEQ = 0;
 export const bid = () => 'b' + Date.now().toString(36) + (SEQ++).toString(36);
@@ -55,11 +55,11 @@ export function syncLines(d) { d.lines = linesOf(d.blocks); }
 /* Ce que le document contient déjà : taux de TVA propres aux lignes (dont ceux qui diffèrent du taux du document) et remises de ligne */
 export function lineStats(d) {
   const L = (d.blocks || []).filter(b => b.type === 'line');
-  return { own: L.filter(b => hasOwnRate(b)).length, diff: L.filter(b => hasOwnRate(b) && num(b.tva) !== num(d.tva)).length, rem: L.filter(b => remOf(b) > 0).length };
+  return { own: L.filter(b => hasOwnRate(b)).length, diff: L.filter(b => hasOwnRate(b) && num(b.tva) !== num(d.tva)).length, rem: L.filter(b => remOf(b) > 0).length, opt: L.filter(b => isOpt(b)).length };
 }
-/* 'tvaLine' : toutes les lignes reprennent le taux du document · 'remLine' : supprime les remises de ligne */
+/* 'tvaLine' : toutes les lignes reprennent le taux du document · 'remLine' : supprime les remises de ligne · 'optLine' : les lignes en option deviennent des lignes comptées */
 export function clearLineOpt(d, k) {
-  for (const b of d.blocks || []) if (b.type === 'line') { if (k === 'tvaLine') delete b.tva; else if (k === 'remLine') delete b.rem; }
+  for (const b of d.blocks || []) if (b.type === 'line') { if (k === 'tvaLine') delete b.tva; else if (k === 'remLine') delete b.rem; else if (k === 'optLine') delete b.opt; }
   syncLines(d);
 }
 export function pruneBlocks(d) {
@@ -83,7 +83,7 @@ const LIGHT = ['#dbe7f7', '#fde8e8', '#e6f4ea', '#fff4cc', '#ece6f8', '#eeeeee',
 const pal = (attr, cols, title) => `<details class="pal"><summary title="${title}">${attr === 'fc' ? 'A' : '▇'}</summary><div class="palbox">${cols.map(c => `<button type="button" class="sw" data-${attr}="${c}" style="background:${c}"></button>`).join('')}<label class="sw custom" title="Autre couleur"><input type="color" data-${attr}-x value="#c62f2f"><i>+</i></label></div></details>`;
 const secStyle = b => [`color:${b.color || STY.secColor}`, `background:${b.bg === 'none' ? 'transparent' : b.bg || STY.secBg}`, b.bold !== false && 'font-weight:700', b.italic && 'font-style:italic', b.align && `text-align:${b.align}`].filter(Boolean).join(';');
 export function printRows(d) {
-  const st = sectionTotals(d.blocks), vat = multiRate(d.lines || linesOf(d.blocks), d.tva), NC = vat ? 6 : 5;
+  const st = sectionTotals(d.blocks), vat = multiRate(d.lines || linesOf(d.blocks), d.tva), rf = refOn(d), NC = (vat ? 6 : 5) + (rf ? 1 : 0);
   const subRow = sec => `<tr class="subt"><td colspan="${NC - 1}" style="text-align:right;font-style:italic">Sous-total ${e(sec.title)}</td><td class="n"><i>${eur(st[sec.id])}</i></td></tr>`;
   const out = []; let open = null;
   for (const b of d.blocks) {
@@ -99,7 +99,7 @@ export function printRows(d) {
     if (b.type === 'line') {
       const opt = isOpt(b), rem = remOf(b), net = lineHt(b);
       const des = `${opt ? '<b>Option :</b> ' : ''}${e(b.desig)}${rem ? `<div class="small">Remise ${e(fmtRate(rem))} : − ${eur(lineDisc(b))}</div>` : ''}`;
-      return `<tr${opt ? ' class="opt"' : ''}${bgl}><td>${des}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td>${vat ? `<td class="n">${e(fmtRate(rateOf(b, d.tva)))}</td>` : ''}<td class="n">${opt ? `<i>${eur(net)}</i><div class="small">non compté</div>` : eur(net)}</td></tr>`;
+      return `<tr${opt ? ' class="opt"' : ''}${bgl}>${rf ? `<td class="ref">${e(b.ref ?? '')}</td>` : ''}<td>${des}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td>${vat ? `<td class="n">${e(fmtRate(rateOf(b, d.tva)))}</td>` : ''}<td class="n">${opt ? `<i>${eur(net)}</i><div class="small">non compté</div>` : eur(net)}</td></tr>`;
     }
     if (b.type === 'section') return `<tr class="sec"><td colspan="${NC}" style="${e(secStyle(b))}">${e(b.title)}</td></tr>`;
     if (b.type === 'text') return `<tr class="txt"><td colspan="${NC}"${bgt}>${sanitize(b.html)}</td></tr>`;
@@ -173,7 +173,50 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   bindToolbar(box, () => active, t => { const blk = d.blocks.find(x => x.id === t.closest('.blk')?.dataset.id); if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
   const host = $('#blks', box);
   /* Options de saisie (bouton « Options » de l'éditeur) : masque le taux de TVA et/ou la remise de chaque ligne (view() → { tva, rem }) */
-  const applyView = () => { const v = (view && view()) || {}; host.classList.toggle('nv', v.tva === false); host.classList.toggle('nr', v.rem === false); };
+  const V = () => ({ tva: true, rem: true, ref: false, margin: false, stock: false, photo: false, opt: true, sub: true, ...((view && view()) || {}) });
+  const applyView = () => { const v = V(); host.classList.toggle('nv', v.tva === false); host.classList.toggle('nr', v.rem === false); };
+  /* Produits (stock, prix d'achat, référence) et photos : chargés à la demande, pour les informations internes de chaque ligne */
+  const byId = new Map(), photos = new Map(), tracked = p => Object.keys(p.stock || {}).length > 0 || num(p.min) > 0;
+  const money = v => eur(v);
+  /* Reprend de la fiche produit la référence et le prix d'achat d'une ligne qui n'en a pas encore (instantané : un changement de fiche ne modifie pas un devis déjà établi) */
+  const snapAll = () => {
+    let ch = false;
+    for (const b of d.blocks) {
+      if (b.type !== 'line' || !b.pid) continue; const p = byId.get(b.pid); if (!p) continue;
+      if (!String(b.ref ?? '').trim() && String(p.ref ?? '').trim()) { b.ref = p.ref; ch = true; }
+      if (!hasCost(b) && num(p.buy) > 0) { b.pa = p.buy; ch = true; }
+    }
+    return ch;
+  };
+  const marginHtml = b => {
+    if (!hasCost(b)) return '<span class="muted">Marge : saisissez le prix d\'achat</span>';
+    const m = lineMargin(b);
+    return `<span class="${m.margin < 0 ? 'neg' : 'pos'}">Marge ${money(m.margin)}${m.ht ? ' · ' + (Math.round(m.pct * 10) / 10).toString().replace('.', ',') + ' %' : ''}</span>`;
+  };
+  const paintMeta = () => {
+    const v = V(); if (!(v.margin || v.stock || v.photo || v.ref)) return;
+    const need = {}; if (v.stock) for (const b of d.blocks) if (b.type === 'line' && b.pid && !isOpt(b)) need[b.pid] = Math.round(((need[b.pid] || 0) + num(b.qty)) * 1000) / 1000;
+    $$('.blk-line', host).forEach(row => {
+      const b = d.blocks[idx(row.dataset.id)]; if (!b) return;
+      for (const k of ['ref', 'pa']) { const inp = $(`[data-k=${k}]`, row); if (inp && document.activeElement !== inp && inp.value !== String(b[k] ?? '')) inp.value = b[k] ?? ''; } // valeurs reprises de la fiche produit
+      const mg = $('[data-mg]', row); if (mg) mg.innerHTML = marginHtml(b);
+      const p = b.pid ? byId.get(b.pid) : null, sk = $('[data-stk]', row);
+      if (sk) {
+        if (p && tracked(p)) { const st = stockOf(p), nd = need[b.pid] || 0, low = nd > st; sk.className = 'stk' + (low ? ' low' : ''); sk.textContent = low ? `⚠ Stock ${st} ${p.unit || 'u'} pour ${nd} demandé${nd > 1 ? 's' : ''}` : `Stock : ${st} ${p.unit || 'u'}`; }
+        else { sk.className = 'stk'; sk.textContent = ''; }
+      }
+      const th = $('[data-th]', row); if (th) { const ph = b.pid ? photos.get(b.pid) : ''; th.innerHTML = ph ? `<img src="${e(ph)}" alt="">` : ''; }
+      const mx = $('.mx', row); if (mx) mx.hidden = ![...mx.children].some(c => c.matches('label') || c.textContent.trim());
+    });
+  };
+  const loadMeta = () => {
+    const v = V(); if (!(v.margin || v.stock || v.photo || v.ref)) return;
+    const ids = [...new Set(d.blocks.filter(b => b.type === 'line' && b.pid).map(b => b.pid))];
+    Promise.all(ids.map(async id => {
+      if (!byId.has(id)) { const p = await db.get('products', id); if (p) byId.set(id, p); }
+      if (v.photo && !photos.has(id)) { const r = await db.get('photos', id); photos.set(id, (r && r.data) || ''); }
+    })).then(() => { if (!box.isConnected) return; if (snapAll()) { change(); } paintMeta(); }).catch(() => {});
+  };
   const idx = id => d.blocks.findIndex(b => b.id === id);
   const add = (b, at) => { b.id = bid(); at == null ? d.blocks.push(b) : d.blocks.splice(at, 0, b); draw(); change(); return b; };
 
@@ -182,14 +225,15 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   /* Total de la ligne : montant brut barré si remise, mention « option » si non comptée */
   const totHtml = b => (isOpt(b) ? '<small class="muted optlbl">option<span class="lg">, non comptée</span></small> ' : '') + (remOf(b) ? `<s class="muted">${eur(grossHt(b))}</s> ` : '') + eur(lineHt(b));
   const inner = b => {
-    if (b.type === 'line') return `<div class="ln"><div class="d"><input data-k="desig" list="gp-prods" autocomplete="off" value="${e(b.desig)}" placeholder="Désignation"></div>
+    if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<input data-k="desig" list="gp-prods" autocomplete="off" value="${e(b.desig)}" placeholder="Désignation"></div>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${b.qty}" placeholder="Qté">
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT">
       <select data-k="tva" class="vat${hasOwnRate(b) ? '' : ' inh'}" title="Taux de TVA de cette ligne">${vatOpts(b)}</select>
       <div class="ex"><label class="rem" title="Remise accordée sur cette ligne"><span>Remise</span><input data-k="rem" type="number" step="any" min="0" max="100" inputmode="decimal" value="${remOf(b) || ''}" placeholder="Rem."><span>%</span></label>
-        ${isQuote || isOpt(b) ? `<label class="optk" title="Ligne proposée en option : elle est imprimée sur le devis mais n'est pas comptée dans le total"><input type="checkbox" data-k="opt" ${isOpt(b) ? 'checked' : ''}><span>Option</span></label>` : '<span class="optk"></span>'}
-        <div class="tot" data-t>${totHtml(b)}</div></div></div>`;
+        ${(isQuote && v.opt) || isOpt(b) ? `<label class="optk" title="Ligne proposée en option : elle est imprimée sur le devis mais n'est pas comptée dans le total"><input type="checkbox" data-k="opt" ${isOpt(b) ? 'checked' : ''}><span>Option</span></label>` : '<span class="optk"></span>'}
+        <div class="tot" data-t>${totHtml(b)}</div></div>
+      ${v.margin || v.stock ? `<div class="mx">${v.margin ? `<label class="pa" title="Prix d'achat unitaire HT : information interne, jamais imprimée"><span>P.A. HT</span><input data-k="pa" type="number" step="0.01" inputmode="decimal" value="${e(b.pa ?? '')}" placeholder="0"></label><span class="mg" data-mg></span>` : ''}${v.stock ? '<span class="stk" data-stk></span>' : ''}</div>` : ''}</div>`; }
     if (b.type === 'section') return `<div class="sec-ed"><input data-k="title" value="${e(b.title)}" placeholder="Titre de la section" style="${e(secStyle(b))}">
       <b class="subv" data-sub="${b.id}">${b.sub ? 'Sous-total : ' + eur(sectionTotals(d.blocks)[b.id]) : ''}</b>
       <span class="mini">${pal('sc', COLOR_NAMES.map(c => c[0]).concat('#ffffff'), 'Couleur du texte')}${pal('sb', LIGHT.concat(COLOR_NAMES.map(c => c[0])), 'Couleur de fond')}
@@ -205,7 +249,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}${b.type === 'line' && isOpt(b) ? ' optl' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
       <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
-    updSub();
+    updSub(); const snapped = snapAll(); paintMeta(); loadMeta(); if (snapped) change();
   };
   draw(); applyView();
 
@@ -216,12 +260,13 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     const k = ev.target.dataset.k; if (!k) return;
     if (k === 'opt') { if (ev.target.checked) b.opt = true; else delete b.opt; row.classList.toggle('optl', isOpt(b)); }
     else if (k === 'rem') { if (num(ev.target.value) > 0) b.rem = ev.target.value; else delete b.rem; }
+    else if (k === 'pa' || k === 'ref') { if (String(ev.target.value).trim() === '') delete b[k]; else b[k] = ev.target.value; }
     else b[k] = ev.target.value;
     if (k === 'tva') { if (b.tva === '') delete b.tva; ev.target.classList.toggle('inh', !hasOwnRate(b)); }
     if (k === 'desig' && (ev.inputType === 'insertReplacementText' || ev.inputType === undefined)) autofill(b, row); // choix dans la liste des produits
     if (b.type === 'line') $('[data-t]', row).innerHTML = totHtml(b);
     if (b.type === 'section') { const inp = $('[data-k=title]', row); inp.setAttribute('style', secStyle(b)); }
-    change();
+    change(); if (b.type === 'line') paintMeta();
   });
   host.addEventListener('focusin', ev => { if (ev.target.classList.contains('rte')) active = ev.target; });
   host.addEventListener('click', ev => {
@@ -256,10 +301,12 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   const byName = new Map();
   const autofill = (b, row) => {
     const p = byName.get(String(b.desig || '').trim().toLowerCase()); if (!p || (b.pid && b.pid !== p.id)) return;
-    b.pid = p.id;
+    b.pid = p.id; byId.set(p.id, p);
     if (!num(b.pu)) { b.pu = p.sell || 0; $('[data-k=pu]', row).value = b.pu; }
+    if (!String(b.ref ?? '').trim() && String(p.ref ?? '').trim()) { b.ref = p.ref; const ri = $('[data-k=ref]', row); if (ri) ri.value = b.ref; }
+    if (!hasCost(b) && num(p.buy) > 0) { b.pa = p.buy; const pi = $('[data-k=pa]', row); if (pi) pi.value = b.pa; }
     if ((!b.unit || b.unit === 'u') && p.unit) { b.unit = p.unit; const u = $('[data-k=unit]', row); if (u) u.value = p.unit; }
-    $('[data-t]', row).innerHTML = totHtml(b); change();
+    $('[data-t]', row).innerHTML = totHtml(b); change(); loadMeta(); paintMeta();
   };
   db.all('products').then(ps => {
     const sale = ps.filter(p => p.kind !== 'internal' && p.name).sort((a, b) => a.name.localeCompare(b.name, 'fr')).slice(0, 1500);
@@ -295,9 +342,9 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   });
 
   $('#addl', box).onclick = () => add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
-  $('#addp', box).onclick = () => { readHeader(); pickProduct(p => add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0 }), { sale: true }); };
+  $('#addp', box).onclick = () => { readHeader(); pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}) }); }, { sale: true }); };
   $('#addpdf', box).onclick = () => { readHeader(); import('./supplier-import.js').then(m => m.supplierImportModal({ onLines: ls => ls.forEach(l => add(l)) })); };
-  $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: true });
+  $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: V().sub !== false });
   $('#adde', box).onclick = () => add({ type: 'sectionend' });
   $('#addt', box).onclick = () => add({ type: 'text', html: '' });
   $('#addb', box).onclick = () => add({ type: 'pagebreak' });

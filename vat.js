@@ -112,3 +112,28 @@ export const multiRate = (lines, def) => byRate(lines, def).length > 1;
 /* Taux réduits présents (pour la mention du client) */
 export const reducedRates = (lines, def) => byRate(lines, def).filter(x => isReduced(x.rate) && x.ht !== 0).map(x => x.rate).sort((a, b) => a - b);
 export const listRates = rates => rates.map(fmtRate).join(' et ');
+
+/* Référence du produit : colonne « Réf. » du document (choisie dans les Options) — imprimée seulement si au moins une ligne en porte une */
+export const refOn = d => !!(d && d.opts && (d.opts.ref === 1 || d.opts.ref === true || d.opts.ref === '1')) && (d.lines || []).some(l => String(l.ref ?? '').trim() !== '');
+
+/* Marge (information interne, jamais imprimée) : prix d'achat unitaire HT saisi sur la ligne (l.pa). Le prix d'achat 0 est un prix connu. */
+export const hasCost = l => !!l && l.pa !== undefined && l.pa !== null && String(l.pa).trim() !== '';
+export const lineCost = l => r2(num(l?.qty) * num(l?.pa));
+export function lineMargin(l) {
+  const ht = lineHt(l), cost = lineCost(l), m = r2(ht - cost);
+  return { ht, cost, margin: m, pct: ht ? m / ht * 100 : 0 };
+}
+/* Marge du document sur les lignes comptées dont le prix d'achat est connu (la remise sur le total est répartie au prorata).
+   n = lignes avec prix d'achat, miss = lignes comptées sans prix d'achat (non incluses). */
+export function docMargin(doc) {
+  const lines = (doc && doc.lines) || [], s = docSums(doc), f = s.gross > 0 ? s.full.ht / s.gross : 1;
+  let ht = 0, cost = 0, n = 0, miss = 0;
+  for (const l of lines) {
+    if (isOpt(l)) continue;
+    if (!hasCost(l)) { if (lineHt(l) !== 0) miss++; continue; }
+    n++; ht += lineHt(l); cost += lineCost(l);
+  }
+  ht = r2(ht * f); cost = r2(cost);
+  const margin = r2(ht - cost);
+  return { n, miss, ht, cost, margin, pct: ht ? margin / ht * 100 : 0, coef: cost ? ht / cost : 0 };
+}

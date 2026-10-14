@@ -127,7 +127,7 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   head();
   const dw = cols.q - MX - 60;
   for (const l of m.lines) {
-    const ls = wrap(l.name, F, 9, dw);
+    const ls = wrap(l.ref ? `Réf. ${l.ref} – ${l.name}` : l.name, F, 9, dw);
     const rk = l.allow ? `Remise ${String(l.rem).replace('.', ',')} % : ${money(-l.allow)}` : '';
     const h = ls.length * 11.5 + (rk ? 10 : 0) + 5;
     if (y - h < 80) { newPage(); head(); }

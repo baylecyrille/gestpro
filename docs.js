@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
 import * as efact from './efact.js';
-import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt } from './vat.js';
+import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt, docMargin, refOn } from './vat.js';
 import { checkDoc } from './doccheck.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
@@ -284,25 +284,33 @@ export async function renderDoc(el, id, arg) {
     if (el._docRun !== run || !$('#edwrap', el)) return;
     const on = sideOn();
     el.classList.toggle('wide', on); $('#edwrap', el).classList.toggle('split', on); $('#sidepv', el).hidden = !on;
-    $('#sidebtn', el)?.classList.toggle('on', sideWanted());
+    const sc = $('[data-side]', el); if (sc) sc.checked = sideWanted();
     sidefit = null; if (on) updAux();
   };
-  /* Options de saisie des lignes (bouton « Options ») : TVA ligne par ligne, remise de ligne, remise sur le total.
+  /* Options de l'éditeur (bouton « Options », en haut à côté d'Éditeur) : ce qui se saisit et s'affiche sur les lignes.
      Choix propre au document (cur.opts), repris comme réglage par défaut des prochains documents sur cet appareil.
-     Une saisie qui contient déjà des valeurs reste affichée : on ne cache jamais un montant qui compte dans le total. */
-  const optHas = k => { const st = lineStats(cur); return k === 'tvaLine' ? st.own > 0 : k === 'remLine' ? st.rem > 0 : !!(cur.disc && num(cur.disc.v) > 0); };
-  const optOn = k => optHas(k) || (cur.opts && k in cur.opts ? !!cur.opts[k] : getPref('ed_' + k, '1') !== '0');
-  const optSummary = () => {
-    const r = [optOn('remLine') && 'par ligne', optOn('remTot') && 'sur le total'].filter(Boolean);
-    return (optOn('tvaLine') ? 'TVA par ligne' : 'TVA ' + fmtRate(num(cur.tva))) + ' · ' + (r.length ? 'Remises ' + r.join(' + ') : 'Sans remise');
-  };
-  const optPanelHtml = () => `<div class="og"><b>TVA</b>
-      <label class="ck"><input type="checkbox" data-opt="tvaLine" ${optOn('tvaLine') ? 'checked' : ''}><span>Choisir le taux de TVA ligne par ligne<small>Décoché : toutes les lignes ont le taux du document.</small></span></label>
-      <label class="f"><span>Taux de TVA du document</span><select id="opttva">${TVAS.map(([v, l]) => `<option value="${v}" ${String(num(cur.tva)) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
-    <div class="og"><b>Remises</b>
-      <label class="ck"><input type="checkbox" data-opt="remLine" ${optOn('remLine') ? 'checked' : ''}><span>Remise en % sur chaque ligne<small>Décoché : le champ « Remise » disparaît des lignes.</small></span></label>
-      <label class="ck"><input type="checkbox" data-opt="remTot" ${optOn('remTot') ? 'checked' : ''}><span>Remise sur le total du document<small>En % ou en € HT, répartie entre les taux de TVA.</small></span></label></div>
+     Un choix qui cacherait des valeurs déjà comptées dans le total (taux de ligne, remises, lignes en option) demande une confirmation et remet ces valeurs à zéro :
+     on ne cache jamais un montant qui compte. Les informations internes (prix d'achat, marge, stock, photo) ne sont jamais imprimées. */
+  const OPTS = [
+    ['tvaLine', 'TVA', 1, 'Choisir le taux de TVA ligne par ligne', 'Décoché : toutes les lignes ont le taux de TVA du document (champ de l\'en-tête).', 'qic'],
+    ['remLine', 'Remises', 1, 'Remise en % sur chaque ligne', 'Décoché : le champ « Remise » disparaît des lignes.', 'qic'],
+    ['remTot', 'Remises', 1, 'Remise sur le total du document', 'En % ou en € HT, répartie entre les taux de TVA.', 'qic'],
+    ['ref', 'Lignes', 0, 'Référence du produit sur chaque ligne', 'Reprise de la fiche produit. Imprimée en première colonne (« Réf. ») dès qu\'une référence est renseignée.', 'qic'],
+    ['optLine', 'Lignes', 1, 'Lignes en option (case « Option »)', 'Une option est imprimée sur le devis mais non comptée dans le total.', 'q'],
+    ['secSub', 'Lignes', 1, 'Sous-total sur les nouvelles sections', 'Décoché : les sections ajoutées n\'affichent pas de sous-total (réglable section par section avec Σ).', 'qic'],
+    ['margin', 'Informations internes · jamais imprimées', 0, 'Prix d\'achat et marge', 'P.A. HT par ligne (repris de la fiche produit), marge par ligne et marge totale du document.', 'qi'],
+    ['stock', 'Informations internes · jamais imprimées', 0, 'Stock disponible', 'Sous chaque produit suivi en stock, avec une alerte si la quantité demandée dépasse le stock.', 'qi'],
+    ['photo', 'Informations internes · jamais imprimées', 0, 'Photo du produit', 'Petite photo de la fiche produit à gauche de la ligne (non imprimée).', 'qic']
+  ].filter(o => o[5].includes(cur.type[0]));
+  const OPT_DEF = Object.fromEntries(OPTS.map(o => [o[0], o[2]]));
+  const optHas = k => { const st = lineStats(cur); return k === 'tvaLine' ? st.own > 0 : k === 'remLine' ? st.rem > 0 : k === 'optLine' ? st.opt > 0 : k === 'remTot' ? !!(cur.disc && num(cur.disc.v) > 0) : false; };
+  const optOn = k => optHas(k) || (cur.opts && k in cur.opts ? !!cur.opts[k] : getPref('ed_' + k, String(OPT_DEF[k] ?? (k === 'optLine' || k === 'secSub' ? 1 : 0))) !== '0');
+  const optPanelHtml = () => {
+    const groups = []; for (const o of OPTS) { let g = groups.find(x => x[0] === o[1]); if (!g) groups.push(g = [o[1], []]); g[1].push(o); }
+    return groups.map(([g, os]) => `<div class="og"><b>${e(g)}</b>${os.map(([k, , , label, hint]) => `<label class="ck"><input type="checkbox" data-opt="${k}" ${optOn(k) ? 'checked' : ''}><span>${e(label)}<small>${e(hint)}</small></span></label>`).join('')}</div>`).join('')
+      + `<div class="og sideog"><b>Affichage</b><label class="ck"><input type="checkbox" data-side ${sideWanted() ? 'checked' : ''}><span>Aperçu du document à côté de l'éditeur<small>Grands écrans uniquement.</small></span></label></div>
     <p class="muted foot">Ces choix valent pour ce document et sont proposés aux prochains documents sur cet appareil. Décocher une saisie déjà remplie la remet à zéro (confirmation demandée).</p>`;
+  };
   const hdrSummary = () => [cname(curClient()) || 'Aucun client', cur.siteRef, cur.date ? dateFr(cur.date) : '', (isQ ? QS : isC ? CS : IS)[cur.status]].filter(Boolean).join(' · ');
   const discHtml = () => `<label class="f"><span>Remise sur le total</span><div class="dr"><input name="discV" type="number" step="any" min="0" inputmode="decimal" value="${cur.disc && num(cur.disc.v) > 0 ? cur.disc.v : ''}" placeholder="0"><select name="discT"><option value="%" ${cur.disc?.t === '€' ? '' : 'selected'}>%</option><option value="€" ${cur.disc?.t === '€' ? 'selected' : ''}>€ HT</option></select></div></label>`;
   const stickyHtml = t => `<div class="stickybar" id="sbar"><div class="sbt"><span>HT <b id="sbht">${eur(t.ht)}</b></span><span><span id="sbtl">${t.hasDep ? 'Net' : 'TTC'}</span> <b id="sbttc">${eur(t.ttc)}</b></span></div><span class="sp"></span><button type="button" class="btn sm warnbtn" id="sbchk" hidden></button><button type="button" class="btn primary" id="sbsave">Enregistrer</button></div>`;
@@ -312,8 +320,9 @@ export async function renderDoc(el, id, arg) {
     const split = sideOn();
     el.classList.toggle('wide', split);
     el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a>${cur.siteId && sites.some(x => x.id === cur.siteId) ? `<a class="btn ghost" href="#/site/${cur.siteId}">🏗 Chantier</a>` : ''}<span class="sp"></span>
-      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn sidebtn${sideWanted() ? ' on' : ''}" id="sidebtn" title="Afficher l'aperçu du document à côté de l'éditeur (grands écrans)">▥ Aperçu à côté</button><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
+      <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn sm optbtn${optOpen ? ' on' : ''}" id="optbtn" aria-expanded="${optOpen}" title="Choisir ce qui se saisit et s'affiche sur les lignes : TVA, remises, référence, marge, stock, photo…">⚙ Options</button><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
+    <div class="optpanel" id="optpanel" ${optOpen ? '' : 'hidden'}>${optPanelHtml()}</div>
     <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${isQ && cur.status === 'invoiced' ? invoicedBannerHtml() : ''}${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
     <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
@@ -330,8 +339,7 @@ export async function renderDoc(el, id, arg) {
       ${F('Statut', 'status', cur.status, { type: 'select', options: Object.entries(isQ ? Object.fromEntries(Object.entries(QS).filter(([k]) => k !== 'invoiced' || canInv || cur.status === 'invoiced')) : isC ? CS : IS) })}
       ${F('TVA par défaut du document', 'tva', cur.tva, { type: 'select', options: TVAS })}
     </div></details>
-    <div class="card lines"><div class="optbar"><button type="button" class="btn sm${optOpen ? ' on' : ''}" id="optbtn" aria-expanded="${optOpen}" title="Choisir ce qui se saisit sur les lignes : TVA et remises">⚙ Options</button><span class="muted" id="optsum">${e(optSummary())}</span></div>
-      <div class="optpanel" id="optpanel" ${optOpen ? '' : 'hidden'}>${optPanelHtml()}</div><div id="blocks"></div>
+    <div class="card lines"><div id="blocks"></div>
       <div class="discrow" id="discrow">${optOn('remTot') ? discHtml() : ''}</div>
       <div id="depbox">${depBoxHtml()}</div>
       <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
@@ -389,7 +397,16 @@ export async function renderDoc(el, id, arg) {
       <button class="btn danger" id="delete">Supprimer</button></div>${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
   /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, acomptes déjà facturés, options à part */
-  const totalsHtml = t => `${t.disc ? `<div><span>Total HT avant remise</span><b>${eur(t.gross)}</b></div><div class="trate"><span>Remise${cur.disc && cur.disc.t !== '€' ? ' ' + fmtRate(Math.min(100, num(cur.disc.v))) : ''}</span><b>− ${eur(t.disc)}</b></div>` : ''}<div><span>Total HT</span><b id="tht">${eur(t.full.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht0)}</small>` : ''}</span><b>${eur(r.tva0)}</b></div>`).join('')}${t.hasDep ? `<div><span>Total TTC</span><b>${eur(t.full.ttc)}</b></div><div class="trate dep"><span>Acomptes déjà facturés</span><b>− ${eur(t.depo.ttc)}</b></div><div class="big"><span>Net à payer</span><span id="tttc">${eur(t.ttc)}</span></div>` : `<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>`}${t.opt ? `<div class="optrow"><span>Options non comprises (HT)</span><b>${eur(t.opt)}</b></div>` : ''}`;
+  /* Marge du document (information interne, jamais imprimée) */
+  const pc = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
+  const marginBoxHtml = () => {
+    const m = docMargin(cur);
+    if (!m.n) return '<div class="margbox"><b>Marge</b><span class="muted">Saisissez le prix d\'achat des lignes pour la calculer (information interne).</span></div>';
+    return `<div class="margbox"><div><span>Marge${m.miss ? ` <small class="muted">(${m.n} ligne${m.n > 1 ? 's' : ''} sur ${m.n + m.miss})</small>` : ''}</span><b class="${m.margin < 0 ? 'neg' : 'pos'}">${eur(m.margin)}</b></div>
+      <div class="trate"><span>Sur le prix de vente</span><b>${pc(m.pct)} %</b></div>${m.coef ? `<div class="trate"><span>Coefficient (vente ÷ achat)</span><b>× ${(Math.round(m.coef * 100) / 100).toString().replace('.', ',')}</b></div>` : ''}
+      <div class="trate"><span>Achats</span><b>${eur(m.cost)}</b></div><small class="muted">Information interne, jamais imprimée.</small></div>`;
+  };
+  const totalsHtml = t => `${t.disc ? `<div><span>Total HT avant remise</span><b>${eur(t.gross)}</b></div><div class="trate"><span>Remise${cur.disc && cur.disc.t !== '€' ? ' ' + fmtRate(Math.min(100, num(cur.disc.v))) : ''}</span><b>− ${eur(t.disc)}</b></div>` : ''}<div><span>Total HT</span><b id="tht">${eur(t.full.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht0)}</small>` : ''}</span><b>${eur(r.tva0)}</b></div>`).join('')}${t.hasDep ? `<div><span>Total TTC</span><b>${eur(t.full.ttc)}</b></div><div class="trate dep"><span>Acomptes déjà facturés</span><b>− ${eur(t.depo.ttc)}</b></div><div class="big"><span>Net à payer</span><span id="tttc">${eur(t.ttc)}</span></div>` : `<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>`}${t.opt ? `<div class="optrow"><span>Options non comprises (HT)</span><b>${eur(t.opt)}</b></div>` : ''}${optOn('margin') ? marginBoxHtml() : ''}`;
   /* Acomptes déjà facturés (facture finale) : liste en lecture seule et mise à jour si les factures d'acompte ont changé depuis */
   const depBoxHtml = () => {
     const deps = depsOf(cur), df = !isQ && !isC && !cur.deposit ? depsDiff(cur, allDocs) : null;
@@ -464,6 +481,7 @@ export async function renderDoc(el, id, arg) {
     if (warns.length) { if (!(await confirmChecks(warns))) return false; cur.ack = [...new Set([...(cur.ack || []), ...warns.map(r => r.code)])]; }
     if (!cur.number && (cur.type === 'quote' || cur.status !== 'draft')) cur.number = await nextNumber(cur.type);
     pruneBlocks(cur);
+    if (optOn('ref') || cur.opts) cur.opts = { ...(cur.opts || {}), ref: optOn('ref') ? 1 : 0 }; // la colonne « Réf. » imprimée suit le document, pas l'appareil
     await db.put('documents', cur);
     if (!isQ && !isC) await syncInvStatus(cur.id);
     await bumpSite(cur);
@@ -578,7 +596,7 @@ export async function renderDoc(el, id, arg) {
     });
     $('#sbsave', el).onclick = save;
     $('#sbchk', el).onclick = () => { readHeader(); const r = runChecks(); modal('Points à vérifier', r.length ? checksHtml(r) : '<p>Aucun point à signaler.</p>', null); };
-    $('#sidebtn', el).onclick = () => { lsSet('gp_sidepv', sideWanted() ? '0' : '1'); applySide(); };
+    $('[data-side]', el).onchange = ev => { lsSet('gp_sidepv', ev.target.checked ? '1' : '0'); applySide(); };
     $('#sidefull', el).onclick = () => showPv(true);
     let pvChanged = false;
     const renderPv = async () => {
@@ -612,7 +630,7 @@ export async function renderDoc(el, id, arg) {
           ta.addEventListener('keydown', kev => { if (kev.key === 'Escape') end(false); });
         });
       } else if (pvChanged) { pvChanged = false; draw(); return; }
-      $('#pvwrap', el).hidden = !on; $('#edwrap', el).hidden = on;
+      $('#pvwrap', el).hidden = !on; $('#edwrap', el).hidden = on; $('#optbtn', el).hidden = on; $('#optpanel', el).hidden = on || !optOpen;
       $('#vedit', el).classList.toggle('on', !on); $('#vprev', el).classList.toggle('on', on);
       if (on) { window.scrollTo?.(0, 0); fp?.apply(); }
     };
@@ -637,23 +655,23 @@ export async function renderDoc(el, id, arg) {
     $('#vlayout', el).onclick = openVisual;
     $('#vprev', el).onclick = () => showPv(true); $('#vedit', el).onclick = () => showPv(false);
     addressAutocomplete($('[name=siteAddr]', el), it => { $('[name=siteAddr]', el).value = it.label; });
-    const blk = mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader, view: () => ({ tva: optOn('tvaLine'), rem: optOn('remLine') }) });
-    $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); const ot = $('#opttva', el); if (ot) ot.value = String(cur.tva); $('#optsum', el).textContent = optSummary(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
-    /* Bouton « Options » */
+    const blk = mountBlocks($('#blocks', el), cur, { onChange: refreshTotals, readHeader, view: () => ({ tva: optOn('tvaLine'), rem: optOn('remLine'), ref: optOn('ref'), margin: optOn('margin'), stock: optOn('stock'), photo: optOn('photo'), opt: optOn('optLine'), sub: optOn('secSub') }) });
+    $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
+    /* Bouton « Options » (en haut, à côté d'Éditeur) */
     $('#optbtn', el).onclick = () => { optOpen = !optOpen; $('#optpanel', el).hidden = !optOpen; $('#optbtn', el).classList.toggle('on', optOpen); $('#optbtn', el).setAttribute('aria-expanded', String(optOpen)); };
-    $('#opttva', el).onchange = ev => { const h = $('[name=tva]', el); h.value = ev.target.value; h.dispatchEvent(new Event('change', { bubbles: true })); };
     $$('[data-opt]', el).forEach(c => { c.onchange = () => {
       const k = c.dataset.opt, on = c.checked; readHeader(); readDisc();
       if (!on) {
-        const st = lineStats(cur), pl = n => (n > 1 ? 's' : '');
-        if (k === 'tvaLine' && st.diff && !confirm(`${st.diff} ligne${pl(st.diff)} ${st.diff > 1 ? 'ont' : 'a'} un taux de TVA différent de celui du document (${fmtRate(num(cur.tva))}). ${st.diff > 1 ? 'Elles passeront' : 'Elle passera'} au taux du document. Continuer ?`)) { c.checked = true; return; }
-        if (k === 'remLine' && st.rem && !confirm(`${st.rem} ligne${pl(st.rem)} ${st.rem > 1 ? 'ont' : 'a'} une remise. ${st.rem > 1 ? 'Ces remises seront supprimées' : 'Cette remise sera supprimée'}. Continuer ?`)) { c.checked = true; return; }
-        if (k === 'remTot' && optHas(k) && !confirm('La remise sur le total sera supprimée. Continuer ?')) { c.checked = true; return; }
+        const st = lineStats(cur), pl = n => (n > 1 ? 's' : ''), ask = m => confirm(m + ' Continuer ?');
+        if (k === 'tvaLine' && st.diff && !ask(`${st.diff} ligne${pl(st.diff)} ${st.diff > 1 ? 'ont' : 'a'} un taux de TVA différent de celui du document (${fmtRate(num(cur.tva))}). ${st.diff > 1 ? 'Elles passeront' : 'Elle passera'} au taux du document.`)) { c.checked = true; return; }
+        if (k === 'remLine' && st.rem && !ask(`${st.rem} ligne${pl(st.rem)} ${st.rem > 1 ? 'ont' : 'a'} une remise. ${st.rem > 1 ? 'Ces remises seront supprimées' : 'Cette remise sera supprimée'}.`)) { c.checked = true; return; }
+        if (k === 'remTot' && optHas(k) && !ask('La remise sur le total sera supprimée.')) { c.checked = true; return; }
+        if (k === 'optLine' && st.opt && !ask(`${st.opt} ligne${pl(st.opt)} ${st.opt > 1 ? 'sont' : 'est'} en option. ${st.opt > 1 ? 'Elles seront comptées' : 'Elle sera comptée'} dans le total.`)) { c.checked = true; return; }
         if (k === 'remTot') delete cur.disc; else clearLineOpt(cur, k);
       }
       cur.opts = { ...(cur.opts || {}), [k]: on ? 1 : 0 }; setPref('ed_' + k, on ? '1' : '0');
       blk.redraw(); blk.applyView(); $('#discrow', el).innerHTML = optOn('remTot') ? discHtml() : '';
-      $('#optsum', el).textContent = optSummary(); refreshTotals();
+      refreshTotals();
     }; });
     if ($('#dfiles', el)) {
       const mainKind = cur.type === 'quote' ? 'devis' : 'factures', st0 = () => sites.find(x => x.id === cur.siteId);
@@ -801,6 +819,7 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['title', 'Titre du document', T + ' {numero}', 1, 'qic'],
     ['dateLine', 'Ligne ville / date', '**{ville}, le   {date}**', 1, 'qic'],
     ['validLine', isQ ? 'Validité du devis' : 'Date limite de règlement', isQ ? 'Valable jusqu\'au {validite}' : 'À régler avant le {validite}', 1, 'qi'],
+    ['thRef', 'Tableau – colonne Réf. (si la référence est activée dans les Options)', 'Réf.', 1, 'qic'],
     ['thDes', 'Tableau – colonne 1', 'DESIGNATION', 1, 'qic'],
     ['thQty', 'Tableau – colonne 2', 'Qté', 1, 'qic'],
     ['thUnit', 'Tableau – colonne 3', 'Unité', 1, 'qic'],
@@ -864,11 +883,11 @@ function layoutStyle(LY) {
   }
   return out.join(';');
 }
-function colgroup(LY, vat) {
+function colgroup(LY, vat, ref) {
   const cols = [['cQty', 9], ['cUnit', 8], ['cPu', 14], ['cHt', 14]];
   if (!cols.some(([k]) => LY[k] != null)) return '';
   const col = ([k, dv]) => `<col style="width:${lyNum(LAYOUT.find(d => d[0] === k), LY[k] ?? dv) ?? dv}%">`;
-  return '<colgroup><col>' + cols.slice(0, 3).map(col).join('') + (vat ? '<col style="width:9%">' : '') + col(cols[3]) + '</colgroup>';
+  return '<colgroup>' + (ref ? '<col style="width:13%">' : '') + '<col>' + cols.slice(0, 3).map(col).join('') + (vat ? '<col style="width:9%">' : '') + col(cols[3]) + '</colgroup>';
 }
 export function layoutFields(vals, base, attr) {
   return LAYOUT.map(d => d[2] === 'sel'
@@ -917,7 +936,7 @@ export async function sheetHtml(doc, opts = {}) {
       default: return Z(it.k);
     }
   };
-  const multi = t.rates.length > 1, NC = multi ? 6 : 5;
+  const multi = t.rates.length > 1, rf = refOn(doc), NC = (multi ? 6 : 5) + (rf ? 1 : 0);
   /* Facture finale : acomptes déjà facturés (un par facture d'acompte), puis net à payer */
   const depRows = () => {
     if (!t.hasDep) return '';
@@ -931,7 +950,7 @@ export async function sheetHtml(doc, opts = {}) {
   const vatMent = redOn ? `<tr class="vatm"><td colspan="${NC}" class="small">${Z('vatRed')}</td></tr>` : '';
   return `<div class="sheet${ED ? ' pvedit' : ''}${LE ? ' lyedit' : ''}" style="${layoutStyle(LY)}">
     ${canvasHtml(tpl, 'h', content, LE)}
-    <div class="tblwrap"><table class="${colgroup(LY, multi) ? 'fx' : ''}">${colgroup(LY, multi)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th>${multi ? `<th>${Z('thTva')}</th>` : ''}<th>${Z('thHt')}</th></tr></thead><tbody>
+    <div class="tblwrap"><table class="${colgroup(LY, multi, rf) ? 'fx' : ''}">${colgroup(LY, multi, rf)}<thead><tr>${rf ? `<th>${Z('thRef')}</th>` : ''}<th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th>${multi ? `<th>${Z('thTva')}</th>` : ''}<th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
     ${t.disc ? `<tr><td colspan="${NC - 1}">${Z('lblGross')}</td><td class="n">${eur(t.gross)}</td></tr><tr><td colspan="${NC - 1}">${Z('lblDisc')}${doc.disc && doc.disc.t !== '€' ? ' ' + e(fmtRate(Math.min(100, num(doc.disc.v)))) : ''}</td><td class="n">− ${eur(t.disc)}</td></tr>` : ''}
     <tr><td colspan="${NC - 1}">${Z('lblHt')}</td><td class="n">${eur(t.full.ht)}</td></tr>
