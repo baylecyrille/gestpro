@@ -116,7 +116,8 @@ export function memberModal(m) {
 
 /* ---------- Affectation (membre(s) → chantier, dates, heures) ---------- */
 export async function assignModal(t, preset = {}) {
-  const [sites, members, tasks] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks')]);
+  const [sites, members, tasks, allContacts] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts')]);
+  const moes = allContacts.filter(c => c.kind === 'moe').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const isNew = !t; t = t || { siteId: preset.siteId || '', memberId: preset.memberId || '', start: preset.date || today(), end: preset.date || today(), hours: 7, weekend: false, done: '', note: '' };
   const act = members.filter(m => m.active !== false || m.id === t.memberId).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const open = sites.filter(s => !['paid', 'lost'].includes(s.status) || s.id === t.siteId).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -133,10 +134,11 @@ export async function assignModal(t, preset = {}) {
     ${F('Heures réalisées (total)', 'done', t.done, { type: 'number', step: '0.25' })}
     <label class="f full"><input type="checkbox" name="weekend" ${t.weekend ? 'checked' : ''}> Inclure samedi et dimanche</label>
     ${F('Tâche / note', 'note', t.note, { cls: 'full', ph: 'ex : pose ossature, finitions…' })}
+    ${moes.length ? `<label class="f full"><span>Intervenant extérieur présent (architecte, maître d'œuvre…) — facultatif</span><select name="extId"><option value="">— aucun —</option>${moes.map(c => `<option value="${c.id}" ${c.id === t.extId ? 'selected' : ''}>${e(c.name)}${c.fonction ? ' (' + e(c.fonction) + ')' : ''}</option>`).join('')}</select></label>` : ''}
     <p class="muted full" id="calc"></p></div>`,
     async (o, f) => {
       if (o.end < o.start) { alert('La date de fin est avant la date de début.'); return false; }
-      const base = { siteId: o.siteId, start: o.start, end: o.end, hours: num(o.hours), weekend: !!o.weekend, done: o.done === '' ? '' : num(o.done), note: o.note };
+      const base = { siteId: o.siteId, start: o.start, end: o.end, hours: num(o.hours), weekend: !!o.weekend, done: o.done === '' ? '' : num(o.done), note: o.note, extId: o.extId || '' };
       const ids = isNew ? $$('[name=mem]:checked', f).map(i => i.value) : [o.memberId];
       if (!ids.length) { alert('Cochez au moins un membre.'); return false; }
       const warn = [];
@@ -168,15 +170,16 @@ function conflicts(rec, others) {
 
 /* ---------- Page Planning (semaine / mois / équipe) ---------- */
 export async function renderPlanning(el, tab = 'week', arg) {
-  const [sites, members, tasks0] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks')]);
+  const [sites, members, tasks0, ctc] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts')]);
   const S = Object.fromEntries(sites.map(s => [s.id, s]));
+  const EXT = Object.fromEntries(ctc.filter(c => c.kind === 'moe').map(c => [c.id, c]));
   const seeAll = auth.can('planning.all'), edit = auth.can('planning.edit'), hoursOk = auth.can('planning.hours'), me = auth.currentUser();
   const tasks = seeAll ? tasks0 : tasks0.filter(t => t.memberId === me?.id); // un compagnon ne voit que son planning
   const TABS_ = [['week', 'Semaine'], ['month', 'Mois'], ...(auth.can('team') ? [['team', 'Équipe']] : [])];
   const head = `<h2>${seeAll ? 'Planning' : 'Mon planning'}</h2>${tabs('#/planning', TABS_, tab)}`;
   const hoursModal = t => modal('Mes heures', `<p><b>${e(S[t.siteId]?.name || '')}</b> · ${dateFr(t.start)}${t.end && t.end !== t.start ? ' → ' + dateFr(t.end) : ''} · ${plannedHours(t)} h prévues</p>${F('Heures réalisées (total)', 'done', t.done, { type: 'number', step: '0.25' })}`,
     async o => { t.done = o.done === '' ? '' : num(o.done); await db.put('tasks', t); toast('Heures enregistrées'); refresh(); });
-  const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}">${e(s.name)}<small>${num(t.hours)} h</small></button>` : ''; };
+  const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}${EXT[t.extId] ? ' — avec ' + e(EXT[t.extId].name) : ''}">${e(s.name)}<small>${num(t.hours)} h${EXT[t.extId] ? ' · 🏛 ' + e(EXT[t.extId].name) : ''}</small></button>` : ''; };
   const act = members.filter(m => m.active !== false && (seeAll || m.id === me?.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 
   if (tab === 'team') {

@@ -66,7 +66,11 @@ const gaugesBig = (list, edit, site) => `<div class="card gauges"><h3 style="mar
 
 /* ---------- Liste ---------- */
 export async function renderSites(el, tab = 'open') {
-  const [sites0, contacts, docs, payments, tasks] = await Promise.all([db.all('sites'), db.all('contacts'), db.all('documents'), db.all('payments'), db.all('tasks')]);
+  const [sites0, contacts, docs, payments, tasks, members] = await Promise.all([db.all('sites'), db.all('contacts'), db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members')]);
+  const MB = Object.fromEntries(members.map(m => [m.id, m]));
+  const initials = n => (n || '?').split(/\s+/).filter(Boolean).map(x => x[0]).join('').slice(0, 2).toUpperCase();
+  const crew = sid => { const seen = new Set(), out = []; tasks.filter(t => t.siteId === sid).sort((a, b) => (b.start || '').localeCompare(a.start || '')).forEach(t => { const m = MB[t.memberId]; if (m && m.active !== false && !seen.has(m.id)) { seen.add(m.id); out.push(m); } }); return out; };
+  const avatars = sid => { const l = crew(sid); return l.length ? `<span class="avs">${l.slice(0, 6).map(m => `<span class="avatar xs" style="background:${e(m.color || '#2f7ad6')}" title="${e(m.name)}">${e(initials(m.name))}</span>`).join('')}${l.length > 6 ? `<span class="more">+${l.length - 6}</span>` : ''}</span>` : ''; };
   const mine = onlyMine() ? mySites(tasks) : null, money = auth.can('sites.money'), canEdit = auth.can('sites.edit'), LK = await lock.allLocks();
   const sites = mine ? sites0.filter(s => mine.has(s.id)) : sites0;
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
@@ -84,13 +88,13 @@ export async function renderSites(el, tab = 'open') {
   let getF;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
-    const rows = list.filter(s => (!q || [s.name, C[s.clientId]?.name, s.address].join(' ').toLowerCase().includes(q)) && (!F2.client || s.clientId === F2.client) && (!F2.late || (OPEN.includes(s.status) && s.end && s.end < today())) && (!F2.due || ST[s.id].resteAPayer > 0.005))
+    const rows = list.filter(s => (!q || [s.name, C[s.clientId]?.name, C[s.moeId]?.name, s.address].join(' ').toLowerCase().includes(q)) && (!F2.client || s.clientId === F2.client) && (!F2.late || (OPEN.includes(s.status) && s.end && s.end < today())) && (!F2.due || ST[s.id].resteAPayer > 0.005))
       .sort(SORTS[F2.sort] || SORTS.recent);
     $('#list', el).innerHTML = rows.map(s => {
       const st = siteStats(s.id, docs, payments);
       return `<a class="item${lock.lockCls(LK, s.id)}" href="#/site/${s.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(s.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(s.name)}</div>
         <div class="s">${e(C[s.clientId]?.name || 'Sans client')}${s.address ? ' · ' + e(s.address.split('\n')[0]) : ''}</div>
-        <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}</div>${gaugesHtml(siteGauges(s, st, money))}</div>
+        <div class="s">${s.start ? dateFr(s.start) : ''}${s.end ? ' → ' + dateFr(s.end) : ''}${C[s.moeId] ? ' · ' + e(C[s.moeId].name) : ''}${(s.links || []).length ? ' · 🔗 ' + s.links.length : ''}</div>${avatars(s.id)}${gaugesHtml(siteGauges(s, st, money))}</div>
         <div class="r">${lock.lockTag(LK, s.id)}<span class="chip ${SCOL[s.status]}">${SS[s.status] || ''}</span>${money && st.marcheTTC ? `<div><b>${eur(st.marcheTTC)}</b></div>` : ''}${money && st.resteAPayer ? `<div class="s">reste ${eur(st.resteAPayer)}</div>` : ''}</div></a>`;
     }).join('') || `<div class="empty">Aucun chantier ici. Créez-en un pour y rattacher devis, factures et planning.</div>`;
   };
@@ -110,7 +114,7 @@ export async function renderSite(el, id) {
   if (!site) { el.innerHTML = '<div class="empty">Chantier introuvable.</div>'; return; }
   const [docs, payments, tasks, members, moves] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members'), db.all('moves')]);
   const mg = siteMargin(site.id, docs, moves, tasks, members, site);
-  const client = contacts.find(c => c.id === site.clientId);
+  const client = contacts.find(c => c.id === site.clientId), moe = contacts.find(c => c.id === site.moeId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
   const prods = await db.all('products');
@@ -130,7 +134,9 @@ export async function renderSite(el, id) {
       <span class="muted">${site.start ? dateFr(site.start) : 'dates non fixées'}${site.end ? ' → ' + dateFr(site.end) : ''}</span></div>
       <p style="margin:8px 0 0"><b>${e(client?.name || 'Sans client')}</b>${client?.phone ? ` · <a href="tel:${e(client.phone)}">${e(client.phone)}</a>` : ''}<br>${e(site.address || '').replace(/\n/g, '<br>')}</p>
       ${site.address ? `<div class="row" style="margin:8px 0 0"><a class="btn primary" id="itin" target="_blank" rel="noopener" href="${e(mapsDir(site.address))}">🧭 Itinéraire</a><button class="btn" id="mapbtn" type="button">🗺 Plan</button><button class="btn" id="shbtn" type="button">📤 Envoyer</button></div><div id="mapbox" hidden></div>` : `<p class="muted" style="margin:8px 0 0">📍 Ajoutez l'adresse du chantier (bouton « Modifier ») pour afficher le plan et lancer l'itinéraire.</p>`}
+      ${moe ? `<p style="margin:6px 0 0">🏛 <b>${e(moe.name)}</b>${moe.fonction ? ` <small class="muted">${e(moe.fonction)}</small>` : ''}${moe.company ? ` · ${e(moe.company)}` : ''}${moe.phone ? ` · <a href="tel:${e(moe.phone)}">${e(moe.phone)}</a>` : ''}${moe.email ? ` · <a href="mailto:${e(moe.email)}">${e(moe.email)}</a>` : ''}</p>` : ''}
       ${site.note ? `<p class="muted" style="white-space:pre-line">${e(site.note)}</p>` : ''}</div>
+    <h3>Documents &amp; liens</h3><div class="card" id="lnks">${(site.links || []).map((l, i) => `<div class="lnk"><span>🔗</span><a href="${e(l.url)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.url)}</a>${canEdit ? `<button class="btn sm" data-lnkedit="${i}" type="button">✎</button><button class="btn sm danger" data-lnkrm="${i}" type="button">✕</button>` : ''}</div>`).join('') || '<p class="muted" style="margin:0">Aucun lien. Ajoutez le lien d\'un dossier de plans, de photos ou de documents (Google Drive, Dropbox, OneDrive…).</p>'}${canEdit ? '<button class="btn sm" id="lnkadd" type="button" style="margin-top:8px">+ Ajouter un lien</button>' : ''}</div>
     ${gaugesBig(siteGauges(site, st, money), canEdit, site)}
     ${money ? `<div class="grid">
       <div class="kpi"><small>Marché signé (TTC)</small><b>${eur(st.marcheTTC)}</b><small>${eur(st.marcheHT)} HT${st.enAttenteTTC ? ` · ${eur(st.enAttenteTTC)} en attente` : ''}</small></div>
@@ -168,8 +174,11 @@ export async function renderSite(el, id) {
   $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
   $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
+  $('#lnkadd', el)?.addEventListener('click', () => linkModal(site, -1));
+  $$('[data-lnkedit]', el).forEach(b => b.onclick = () => linkModal(site, +b.dataset.lnkedit));
+  $$('[data-lnkrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Retirer ce lien ?')) return; site.links.splice(+b.dataset.lnkrm, 1); await db.put('sites', site); refresh(); });
   if (!canEdit) return;
-  $('#edit', el).onclick = () => lock.withLock(site.id, () => siteModal(site, clients, false));
+  $('#edit', el).onclick = () => lock.withLock(site.id, () => siteModal(site, clients, false, { moes: contacts.filter(c => c.kind === 'moe') }));
   $('#finish', el).onclick = async () => {
     const closed = site.status === 'paid' || site.status === 'lost';
     if (!closed && st.resteAPayer > 0.005 && !confirm(`Il reste ${eur(st.resteAPayer)} à encaisser sur ce chantier. Le terminer quand même ?`)) return;
@@ -201,7 +210,7 @@ export async function newSiteModal(pre = {}, onSaved) {
   const [contacts, docs, allSites] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('sites')]);
   const clients = contacts.filter(c => c.kind === 'client').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const { quoteId, ...rest } = pre;
-  siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: pickSiteColor(allSites), ...rest }, clients, true, { docs, contacts, quoteId, onSaved });
+  siteModal({ name: '', clientId: '', address: '', start: '', end: '', status: 'new', note: '', color: pickSiteColor(allSites), ...rest }, clients, true, { docs, contacts, quoteId, onSaved, moes: contacts.filter(c => c.kind === 'moe') });
 }
 
 function siteModal(site, clients, isNew, opts = {}) {
@@ -213,6 +222,7 @@ function siteModal(site, clients, isNew, opts = {}) {
     `<div class="cols">${F('Nom du chantier', 'name', site.name, { req: true, cls: 'full', ph: 'ex : Terrasse bois – Dupont' })}
     ${quotes.length ? `<label class="f full"><span>Créer à partir d'un devis (facultatif)</span><input type="search" id="mqs" placeholder="🔍 N° de devis, client, référence…" autocomplete="off" style="margin-bottom:6px"><select name="quoteId"><option value="">— aucun —</option>${quotes.map(d => `<option value="${d.id}">${e(qLabel(d))}</option>`).join('')}</select></label>` : ''}
     <label class="f full"><span>Client</span><input type="search" id="mcs" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === site.clientId ? 'selected' : ''}>${e(cLabel(c))}</option>`).join('')}</select></label>
+    <label class="f full"><span>Architecte / maître d'œuvre (facultatif — à créer dans Contacts)</span><select name="moeId"><option value="">— aucun —</option>${(opts.moes || []).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(c => `<option value="${c.id}" ${c.id === site.moeId ? 'selected' : ''}>${e(c.name)}${c.fonction ? ' (' + e(c.fonction) + ')' : ''}</option>`).join('')}</select></label>
     ${F('Adresse des travaux', 'address', site.address, { type: 'textarea', rows: 2, cls: 'full' })}
     ${F('Début', 'start', site.start, { type: 'date' })}${F('Fin prévue', 'end', site.end, { type: 'date' })}
     ${F('Statut', 'status', site.status, { type: 'select', options: Object.entries(SS) })}
@@ -283,4 +293,17 @@ function chargeModal(site, prods) {
       const sel = f.querySelector('[name=pid]');
       sel.onchange = () => { const p = prods.find(x => x.id === sel.value); f.querySelector('#stk').hidden = !p; if (p) { f.querySelector('[name=label]').value = p.name; f.querySelector('[name=unit]').value = p.unit || 'u'; f.querySelector('[name=cost]').value = p.buy || 0; } };
     } });
+}
+
+/* Lien vers un dossier de documents / photos (Drive, Dropbox…) : léger et synchronisé avec le chantier */
+function linkModal(site, idx) {
+  const l = idx >= 0 ? site.links[idx] : { label: '', url: '' };
+  modal(idx >= 0 ? 'Modifier le lien' : 'Ajouter un lien', `<div class="cols">${F('Nom (ex : Plans, Photos avant travaux)', 'label', l.label, { cls: 'full' })}${F('Adresse du lien (https://…)', 'url', l.url, { req: true, cls: 'full', ph: 'https://…' })}</div>
+    <p class="muted">Collez le lien de partage d'un dossier ou d'un fichier (Google Drive, Dropbox, OneDrive, site web…). Les fichiers eux-mêmes restent chez vous, seul le lien est enregistré.</p>`,
+    async o => {
+      let url = o.url.trim(); if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      const rec = { id: l.id || db.uid(), label: o.label.trim() || url.replace(/^https?:\/\//, '').slice(0, 40), url };
+      site.links = site.links || []; idx >= 0 ? (site.links[idx] = rec) : site.links.push(rec);
+      await db.put('sites', site); refresh();
+    });
 }

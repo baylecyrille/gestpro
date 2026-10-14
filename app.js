@@ -42,11 +42,12 @@ export function contactModal(c, kind, onSaved) {
     <label class="f"><span>Civilité du contact</span><input name="companyCiv" value="${e(c.companyCiv || '')}" list="civs" autocomplete="off" placeholder="Mr, Mme…"></label>${F('Contact (personne)', 'company', c.company)}
     ${F('Adresse', 'address', c.address, { cls: 'full' })}${F('Code postal', 'zip', c.zip)}${F('Ville', 'city', c.city)}
     ${F('Téléphone', 'phone', c.phone, { type: 'tel' })}${F('E-mail', 'email', c.email, { type: 'email' })}
-    ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>${!isNew && c.kind !== 'supplier' ? '<div class="rel" id="rel"></div>' : ''}`;
-  modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : 'client'}`, body, async o => {
+    ${c.kind === 'moe' ? `<label class="f"><span>Fonction</span><input name="fonction" value="${e(c.fonction || '')}" list="fonctions" placeholder="Architecte, maître d'œuvre…" autocomplete="off"><datalist id="fonctions">${['Architecte', 'Maître d\'œuvre', 'Bureau d\'études', 'Économiste', 'Conducteur de travaux', 'Coordinateur SPS', 'Autre'].map(x => `<option value="${x}">`).join('')}</datalist></label>` : ''}
+    ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>${!isNew && c.kind === 'client' ? '<div class="rel" id="rel"></div>' : ''}`;
+  modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : c.kind === 'moe' ? 'architecte / maître d\'œuvre' : 'client'}`, body, async o => {
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
-  }, { onOpen: f => { addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind !== 'supplier') fillRel(f, c); }, del: isNew ? null : async () => {
+  }, { onOpen: f => { addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind === 'client') fillRel(f, c); }, del: isNew ? null : async () => {
     const docs = await db.all('documents');
     if (docs.some(d => d.clientId === c.id)) return alert('Ce client a des devis/factures : suppression impossible.');
     await db.del('contacts', c.id); refresh(); } });
@@ -57,7 +58,7 @@ async function renderTeamContacts(el) {
   const { memberModal, ROLES } = await import('./team.js');
   const members = (await db.all('members')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const R = Object.fromEntries(ROLES), edit = auth.can('team.edit') || auth.can('settings'), LK = await lock.allLocks();
-  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], 'team')}
+  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['moe', 'Architectes / MOE'], ['team', 'Équipe']], 'team')}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…">${edit ? '<button class="btn primary" id="add">+ Membre</button>' : ''}</div><div id="list"></div>`;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase();
@@ -83,8 +84,8 @@ async function renderContacts(el, tab = 'client') {
     { id: 'city', label: 'Ville', options: [['', 'Toutes'], ...cities.map(c => [c, c])] }, { id: 'due', type: 'check', label: 'Solde dû' }, { id: 'phone', type: 'check', label: 'Avec téléphone' }, { id: 'nodoc', type: 'check', label: 'Sans document' }];
   const SORTS = { name: (a, b) => a.name.localeCompare(b.name, 'fr'), city: (a, b) => (a.city || '~').localeCompare(b.city || '~', 'fr') || a.name.localeCompare(b.name, 'fr'), zip: (a, b) => (a.zip || '~').localeCompare(b.zip || '~'),
     due: (a, b) => DUE[b.id] - DUE[a.id], docs: (a, b) => NDOC[b.id] - NDOC[a.id], recent: (a, b) => (b._u || 0) - (a._u || 0) };
-  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['team', 'Équipe']], tab)}
-    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…"><button class="btn primary" id="add">+ ${tab === 'client' ? 'Client' : 'Fournisseur'}</button></div>${filterBar(FC)}<div id="list"></div>`;
+  el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['moe', 'Architectes / MOE'], ['team', 'Équipe']], tab)}
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…"><button class="btn primary" id="add">+ ${tab === 'client' ? 'Client' : tab === 'moe' ? 'Architecte / MOE' : 'Fournisseur'}</button></div>${filterBar(FC)}<div id="list"></div>`;
   let getF;
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
