@@ -50,7 +50,8 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   const W = 595.28, H = 841.89, MX = 40, CW = W - 2 * MX;
   const BLUE = rgb(0.118, 0.353, 0.659), GREY = rgb(0.4, 0.4, 0.4), BG = rgb(0.86, 0.91, 0.97), LINE = rgb(0.8, 0.8, 0.8), BLACK = rgb(0, 0, 0);
   const now = opts.now || new Date();
-  const kind = m.isCredit ? 'Avoir' : 'Facture';
+  const kind = m.isCredit ? 'Avoir' : m.deposit ? 'Facture d\'acompte' : 'Facture';
+  const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
   const title = `${kind} ${m.number}`;
   const pages = [];
   let pg, y;
@@ -138,12 +139,20 @@ export async function buildFacturX(m, doc, S, opts = {}) {
   // --- Totaux
   if (y < 150) newPage();
   y -= 6;
-  const tx = W - MX - 200;
-  const trow = (a, b, bold, bg) => { if (bg) pg.drawRectangle({ x: tx, y: y - 5, width: 200, height: 17, color: BG }); text(a, tx + 6, y, bold ? B : F, bold ? 10.5 : 9.5); right(b, W - MX - 6, y, bold ? B : F, bold ? 10.5 : 9.5); y -= 18; };
+  const TW = m.prior.length ? 250 : 200, tx = W - MX - TW; // bloc des totaux plus large quand des acomptes sont listés
+  const trow = (a, b, bold, bg) => {
+    if (bg) pg.drawRectangle({ x: tx, y: y - 5, width: TW, height: 17, color: BG });
+    const f = bold ? B : F; let sz = bold ? 10.5 : 9.5; const room = TW - 12 - wid(clean(b), f, sz) - 10;
+    while (sz > 7 && wid(clean(a), f, sz) > room) sz -= 0.5; // le libellé se réduit plutôt que de recouvrir le montant
+    text(a, tx + 6, y, f, sz); right(b, W - MX - 6, y, f, bold ? 10.5 : 9.5); y -= 18;
+  };
   if (m.allowTotal) { trow('Total HT avant remise', money(m.lineTotal)); trow('Remise' + (m.discPct ? ' ' + String(m.discPct).replace('.', ',') + ' %' : ''), money(-m.allowTotal)); }
   trow('Total HT', money(m.ht)); m.taxes.forEach(x => trow(`TVA ${String(x.rate).replace('.', ',')} %${multi ? ' (sur ' + money(x.basis) + ')' : ''}`, money(x.amount))); trow('Total TTC', money(m.ttc), true, true);
-  if (m.prepaid) { trow(m.isCredit ? 'Déjà déduit / remboursé' : 'Déjà réglé', money(-m.prepaid)); trow(m.isCredit ? 'Reste à votre crédit' : 'Reste à payer', money(m.due_amount), true); }
+  const depTtc = r2(m.prior.reduce((a, p) => a + p.ttc, 0)), paidOnly = r2(m.prepaid - depTtc);
+  if (m.prior.length) { m.prior.forEach(p => trow(`Acompte facturé n° ${p.number}`, money(-p.ttc))); trow(m.isCredit ? 'Net de l\'avoir après acomptes' : 'Net à payer après acomptes', money(r2(m.ttc - depTtc)), true, paidOnly <= 0.004); }
+  if (paidOnly > 0.004) { trow(m.isCredit ? 'Déjà déduit / remboursé' : 'Déjà réglé', money(-paidOnly)); trow(m.isCredit ? 'Reste à votre crédit' : 'Reste à payer', money(m.due_amount), true); }
   y -= 8;
+  if (m.prior.length) { if (y < 100) newPage(); para('Factures d\'acompte déduites : ' + m.prior.map(p => `n° ${p.number} du ${dFr(p.date)}`).join(', ') + '.', MX, CW, F, 8.5, GREY); y -= 3; }
 
   // --- Règlement et mentions légales
   if (!m.isCredit && m.terms) { if (y < 120) newPage(); text('Règlement', MX, y, B, 9.5); y -= 12; para(m.terms, MX, CW, F, 8.5); y -= 4; }

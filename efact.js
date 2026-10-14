@@ -1,6 +1,6 @@
 // Facturation électronique (réforme France 2026-2027) : mentions obligatoires, contrôle avant envoi, XML Factur-X (profil EN 16931).
 // Fonctions pures (sans accès au navigateur) : testables hors ligne.
-import { rateOf, sums, reducedRates, isOpt, grossHt, lineDisc, lineHt, remOf } from './vat.js';
+import { rateOf, sums, reducedRates, isOpt, grossHt, lineDisc, lineHt, remOf, depsOf, depTva } from './vat.js';
 const num = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0;
 const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
 const xe = s => String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -54,22 +54,26 @@ export function model(doc, S, client = {}, opts = {}) {
     return { n: i + 1, name: String(l.desig || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'Article', qty: num(l.qty) || 0, unit: l.unit || 'u', unitCode: UNIT[l.unit] || 'C62', pu: Math.round(num(l.pu) * 10000) / 10000, gross: grossHt(l), rem: remOf(l), allow: lineDisc(l), total: lineHt(l), rate, cat: rate > 0 ? 'S' : 'Z' };
   });
   // Ventilation par taux (BG-23) : un groupe par taux utilisé, même à base nulle ; la remise sur le total est répartie par taux (BG-20)
-  const T = sums(src, doc.tva, doc.disc, true);
-  const taxes = T.rates.map(x => ({ rate: x.rate, cat: x.rate > 0 ? 'S' : 'Z', basis: x.ht, amount: x.tva, gross: x.gross, allow: x.disc }));
-  const ht = T.ht, tva = T.tva, ttc = T.ttc, lineTotal = T.gross, allowTotal = T.disc;
+  const deps = depsOf(doc), isC = doc.type === 'credit';
+  const T = sums(src, doc.tva, doc.disc, true, deps);
+  // Facture finale (et avoir qui la reprend) : montants de l'opération complète, les acomptes déjà facturés étant un « montant payé d'avance » (BT-113)
+  // avec renvoi aux factures d'acompte (BG-3) : les lignes, la base de TVA et les totaux restent cohérents (règles BR-S-08, BR-CO-13).
+  const full = T.hasDep;
+  const taxes = T.rates.map(x => ({ rate: x.rate, cat: x.rate > 0 ? 'S' : 'Z', basis: full ? x.ht0 : x.ht, amount: full ? x.tva0 : x.tva, gross: x.gross, allow: x.disc }));
+  const ht = full ? T.full.ht : T.ht, tva = full ? T.full.tva : T.tva, ttc = full ? T.full.ttc : T.ttc, lineTotal = T.gross, allowTotal = T.disc;
   const discPct = doc.disc && doc.disc.t !== '€' ? Math.min(100, num(doc.disc.v)) : 0;
-  const prepaid = r2(opts.paid || 0);
+  const prior = full ? deps.map(d => { const h = r2((d.rates || []).reduce((a, x) => a + num(x.ht), 0)), v = r2((d.rates || []).reduce((a, x) => a + depTva(x), 0)); return { number: d.number || '', date: d.date || '', ht: h, tva: v, ttc: r2(h + v) }; }) : [];
+  const prepaid = r2((opts.paid || 0) + prior.reduce((a, p) => a + p.ttc, 0));
   const co = splitAddress(S.address); if (!co.city) co.city = S.city || '';
   const cl = splitAddress([client.address, [client.zip, client.city].filter(Boolean).join(' ')].filter(Boolean).join('\n'), client.zip, client.city);
-  const isC = doc.type === 'credit';
   return {
-    isCredit: isC, typeCode: isC ? '381' : '380', number: doc.number || '', date: doc.date || '', due: doc.dueDate || '', currency: 'EUR',
+    isCredit: isC, deposit: !isC && !!doc.deposit, prior, typeCode: isC ? '381' : doc.deposit ? '386' : '380', number: doc.number || '', date: doc.date || '', due: doc.dueDate || '', currency: 'EUR',
     lines, taxes, ht, tva, ttc, lineTotal, allowTotal, discPct, prepaid, due_amount: r2(ttc - prepaid), vatNote: String(opts.vatNote || '').trim(),
     seller: { name: S.company || '', siren: sirenOf(S.siret), siret: digits(S.siret), vat: tvaIntra(S), addr: co, email: S.email || '', phone: S.phone || '' },
     buyer: { name: cname(client) || 'Client', siren: sirenOf(client.siret), siret: digits(client.siret), addr: cl, email: client.email || '' },
     delivery: String(doc.deliveryAddr || '').trim() ? splitAddress(doc.deliveryAddr) : null,
     op: opOf(doc, S), vatDebits: vatDebitsOf(doc, S), iban: String(S.iban || '').replace(/\s/g, ''), bic: String(S.bic || '').replace(/\s/g, ''),
-    terms: String(doc.terms || '').replace(/\s*\n\s*/g, ' ').trim(), ref: doc.number || '', fromInvoiceNumber: opts.fromInvoiceNumber || '', notes: String(opts.note || '').trim(),
+    terms: String(doc.terms || '').replace(/\s*\n\s*/g, ' ').trim(), ref: doc.number || '', fromInvoiceNumber: opts.fromInvoiceNumber || '', fromInvoiceDate: opts.fromInvoiceDate || '', notes: String(opts.note || '').trim(),
     siteRef: doc.siteRef || ''
   };
 }
@@ -99,6 +103,12 @@ export function check(doc, S, client = {}, opts = {}) {
   if ((doc.lines || []).some(isOpt)) add('info', 'Lignes en option : non comptées, absentes du fichier');
   if (m.allowTotal) add('ok', 'Remise sur le total ' + (m.taxes.length > 1 ? 'répartie entre les taux de TVA' : 'indiquée dans le fichier') + ' (' + m.allowTotal.toFixed(2).replace('.', ',') + ' € HT)');
   if (doc.type === 'credit' && !opts.fromInvoiceNumber) add('warn', 'Avoir sans facture d\'origine rattachée');
+  if (m.deposit) add('info', 'Facture d\'acompte (type 386) : elle sera déduite de la facture finale, avec renvoi à ce numéro');
+  if (m.prior.length) {
+    add('ok', `Acomptes déjà facturés déduits : ${m.prior.map(p => p.number || '(sans n°)').join(', ')} (${m.prior.reduce((a, p) => a + p.ttc, 0).toFixed(2).replace('.', ',')} € TTC) – indiqués comme « montant payé d'avance » avec renvoi aux factures d'acompte`);
+    if (m.prior.some(p => !p.number)) add('err', 'Une facture d\'acompte déduite n\'a pas de numéro');
+    if (m.due_amount < -0.005) add('warn', 'Les acomptes dépassent le total de la facture : un avoir ou un remboursement est à prévoir');
+  }
   // Client
   if (!client || !client.id) add('err', 'Client non renseigné');
   else {
@@ -179,7 +189,8 @@ ${m.taxes.map(x => `      <ram:ApplicableTradeTax><ram:CalculatedAmount>${amt(x.
         <ram:TotalPrepaidAmount>${amt(m.prepaid)}</ram:TotalPrepaidAmount>` : ''}
         <ram:DuePayableAmount>${amt(m.due_amount)}</ram:DuePayableAmount>
       </ram:SpecifiedTradeSettlementHeaderMonetarySummation>${m.isCredit && m.fromInvoiceNumber ? `
-      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${xe(m.fromInvoiceNumber)}</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>` : ''}
+      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${xe(m.fromInvoiceNumber)}</ram:IssuerAssignedID>${m.fromInvoiceDate ? `<ram:FormattedIssueDateTime><qdt:DateTimeString format="102">${d102(m.fromInvoiceDate)}</qdt:DateTimeString></ram:FormattedIssueDateTime>` : ''}</ram:InvoiceReferencedDocument>` : ''}${m.prior.map(p => `
+      <ram:InvoiceReferencedDocument><ram:IssuerAssignedID>${xe(p.number)}</ram:IssuerAssignedID>${p.date ? `<ram:FormattedIssueDateTime><qdt:DateTimeString format="102">${d102(p.date)}</qdt:DateTimeString></ram:FormattedIssueDateTime>` : ''}</ram:InvoiceReferencedDocument>`).join('')}
     </ram:ApplicableHeaderTradeSettlement>
   </rsm:SupplyChainTradeTransaction>
 </rsm:CrossIndustryInvoice>

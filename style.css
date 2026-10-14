@@ -422,3 +422,18 @@ html{scroll-padding-bottom:140px}
 
 nav#nav{justify-content:center}
 nav#nav a,nav#nav button{max-width:160px}
+
+/* Factures d'acompte */
+.sheet tr.t.pre td{background:#eef3fa}
+.sheet tr.depr td{color:#333}
+.totals .dep b{color:var(--bad,#c0392b)}
+.depbox{margin:12px 0 4px;margin-left:auto;max-width:420px;border:1px solid var(--bd);border-left:4px solid var(--p);background:#f5f9ff;border-radius:10px;padding:8px 12px;font-size:13px}
+.depbox>b{display:block;margin-bottom:2px}
+.depbox .dl{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:2px 0}
+.depbox .dl b{white-space:nowrap;flex:none}
+.depbox .dwarn{margin-top:6px;padding-top:6px;border-top:1px dashed var(--bd);color:#8a5a00}
+.depbox .dwarn .btn{margin-top:4px}
+.depprev{margin:12px 0 4px;padding:10px 12px;border:1px solid var(--bd);border-left:4px solid var(--p);border-radius:10px;background:#f5f9ff;font-size:14px;line-height:1.5}
+.depprev.bad{border-left-color:var(--bad,#c0392b);background:#fdf0ee}
+.dpck{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-size:14px}
+.dpck input{margin-top:3px}

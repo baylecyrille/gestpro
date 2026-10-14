@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { getS, logoSrc } from './defaults.js';
 import * as efact from './efact.js';
-import { sums, fmtRate, reducedRates, listRates, RATES, isOpt } from './vat.js';
+import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt } from './vat.js';
 import { checkDoc } from './doccheck.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
@@ -36,9 +36,28 @@ const METHODS = [['especes', 'Espèces'], ['cheque', 'Chèque'], ['cb', 'Carte b
 const REAL_METHODS = METHODS.filter(m => m[0] !== 'avoir');
 const TVAS = RATES;
 
-/* Totaux d'un document : un taux de TVA par ligne (sinon celui du document), remises de ligne et sur le total, lignes en option exclues ; `rates` = ventilation par taux */
+/* Totaux d'un document : un taux de TVA par ligne (sinon celui du document), remises de ligne et sur le total, lignes en option exclues ;
+   `rates` = ventilation par taux ; sur une facture finale, ht / tva / ttc sont nets des acomptes déjà facturés (`full` = total de l'opération, `depo` = acomptes) */
 export function totals(doc) {
-  return sums(doc.lines || [], doc.tva, doc.disc);
+  return docSums(doc);
+}
+
+/* ---------- Acomptes ---------- */
+/* Factures d'acompte encore valables d'un devis : ni brouillon ni annulées, et pas entièrement annulées par un avoir */
+export function quoteDeposits(docs, qid) {
+  return docs.filter(d => d.type === 'invoice' && d.deposit && d.deposit.q === qid && counts(d) && d.number)
+    .filter(d => docs.filter(c => c.type === 'credit' && c.fromInvoice === d.id && c.status !== 'draft').reduce((a, c) => a + totals(c).ttc, 0) < totals(d).ttc - 0.005)
+    .sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
+}
+/* Ligne « acompte déjà facturé » reprise sur la facture finale (montants HT par taux de TVA) */
+export const depEntry = inv => ({ id: inv.id, number: inv.number, date: inv.date, rates: totals(inv).rates.filter(x => x.ht !== 0).map(x => ({ rate: x.rate, ht: x.ht })) });
+const depSig = d => d.rates.map(x => x.rate + ':' + x.ht).join(',');
+/* Acomptes à déduire d'une facture finale d'après l'état actuel des factures d'acompte : { add, stale, changed } */
+export function depsDiff(inv, docs) {
+  const want = inv.fromQuote && !inv.deposit ? quoteDeposits(docs, inv.fromQuote).filter(d => d.id !== inv.id).map(depEntry) : [], have = depsOf(inv);
+  const add = want.filter(w => !have.some(h => h.id === w.id)), stale = have.filter(h => !want.some(w => w.id === h.id));
+  const changed = want.filter(w => { const h = have.find(x => x.id === w.id); return h && depSig(h) !== depSig(w); });
+  return { want, add, stale, changed, ok: !add.length && !stale.length && !changed.length };
 }
 export const paidOf = (payments, docId) => round2(payments.filter(p => p.docId === docId).reduce((a, p) => a + num(p.amount), 0));
 export function payState(doc, payments) {
@@ -95,12 +114,30 @@ async function autoCloseSite(siteId) {
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
 async function makeInvoice(q) {
-  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending' });
+  const deposits = quoteDeposits(await db.all('documents'), q.id);
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending', ...(deposits.length ? { deps: deposits.map(depEntry) } : {}) });
   ensureBlocks(inv);
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
   q.status = 'invoiced'; q.invoiceId = inv.id; await db.put('documents', q);
+  await syncInvStatus(inv.id); await bumpSite(q);
+  return inv;
+}
+
+/* Crée une facture d'acompte sur un devis : même numérotation que les factures, une ligne par taux de TVA (voir depositSplit).
+   o = { mode, value, date, dueDate, accept, attach } */
+async function makeDeposit(q, sp, o = {}) {
+  const pct = o.mode === '%' ? ` de ${String(sp.pct).replace('.', ',')} %` : '';
+  const label = `Acompte${pct} sur devis n° ${q.number} du ${dateFr(q.date)}`;
+  const lines = sp.rates.map(x => ({ desig: label + (sp.rates.length > 1 ? ` (TVA ${fmtRate(x.rate)})` : ''), qty: 1, unit: 'forfait', pu: x.ht, tva: String(x.rate), pid: '' }));
+  const blocks = [...lines.map(l => ({ type: 'line', ...l })), { type: 'text', html: `Acompte sur le devis n° ${e(q.number)} du ${e(dateFr(q.date))} (montant du devis : ${e(eur(sp.base))} TTC). Cet acompte sera déduit de la facture finale.` }];
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: '', tva: q.tva, terms: q.terms, lines, blocks, siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, deposit: { q: q.id, mode: o.mode, value: num(o.value) }, status: 'pending', ...(o.date ? { date: o.date } : {}), ...(o.dueDate ? { dueDate: o.dueDate } : {}) });
+  ensureBlocks(inv);
+  inv.number = await nextNumber('invoice');
+  await db.put('documents', inv);
+  if (o.attach) for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
+  if (o.accept && !['accepted', 'invoiced'].includes(q.status)) { q.status = 'accepted'; await db.put('documents', q); }
   await syncInvStatus(inv.id); await bumpSite(q);
   return inv;
 }
@@ -157,7 +194,7 @@ export async function renderDocs(el, tab = 'quote') {
       if (d.type === 'invoice' || d.type === 'credit') badge = invBadge(d, payments);
       else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
       return `<a class="item${lock.lockCls(LK, d.id)}" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
-        <div class="s">${dateFr(d.date)}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${lock.lockTag(LK, d.id)}${badge}</div></div></a>`;
+        <div class="s">${dateFr(d.date)}${d.deposit ? ' · <b>Acompte</b>' : ''}${depsOf(d).length ? ' · après acomptes' : ''}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${lock.lockTag(LK, d.id)}${badge}</div></div></a>`;
     }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.</div>`;
   };
   getF = bindFilters(el, 'docs_' + tab + '_', FC, draw);
@@ -245,7 +282,7 @@ export async function renderDoc(el, id, arg) {
   };
   const hdrSummary = () => [cname(curClient()) || 'Aucun client', cur.siteRef, cur.date ? dateFr(cur.date) : '', (isQ ? QS : isC ? CS : IS)[cur.status]].filter(Boolean).join(' · ');
   const discHtml = () => `<label class="f"><span>Remise sur le total</span><div class="dr"><input name="discV" type="number" step="any" min="0" inputmode="decimal" value="${cur.disc && num(cur.disc.v) > 0 ? cur.disc.v : ''}" placeholder="0"><select name="discT"><option value="%" ${cur.disc?.t === '€' ? '' : 'selected'}>%</option><option value="€" ${cur.disc?.t === '€' ? 'selected' : ''}>€ HT</option></select></div></label>`;
-  const stickyHtml = t => `<div class="stickybar" id="sbar"><div class="sbt"><span>HT <b id="sbht">${eur(t.ht)}</b></span><span>TTC <b id="sbttc">${eur(t.ttc)}</b></span></div><span class="sp"></span><button type="button" class="btn sm warnbtn" id="sbchk" hidden></button><button type="button" class="btn primary" id="sbsave">Enregistrer</button></div>`;
+  const stickyHtml = t => `<div class="stickybar" id="sbar"><div class="sbt"><span>HT <b id="sbht">${eur(t.ht)}</b></span><span><span id="sbtl">${t.hasDep ? 'Net' : 'TTC'}</span> <b id="sbttc">${eur(t.ttc)}</b></span></div><span class="sp"></span><button type="button" class="btn sm warnbtn" id="sbchk" hidden></button><button type="button" class="btn primary" id="sbsave">Enregistrer</button></div>`;
 
   const draw = () => {
     const t = totals(cur); redKey = redRates().join('|'); sidefit = null;
@@ -255,7 +292,7 @@ export async function renderDoc(el, id, arg) {
       <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn sidebtn${sideWanted() ? ' on' : ''}" id="sidebtn" title="Afficher l'aperçu du document à côté de l'éditeur (grands écrans)">▥ Aperçu à côté</button><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
-    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
+    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
     <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
       <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
@@ -272,9 +309,11 @@ export async function renderDoc(el, id, arg) {
     </div></details>
     <div class="card lines"><div id="blocks"></div>
       <div class="discrow" id="discrow">${discHtml()}</div>
+      <div id="depbox">${depBoxHtml()}</div>
       <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
     ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
+    ${!isNew && isQ ? depositsCardHtml() : ''}
     ${!isNew ? '<div id="dfiles"></div>' : ''}
     ${!isNew ? actionsHtml() : ''}${stickyHtml(t)}</div>
     <aside id="sidepv" ${split ? '' : 'hidden'}><div class="sph"><b>Aperçu</b><span class="sp"></span><button type="button" class="btn sm" id="sidefull" title="Aperçu plein écran, où l'on peut cliquer sur un texte pour le modifier">⤢ Plein écran</button></div><div class="pvpaper" id="sidepaper"><div class="pvin" id="sidein"></div></div></aside></div>`;
@@ -291,6 +330,15 @@ export async function renderDoc(el, id, arg) {
       <div class="row"><span class="muted">Encaisser :</span><button class="btn primary" data-m="especes">💶 Espèces</button><button class="btn primary" data-m="cheque">🧾 Chèque</button><button class="btn primary" data-m="cb">💳 Carte bleue</button><button class="btn" id="addpay">Autre…</button></div>
       <div class="row"><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
   };
+  /* Devis : factures d'acompte déjà émises et reste à facturer */
+  const depositsCardHtml = () => {
+    const all = allDocs.filter(d => d.type === 'invoice' && d.deposit && d.deposit.q === cur.id).sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
+    if (!all.length) return '';
+    const got = round2(quoteDeposits(allDocs, cur.id).reduce((a, d) => a + totals(d).ttc, 0)), tq = totals(cur);
+    return `<div class="card"><h3 style="margin-top:0">Factures d'acompte</h3>
+      ${all.map(d => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(brouillon)')}</div><div class="s">${dateFr(d.date)}</div></div><div class="r"><b>${eur(totals(d).ttc)}</b><div>${invBadge(d, allPay)}</div></div></a>`).join('')}
+      <p style="margin-bottom:0">Facturé en acompte <b>${eur(got)}</b> sur ${eur(tq.ttc)} TTC · reste <b>${eur(Math.max(0, round2(tq.ttc - got)))}</b> à facturer. Les acomptes sont déduits automatiquement de la facture finale.</p></div>`;
+  };
   const creditUseHtml = t => {
     const uses = allPay.filter(p => p.creditId === cur.id).sort((a, b) => a.date.localeCompare(b.date));
     const used = round2(uses.reduce((a, p) => a + num(p.amount), 0)), left = round2(t.ttc - used);
@@ -302,16 +350,25 @@ export async function renderDoc(el, id, arg) {
   };
   const creditsOfInv = allDocs.filter(d => d.type === 'credit' && d.fromInvoice === cur.id);
   const actionsHtml = () => `<div class="card"><div class="row">
-      ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}
+      ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}${cur.deposit && cur.fromQuote && DN[cur.fromQuote] ? `<a class="btn" href="#/doc/${cur.fromQuote}">Voir le devis</a>` : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
-      ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${canInv && cur.status !== 'invoiced' ? '<button class="btn" id="todep" title="Crée une facture d\'acompte (en pourcentage ou en montant) à partir de ce devis">Facture d\'acompte</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
       ${!isC && cur.number ? '<button class="btn" id="dupbtn" title="Crée un nouveau brouillon à partir de ce document">⧉ Dupliquer</button>' : ''}
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
       <button class="btn danger" id="delete">Supprimer</button></div>${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
-  /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, options à part */
-  const totalsHtml = t => `${t.disc ? `<div><span>Total HT avant remise</span><b>${eur(t.gross)}</b></div><div class="trate"><span>Remise${cur.disc && cur.disc.t !== '€' ? ' ' + fmtRate(Math.min(100, num(cur.disc.v))) : ''}</span><b>− ${eur(t.disc)}</b></div>` : ''}<div><span>Total HT</span><b id="tht">${eur(t.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht)}</small>` : ''}</span><b>${eur(r.tva)}</b></div>`).join('')}<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>${t.opt ? `<div class="optrow"><span>Options non comprises (HT)</span><b>${eur(t.opt)}</b></div>` : ''}`;
+  /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, acomptes déjà facturés, options à part */
+  const totalsHtml = t => `${t.disc ? `<div><span>Total HT avant remise</span><b>${eur(t.gross)}</b></div><div class="trate"><span>Remise${cur.disc && cur.disc.t !== '€' ? ' ' + fmtRate(Math.min(100, num(cur.disc.v))) : ''}</span><b>− ${eur(t.disc)}</b></div>` : ''}<div><span>Total HT</span><b id="tht">${eur(t.full.ht)}</b></div>${t.rates.map(r => `<div class="trate"><span>TVA ${fmtRate(r.rate)}${t.rates.length > 1 ? ` <small class="muted">sur ${eur(r.ht0)}</small>` : ''}</span><b>${eur(r.tva0)}</b></div>`).join('')}${t.hasDep ? `<div><span>Total TTC</span><b>${eur(t.full.ttc)}</b></div><div class="trate dep"><span>Acomptes déjà facturés</span><b>− ${eur(t.depo.ttc)}</b></div><div class="big"><span>Net à payer</span><span id="tttc">${eur(t.ttc)}</span></div>` : `<div class="big"><span>Total TTC</span><span id="tttc">${eur(t.ttc)}</span></div>`}${t.opt ? `<div class="optrow"><span>Options non comprises (HT)</span><b>${eur(t.opt)}</b></div>` : ''}`;
+  /* Acomptes déjà facturés (facture finale) : liste en lecture seule et mise à jour si les factures d'acompte ont changé depuis */
+  const depBoxHtml = () => {
+    const deps = depsOf(cur), df = !isQ && !isC && !cur.deposit ? depsDiff(cur, allDocs) : null;
+    if (!deps.length && !(df && df.add.length)) return '';
+    const num0 = d => `${DN[d.id] ? `<a href="#/doc/${d.id}">${e(d.number)}</a>` : e(d.number)}`;
+    const amt = d => { const ht = round2(d.rates.reduce((a, x) => a + num(x.ht), 0)), tv = round2(d.rates.reduce((a, x) => a + round2(num(x.ht) * num(x.rate) / 100), 0)); return round2(ht + tv); };
+    const msg = df && !df.ok ? [...df.add.map(d => `l'acompte ${num0(d)} (${eur(amt(d))} TTC) n'est pas déduit`), ...df.changed.map(d => `l'acompte ${num0(d)} a été modifié depuis`), ...df.stale.map(d => `l'acompte ${e(d.number)} n'existe plus ou est annulé`)] : [];
+    return `<div class="depbox"><b>Acomptes déjà facturés</b>${deps.map(d => `<div class="dl"><span>Facture d'acompte ${num0(d)} du ${e(dateFr(d.date))}</span><b>− ${eur(amt(d))}</b></div>`).join('')}${msg.length ? `<div class="dwarn">⚠ ${msg.join(' · ')}. <button type="button" class="btn sm" id="depupd">Mettre à jour les acomptes</button></div>` : ''}</div>`;
+  };
   /* Taux réduit : rappel de la mention que le client certifie (remplace l'ancienne attestation) */
   const redRates = () => (cur.type === 'credit' ? [] : reducedRates(cur.lines, cur.tva));
   const redHintHtml = () => {
@@ -324,7 +381,7 @@ export async function renderDoc(el, id, arg) {
   const refreshTotals = () => {
     const t = totals(cur);
     $('#totbox', el).innerHTML = totalsHtml(t);
-    const sb = $('#sbht', el); if (sb) { sb.textContent = eur(t.ht); $('#sbttc', el).textContent = eur(t.ttc); }
+    const sb = $('#sbht', el); if (sb) { sb.textContent = eur(t.ht); $('#sbttc', el).textContent = eur(t.ttc); $('#sbtl', el).textContent = t.hasDep ? 'Net' : 'TTC'; }
     const k = redRates().join('|');
     if (k !== redKey) { redKey = k; const sel = $('[name=tvaRed]', el); if (sel) cur.tvaRed = sel.value; $('#redhint', el).innerHTML = redHintHtml(); }
     schedAux();
@@ -384,6 +441,45 @@ export async function renderDoc(el, id, arg) {
     return true;
   };
 
+  /* Créer une facture d'acompte à partir du devis courant */
+  const depositModal = async () => {
+    readHeader(); pruneBlocks(cur); await db.put('documents', cur);
+    const prev = quoteDeposits(allDocs, cur.id), tq = totals(cur), prevTtc = round2(prev.reduce((a, d) => a + totals(d).ttc, 0)), left = round2(tq.ttc - prevTtc);
+    if (tq.ttc <= 0) return toast('Ce devis n\'a pas de montant à facturer');
+    if (left <= 0.02) return toast('Ce devis est déjà facturé en totalité en acomptes');
+    const qPaid = paidOf(allPay, cur.id), canAcc = !['accepted', 'invoiced'].includes(cur.status);
+    const leftHt = round2(tq.ht - prev.reduce((a, d) => a + totals(d).ht, 0));
+    const tooBig = (mode, v, sp) => sp.ttc > left + 0.02 || (mode === 'ttc' && v > left + 0.02) || (mode === 'ht' && v > leftHt + 0.02) || (mode === '%' && v > 100); // le montant demandé ne doit pas être rabattu en silence
+    modal('Facture d\'acompte',
+      `<p class="muted" style="margin-top:0">Devis <b>${e(cur.number)}</b> : ${eur(tq.ttc)} TTC${prev.length ? ` · déjà facturé en acompte : ${eur(prevTtc)} (${prev.map(d => e(d.number)).join(', ')})` : ''} · reste à facturer en acompte : <b>${eur(left)}</b>.</p>
+      <div class="cols"><label class="f"><span>Type d'acompte</span><select name="mode"><option value="%">Pourcentage du devis</option><option value="ttc">Montant TTC (€)</option><option value="ht">Montant HT (€)</option></select></label>
+      <label class="f"><span id="dvl">Pourcentage (%)</span><input name="value" type="number" step="any" min="0" inputmode="decimal" value="30" required></label>
+      ${F('Date de la facture', 'date', today(), { type: 'date' })}${F('À régler avant le', 'dueDate', addDays(today(), num(S.payDays ?? 30)), { type: 'date' })}</div>
+      <div class="depprev" id="depprev"></div>
+      ${canAcc ? '<label class="dpck"><input type="checkbox" name="accept" checked> Marquer le devis comme accepté</label>' : ''}
+      ${qPaid > 0.005 ? `<label class="dpck"><input type="checkbox" name="attach" checked> Rattacher à cette facture les règlements déjà enregistrés sur le devis (${eur(qPaid)})</label>` : ''}
+      <p class="muted" style="margin-bottom:0">Le montant est réparti entre les taux de TVA du devis. Cette facture suit la numérotation des factures ; elle sera déduite automatiquement de la facture finale.</p>`,
+      async o => {
+        const sp = depositSplit(cur.lines, cur.tva, cur.disc, o.mode, o.value);
+        if (!(sp.ttc > 0)) { alert('Montant d\'acompte invalide.'); return false; }
+        if (tooBig(o.mode, num(o.value), sp)) { alert(`L'acompte demandé dépasse le reste à facturer (${eur(left)} TTC).`); return false; }
+        const inv = await makeDeposit(cur, sp, { mode: o.mode, value: o.value, date: o.date, dueDate: o.dueDate, accept: !!o.accept, attach: !!o.attach });
+        toast(`Facture d'acompte ${inv.number} créée`); go('#/doc/' + inv.id);
+      }, { submitLabel: 'Créer la facture d\'acompte', onOpen: f => {
+        const sel = f.querySelector('[name=mode]'), inp = f.querySelector('[name=value]'), att = f.querySelector('[name=attach]'); let touched = false;
+        const upd = () => {
+          const mode = sel.value, sp = depositSplit(cur.lines, cur.tva, cur.disc, mode, inp.value), over = tooBig(mode, num(inp.value), sp), box = f.querySelector('#depprev');
+          f.querySelector('#dvl').textContent = mode === '%' ? 'Pourcentage (%)' : mode === 'ttc' ? 'Montant TTC (€)' : 'Montant HT (€)';
+          box.className = 'depprev' + (over || !(sp.ttc > 0) ? ' bad' : '');
+          box.innerHTML = sp.ttc > 0 || over ? `<b>Acompte : ${eur(sp.ttc)} TTC</b> (${e(String(sp.pct).replace('.', ','))} % du devis)<br>${eur(sp.ht)} HT${sp.rates.map(x => ` · TVA ${fmtRate(x.rate)} : ${eur(x.tva)}`).join('')}<br>${over ? '<b>Dépasse le reste à facturer</b>' : `Reste à facturer ensuite : ${eur(Math.max(0, round2(left - sp.ttc)))} TTC`}` : 'Saisissez un pourcentage ou un montant.';
+          if (att) { const tooBig = qPaid > sp.ttc + 0.02; att.disabled = tooBig; if (tooBig) att.checked = false; else if (!touched) att.checked = true; }
+        };
+        sel.onchange = () => { inp.value = sel.value === '%' ? 30 : round2((sel.value === 'ttc' ? tq.ttc : tq.ht) * 0.3); upd(); };
+        inp.oninput = upd; if (att) att.onchange = () => { touched = true; };
+        upd();
+      } });
+  };
+
   /* Créer un avoir à partir de la facture courante */
   const creditModal = () => modal('Créer un avoir',
     `<p class="muted">Avoir sur la facture <b>${e(cur.number)}</b> (${eur(totals(cur).ttc)} TTC).</p>
@@ -391,7 +487,7 @@ export async function renderDoc(el, id, arg) {
     ${F('Motif', 'reason', '', { ph: 'ex : malfaçon, remise accordée, erreur de facturation…' })}`,
     async o => {
       const cr = await newDoc('credit', { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', intro: 'Avoir sur facture ' + cur.number, note: o.reason, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number,
-        lines: o.mode === 'total' ? JSON.parse(JSON.stringify(cur.lines)) : [{ desig: 'Remise / geste commercial', qty: 1, unit: 'u', pu: 0 }], ...(o.mode === 'total' && cur.disc ? { disc: { ...cur.disc } } : {}) });
+        lines: o.mode === 'total' ? JSON.parse(JSON.stringify(cur.lines)) : [{ desig: 'Remise / geste commercial', qty: 1, unit: 'u', pu: 0 }], ...(o.mode === 'total' && cur.disc ? { disc: { ...cur.disc } } : {}), ...(o.mode === 'total' && depsOf(cur).length ? { deps: JSON.parse(JSON.stringify(cur.deps)) } : {}) });
       cr.number = await nextNumber('credit'); await db.put('documents', cr);
       toast(`Avoir ${cr.number} créé`); go('#/doc/' + cr.id);
     }, { submitLabel: 'Créer l\'avoir' });
@@ -444,6 +540,12 @@ export async function renderDoc(el, id, arg) {
     hdr.addEventListener('change', () => { readHeader(); $('#hdrsum', el).textContent = hdrSummary(); });
     $('.edmain', el).addEventListener('input', schedAux);
     $('#discrow', el).addEventListener('input', () => { readDisc(); refreshTotals(); });
+    $('#depbox', el).addEventListener('click', ev => { // facture finale : remet les acomptes déduits en accord avec les factures d'acompte
+      if (!ev.target.closest('#depupd')) return;
+      const df = depsDiff(cur, allDocs);
+      if (df.want.length) cur.deps = JSON.parse(JSON.stringify(df.want)); else delete cur.deps;
+      $('#depbox', el).innerHTML = depBoxHtml(); refreshTotals(); toast('Acomptes mis à jour – pensez à enregistrer');
+    });
     $('#sbsave', el).onclick = save;
     $('#sbchk', el).onclick = () => { readHeader(); const r = runChecks(); modal('Points à vérifier', r.length ? checksHtml(r) : '<p>Aucun point à signaler.</p>', null); };
     $('#sidebtn', el).onclick = () => { lsSet('gp_sidepv', sideWanted() ? '0' : '1'); applySide(); };
@@ -554,7 +656,7 @@ export async function renderDoc(el, id, arg) {
     $('#efact', el)?.addEventListener('click', async () => {
       readHeader(); pruneBlocks(cur); await db.put('documents', cur);
       const cli = curClient(), orig = isC && cur.fromInvoice ? DN[cur.fromInvoice] : null;
-      const o = { paid: isC ? 0 : paidOf(payments, cur.id), fromInvoiceNumber: orig?.number || cur.fromInvoiceNumber || '', vatNote: vatNoteOf(cur, S) };
+      const o = { paid: isC ? 0 : paidOf(payments, cur.id), fromInvoiceNumber: orig?.number || cur.fromInvoiceNumber || '', fromInvoiceDate: orig?.date || '', vatNote: vatNoteOf(cur, S) };
       const res = efact.check(cur, S, cli, o), blocked = res.some(r => r.level === 'err');
       const ic = { err: '✖', warn: '⚠', info: 'ℹ', ok: '✔' }, col = { err: 'var(--bad,#c0392b)', warn: '#b7791f', info: '#2c6fb7', ok: '#2f855a' };
       modal('Facture électronique – ' + (cur.number || ''), `<p class="muted">Contrôle des mentions obligatoires avant dépôt sur une plateforme agréée (Fulll, par exemple). Le fichier est créé sur cet appareil, rien n'est envoyé.</p>
@@ -576,7 +678,8 @@ export async function renderDoc(el, id, arg) {
       });
     });
     $('#delete', el).onclick = async () => {
-      if (!confirm('Supprimer ce document et ses règlements ?')) return;
+      const ded = allDocs.filter(d => d.id !== cur.id && depsOf(d).some(x => x.id === cur.id));
+      if (!confirm('Supprimer ce document et ses règlements ?' + (ded.length ? `\n\nAttention : cette facture d'acompte est déduite de la facture ${ded.map(d => d.number || '(brouillon)').join(', ')} : mettez à jour ses acomptes ensuite.` : ''))) return;
       if (isC) { for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); } }
       else for (const p of payments) await db.del('payments', p.id);
       await db.del('documents', cur.id); go('#/docs/' + cur.type);
@@ -604,12 +707,15 @@ export async function renderDoc(el, id, arg) {
       $$('[data-pay]', el).forEach(n => n.onclick = () => { const p = payments.find(x => x.id === n.dataset.pay); if (p.creditId) go('#/doc/' + p.creditId); else payModal(p); });
     }
     if (isQ) {
+      $('#todep', el)?.addEventListener('click', depositModal);
       $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); });
       if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
         const nopt = (cur.lines || []).filter(isOpt).length;
         if (nopt && !confirm(`${nopt === 1 ? 'Une ligne est en option et ne sera pas reprise' : nopt + ' lignes sont en option et ne seront pas reprises'} dans la facture (décochez « Option » sur le devis pour celles que le client a acceptées). Créer la facture ?`)) return;
+        const dps = quoteDeposits(allDocs, cur.id);
+        if (dps.length && !confirm(`${dps.length === 1 ? 'La facture d\'acompte' : 'Les ' + dps.length + ' factures d\'acompte'} ${dps.map(d => d.number).join(', ')} (${eur(dps.reduce((a, d) => a + totals(d).ttc, 0))} TTC) ser${dps.length === 1 ? 'a' : 'ont'} déduite${dps.length === 1 ? '' : 's'} de la facture finale. Continuer ?`)) return;
         if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
         const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);
@@ -660,6 +766,8 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['lblDisc', 'Totaux – libellé remise', 'Remise', 1, 'qic'],
     ['lblTva', 'Totaux – libellé TVA', 'TVA', 1, 'qic'],
     ['lblTtc', 'Totaux – libellé TTC', isC ? 'Total TTC de l\'avoir' : 'Total TTC', 1, 'qic'],
+    ['lblDep', 'Totaux – acompte déjà facturé (suivi du n° et de la date de la facture d\'acompte)', 'Acompte déjà facturé – facture n°', 1, 'ic'],
+    ['lblNet', 'Totaux – net à payer après acomptes', isC ? 'Net de l\'avoir après acomptes' : 'Net à payer après acomptes', 1, 'ic'],
     ['vatRed', 'Mention du client – TVA à taux réduit (travaux dans un logement)', TVA_RED_TXT, 6, 'qi'],
     ['lblOpt', 'Totaux – options non comprises', 'Options non comprises dans le total (HT)', 1, 'qi'],
     ['lblPaid', 'Totaux – déjà réglé', isC ? 'Déjà déduit / remboursé' : 'Déjà réglé', 1, 'ic'],
@@ -672,7 +780,8 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['bank', 'Coordonnées bancaires (droite)', S.iban && !isC ? '**__Vous pouvez régler cette facture par virement__**\n**{company}**\n**IBAN** : {iban}\n**Code BIC** : {bic}' : '', 4, 'qi'],
   ];
   const so = (!base && S.zones && S.zones[ty]) || {}; // réglages généraux (Réglages > Mise en page des documents)
-  return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => ({ k, label, v: k in so ? so[k] : v, rows }));
+  const dep = t => (doc.deposit && !/acompte/i.test(t) ? t.replace(/facture/i, m => m + ' d\'acompte') : t); // facture d'acompte : le titre le dit
+  return L.filter(z => z[4].includes(ty)).map(([k, label, v, rows]) => { const val = k in so ? so[k] : v; return { k, label, v: k === 'title' ? dep(val) : val, rows }; });
 }
 /* Texte de la mention « TVA réduite » tel qu'imprimé (vide si elle n'a pas lieu d'être) */
 export function vatNoteOf(doc, S) {
@@ -763,6 +872,15 @@ export async function sheetHtml(doc, opts = {}) {
     }
   };
   const multi = t.rates.length > 1, NC = multi ? 6 : 5;
+  /* Facture finale : acomptes déjà facturés (un par facture d'acompte), puis net à payer */
+  const depRows = () => {
+    if (!t.hasDep) return '';
+    const rows = depsOf(doc).map(d => {
+      const ht = round2(d.rates.reduce((a, x) => a + num(x.ht), 0)), tv = round2(d.rates.reduce((a, x) => a + round2(num(x.ht) * num(x.rate) / 100), 0));
+      return `<tr class="depr"><td colspan="${NC - 1}">${Z('lblDep')} ${e(d.number)} du ${e(dateFr(d.date))} <span class="small">(${eur(ht)} HT + ${eur(tv)} TVA)</span></td><td class="n">− ${eur(round2(ht + tv))}</td></tr>`;
+    }).join('');
+    return `${rows}<tr class="t"><td colspan="${NC - 1}">${Z('lblNet')}</td><td class="n">${eur(t.ttc)}</td></tr>`;
+  };
   const redOn = !isC && doc.tvaRed !== '0' && (LE || reducedRates(doc.lines, doc.tva).length > 0) && (ED || String(Zt('vatRed')).trim());
   const vatMent = redOn ? `<tr class="vatm"><td colspan="${NC}" class="small">${Z('vatRed')}</td></tr>` : '';
   return `<div class="sheet${ED ? ' pvedit' : ''}${LE ? ' lyedit' : ''}" style="${layoutStyle(LY)}">
@@ -770,9 +888,10 @@ export async function sheetHtml(doc, opts = {}) {
     <div class="tblwrap"><table class="${colgroup(LY, multi) ? 'fx' : ''}">${colgroup(LY, multi)}<thead><tr><th>${Z('thDes')}</th><th>${Z('thQty')}</th><th>${Z('thUnit')}</th><th>${Z('thPu')}</th>${multi ? `<th>${Z('thTva')}</th>` : ''}<th>${Z('thHt')}</th></tr></thead><tbody>
     ${printRows(ensureBlocks(doc))}
     ${t.disc ? `<tr><td colspan="${NC - 1}">${Z('lblGross')}</td><td class="n">${eur(t.gross)}</td></tr><tr><td colspan="${NC - 1}">${Z('lblDisc')}${doc.disc && doc.disc.t !== '€' ? ' ' + e(fmtRate(Math.min(100, num(doc.disc.v)))) : ''}</td><td class="n">− ${eur(t.disc)}</td></tr>` : ''}
-    <tr><td colspan="${NC - 1}">${Z('lblHt')}</td><td class="n">${eur(t.ht)}</td></tr>
-    ${t.rates.map(r => `<tr><td colspan="${NC - 2}">${Z('lblTva')}${multi ? ` <span class="small">(sur ${eur(r.ht)} HT)</span>` : ''}</td><td class="n">${fmtRate(r.rate)}</td><td class="n">${eur(r.tva)}</td></tr>`).join('')}
-    <tr class="t"><td colspan="${NC - 1}">${Z('lblTtc')}</td><td class="n">${eur(t.ttc)}</td></tr>
+    <tr><td colspan="${NC - 1}">${Z('lblHt')}</td><td class="n">${eur(t.full.ht)}</td></tr>
+    ${t.rates.map(r => `<tr><td colspan="${NC - 2}">${Z('lblTva')}${multi ? ` <span class="small">(sur ${eur(r.ht0)} HT)</span>` : ''}</td><td class="n">${fmtRate(r.rate)}</td><td class="n">${eur(r.tva0)}</td></tr>`).join('')}
+    <tr class="t${t.hasDep ? ' pre' : ''}"><td colspan="${NC - 1}">${Z('lblTtc')}</td><td class="n">${eur(t.full.ttc)}</td></tr>
+    ${depRows()}
     ${t.opt && !isC ? `<tr class="optt"><td colspan="${NC - 1}"><i>${Z('lblOpt')}</i></td><td class="n"><i>${eur(t.opt)}</i></td></tr>` : ''}
     ${used ? `<tr><td colspan="${NC - 1}">${Z('lblPaid')}</td><td class="n">− ${eur(used)}</td></tr><tr class="t"><td colspan="${NC - 1}">${Z('lblLeft')}</td><td class="n">${eur(Math.max(0, round2(t.ttc - used)))}</td></tr>` : ''}
     ${vatMent}

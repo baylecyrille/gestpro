@@ -127,7 +127,7 @@ export async function renderSite(el, id) {
   const row = d => {
     const t = totals(d);
     const badge = d.type === 'invoice' || d.type === 'credit' ? invBadge(d, payments) : `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${{ draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' }[d.status] || ''}</span>`;
-    return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')}</div><div class="s">${dateFr(d.date)}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
+    return `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')}</div><div class="s">${dateFr(d.date)}${d.deposit ? ' · <b>Acompte</b>' : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${badge}</div></div></a>`;
   };
   const sect = (title, type, label) => `<h3>${title}</h3>${mine.filter(d => d.type === type).map(row).join('') || '<p class="muted">Aucun.</p>'}${label ? `<a class="btn sm" href="#/doc/new/${type}-${site.id}">+ ${label}</a>` : ''}`;
   el.innerHTML = `<div class="row"><a class="btn ghost" href="#/sites">← Chantiers</a><span class="sp"></span>${canEdit ? `<button class="btn ${site.status === 'paid' ? '' : 'primary'}" id="finish">${site.status === 'paid' || site.status === 'lost' ? '↺ Rouvrir le chantier' : '✓ Terminer le chantier'}</button><button class="btn" id="edit">Modifier</button>` : ''}</div>

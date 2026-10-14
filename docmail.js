@@ -23,7 +23,7 @@ export function fillTpl(tpl, vars) {
   return String(tpl || '').replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] ?? '' : m)).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 export function mailVars(doc, S, client = {}) {
-  const [type, le] = TYPE[doc.type] || TYPE.invoice, t = totals(doc);
+  const [type, le] = doc.deposit && doc.type === 'invoice' ? ['Facture d\'acompte', 'la facture d\'acompte'] : (TYPE[doc.type] || TYPE.invoice), t = totals(doc);
   const action = doc.type === 'quote'
     ? 'Pour l\'accepter, merci de nous le retourner daté et signé avec la mention « Bon pour accord ».' + (doc.validUntil ? ` Il est valable jusqu'au ${dateFr(doc.validUntil)}.` : '')
     : doc.type === 'credit' ? 'Cet avoir sera déduit de votre prochaine facture ou remboursé.'
@@ -58,7 +58,7 @@ export async function mailModal(ctx) {
   const subject = fillTpl(S.mailSubject || MAIL_DEFAULTS.subject, V), body = fillTpl(S.mailBody || MAIL_DEFAULTS.body, V);
   const isInv = doc.type !== 'quote';
   const orig = doc.type === 'credit' && doc.fromInvoice ? DN[doc.fromInvoice] : null;
-  const o = { paid: doc.type === 'credit' ? 0 : payments.filter(p => p.docId === doc.id).reduce((a, p) => a + (+p.amount || 0), 0), fromInvoiceNumber: orig?.number || doc.fromInvoiceNumber || '', vatNote: vatNoteOf(doc, S) };
+  const o = { paid: doc.type === 'credit' ? 0 : payments.filter(p => p.docId === doc.id).reduce((a, p) => a + (+p.amount || 0), 0), fromInvoiceNumber: orig?.number || doc.fromInvoiceNumber || '', fromInvoiceDate: orig?.date || '', vatNote: vatNoteOf(doc, S) };
   const fxCheck = isInv ? efact.check(doc, S, client, o) : [];
   const fxOk = isInv && !fxCheck.some(r => r.level === 'err');
   const via = scriptMode();

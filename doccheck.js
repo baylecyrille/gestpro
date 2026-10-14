@@ -2,7 +2,7 @@
 // Fonction pure (aucun accès au navigateur ni à la base) : testable hors ligne.
 //  - level « err »  : bloque l'enregistrement
 //  - level « warn » : affiché avant l'enregistrement, qu'on peut accepter (mémorisé pour ne pas redemander à chaque fois)
-import { sums, isOpt, remOf, rateOf, reducedRates } from './vat.js';
+import { docSums, isOpt, remOf, rateOf, reducedRates } from './vat.js';
 
 const num = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')) || 0;
 const plain = h => String(h || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -17,7 +17,7 @@ export function checkDoc(doc, { client = {}, others = [], today = new Date().toI
   const isQ = doc.type === 'quote', isC = doc.type === 'credit';
   const lines = (doc.lines || []).filter(l => String(l.desig || '').trim() || num(l.pu));
   const counted = lines.filter(l => !isOpt(l));
-  const t = sums(doc.lines || [], doc.tva, doc.disc);
+  const t = docSums(doc);
 
   // --- Bloquant
   if (!doc.clientId) add('err', 'client', 'Choisissez un client');
@@ -27,6 +27,7 @@ export function checkDoc(doc, { client = {}, others = [], today = new Date().toI
 
   // --- Lignes
   if (!counted.length) add('warn', 'nolines', lines.length ? 'Toutes les lignes sont en option : le total est à zéro.' : 'Le document ne contient aucune ligne.');
+  else if (!isC && t.hasDep) { if (t.ttc < -0.005) add('warn', 'depover', `Les acomptes déjà facturés (${eur(t.depo.ttc)}) dépassent le total de la facture : le net est de ${eur(t.ttc)} (un avoir ou un remboursement est à prévoir).`); }
   else if (!isC && t.ttc <= 0) add('warn', 'total0', `Le total TTC est de ${eur(t.ttc)}.`);
   const noPrice = counted.filter(l => String(l.desig || '').trim() && !num(l.pu));
   if (noPrice.length) add('warn', 'noprice', `${noPrice.length === 1 ? 'Une ligne sans prix' : noPrice.length + ' lignes sans prix'} : « ${short(noPrice[0].desig)} »${noPrice.length > 1 ? ' …' : ''} (prix à 0 €).`);
@@ -38,6 +39,16 @@ export function checkDoc(doc, { client = {}, others = [], today = new Date().toI
   if (bigRem.length) add('warn', 'bigrem', `Remise de ${String(remOf(bigRem[0])).replace('.', ',')} % ou plus sur « ${short(bigRem[0].desig || '(sans désignation)')} » : vérifiez.`);
   if (doc.disc && doc.disc.t !== '€' && num(doc.disc.v) >= 30 && num(doc.disc.v) <= 100) add('warn', 'bigdisc', `Remise de ${String(num(doc.disc.v)).replace('.', ',')} % sur le total : vérifiez.`);
   if (doc.disc && doc.disc.t === '€' && num(doc.disc.v) > t.gross && t.gross > 0) add('warn', 'discover', `La remise (${eur(num(doc.disc.v))}) dépasse le total HT : elle est limitée à ${eur(t.gross)}.`);
+
+  // --- Facture d'acompte : total des acomptes d'un devis ≤ montant du devis
+  if (doc.deposit && doc.deposit.q) {
+    const q = others.find(d => d.id === doc.deposit.q);
+    if (q) {
+      const qt = docSums(q).ttc, sib = others.filter(d => d.id !== doc.id && d.type === 'invoice' && d.deposit && d.deposit.q === q.id && d.status !== 'draft' && d.status !== 'cancelled');
+      const total = sib.reduce((a, d) => a + docSums(d).ttc, 0) + t.ttc;
+      if (total > qt + 0.02) add('warn', 'depexceed', `Les acomptes sur le devis ${q.number || ''} (${eur(total)} TTC) dépassent son montant (${eur(qt)} TTC).`);
+    }
+  }
 
   // --- Dates
   if (doc.date && diffDays(doc.date, today) > 30) add('warn', 'future', 'La date du document est dans plus de 30 jours.');
