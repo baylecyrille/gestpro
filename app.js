@@ -182,7 +182,7 @@ async function renderDashboard(el) {
   const lateDays = d => Math.floor((Date.parse(today()) - Date.parse(d)) / 864e5);
 
   const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
-  el.innerHTML = `<h2>Bonjour 👋${first ? ' ' + e(first) : ''}</h2>
+  el.innerHTML = `<h2>Bonjour${first ? ' ' + e(first) : ''} 👋</h2>
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
     <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${per === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" id="pfrom" value="${e(pc.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" id="pto" value="${e(pc.to)}"></label></div>` : `<p class="muted" style="margin:0">Du ${dateFr(range.from)} au ${dateFr(range.to)}</p>`}
