@@ -4,7 +4,7 @@ import { getS, logoSrc } from './defaults.js';
 import * as efact from './efact.js';
 import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt } from './vat.js';
 import { checkDoc } from './doccheck.js';
-import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
+import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -181,13 +181,19 @@ export async function renderDocs(el, tab = 'quote') {
   const SORTS = { dateD: (a, b) => (b.date + b.number).localeCompare(a.date + a.number), dateA: (a, b) => (a.date + a.number).localeCompare(b.date + b.number), num: (a, b) => String(a.number).localeCompare(String(b.number), 'fr', { numeric: true }),
     client: (a, b) => cname(C[a.clientId]).localeCompare(cname(C[b.clientId]), 'fr'), amtD: (a, b) => totals(b).ttc - totals(a).ttc, amtA: (a, b) => totals(a).ttc - totals(b).ttc };
   el.innerHTML = `<h2>Ventes</h2>${tabs('#/docs', [['quote', 'Devis'], ['invoice', 'Factures'], ['credit', 'Avoirs']].filter(t => allowed.includes(t[0])), tab)}
-    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div>${filterBar(FC)}<div id="list"></div>`;
+    <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher (n°, client, chantier)…"><a class="btn primary" href="#/doc/new/${tab}">+ ${tab === 'quote' ? 'Devis' : tab === 'credit' ? 'Avoir' : 'Facture'}</a></div>${filterBar(FC)}<div id="invnote" class="invnote"></div><div id="list"></div>`;
   let getF;
   const okOne = (d, s) => !s || (tab === 'invoice' ? (s === 'unpaid' ? counts(d) && totals(d).ttc - paidOf(payments, d.id) > 0.005 : invState(d, payments) === s) : d.status === s);
   const okStatus = (d, arr) => !arr || !arr.length || arr.some(s => okOne(d, s));
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
-    const rows = list.filter(d => (!q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q)) && okStatus(d, F2.status) && (!F2.client || d.clientId === F2.client) && (!F2.from || (d.date || '') >= F2.from) && (!F2.to || (d.date || '') <= F2.to)).sort(SORTS[F2.sort] || SORTS.dateD);
+    const found = list.filter(d => (!q || [d.number, cname(C[d.clientId]), d.siteRef, d.siteAddr].join(' ').toLowerCase().includes(q)) && okStatus(d, F2.status) && (!F2.client || d.clientId === F2.client) && (!F2.from || (d.date || '') >= F2.from) && (!F2.to || (d.date || '') <= F2.to));
+    /* Devis facturés : masqués par défaut (réglage mémorisé) ; une recherche ou le filtre de statut « Facturé » les fait réapparaître */
+    const hideOn = tab === 'quote' && getPref('docs_hideinv', '1') !== '0', hide = hideOn && !q && !(F2.status || []).includes('invoiced');
+    const shown = hide ? found.filter(d => d.status !== 'invoiced') : found, nh = found.length - shown.length;
+    const rows = shown.sort(SORTS[F2.sort] || SORTS.dateD);
+    const note = $('#invnote', el);
+    if (tab === 'quote') note.innerHTML = nh ? `${nh} devis facturé${nh > 1 ? 's' : ''} masqué${nh > 1 ? 's' : ''} · <button type="button" class="lnk" data-hi="0">Voir tout</button>` : !hideOn && list.some(d => d.status === 'invoiced') ? '<button type="button" class="lnk" data-hi="1">Masquer les devis facturés</button>' : '';
     $('#list', el).innerHTML = rows.map(d => {
       const t = totals(d);
       let badge;
@@ -195,10 +201,11 @@ export async function renderDocs(el, tab = 'quote') {
       else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
       return `<a class="item${lock.lockCls(LK, d.id)}" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
         <div class="s">${dateFr(d.date)}${d.deposit ? ' · <b>Acompte</b>' : ''}${depsOf(d).length ? ' · après acomptes' : ''}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${lock.lockTag(LK, d.id)}${badge}</div></div></a>`;
-    }).join('') || `<div class="empty">Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.</div>`;
+    }).join('') || `<div class="empty">${nh ? 'Aucun devis en cours.' : `Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.`}</div>`;
   };
   getF = bindFilters(el, 'docs_' + tab + '_', FC, draw);
   draw(); $('#q', el).oninput = draw;
+  $('#invnote', el).onclick = ev => { const b = ev.target.closest('[data-hi]'); if (b) { setPref('docs_hideinv', b.dataset.hi); draw(); } };
 }
 
 /* ---------- Éditeur ---------- */
@@ -292,7 +299,7 @@ export async function renderDoc(el, id, arg) {
       <span class="seg"><button type="button" class="btn sm on" id="vedit">✎ Éditeur</button><button type="button" class="btn sm" id="vprev">👁 Aperçu</button></span><button type="button" class="btn sidebtn${sideWanted() ? ' on' : ''}" id="sidebtn" title="Afficher l'aperçu du document à côté de l'éditeur (grands écrans)">▥ Aperçu à côté</button><button type="button" class="btn" id="vlayout">🎨 Mise en page</button>
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
-    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
+    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${isQ && cur.status === 'invoiced' ? invoicedBannerHtml() : ''}${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
     <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
       <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
@@ -329,6 +336,12 @@ export async function renderDoc(el, id, arg) {
       ${pays.sort((a, b) => a.date.localeCompare(b.date)).map(p => `<div class="item" data-pay="${p.id}"><div class="main"><div class="t">${eur(p.amount)}</div><div class="s">${dateFr(p.date)} · ${e(METHODS.find(m => m[0] === p.method)?.[1] || '')}${p.chequeNo ? ' n° ' + e(p.chequeNo) : ''}${p.bank ? ' · ' + e(p.bank) : ''}${p.note ? ' · ' + e(p.note) : ''}</div></div><span class="chip">${e(p.creditId ? 'Avoir' : p.kind === 'acompte' ? 'Acompte' : 'Règlement')}</span></div>`).join('')}
       <div class="row"><span class="muted">Encaisser :</span><button class="btn primary" data-m="especes">💶 Espèces</button><button class="btn primary" data-m="cheque">🧾 Chèque</button><button class="btn primary" data-m="cb">💳 Carte bleue</button><button class="btn" id="addpay">Autre…</button></div>
       <div class="row"><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
+  };
+  /* Devis facturé : rappel que la facture ne suit plus les modifications du devis */
+  const invoicedBannerHtml = () => {
+    const invs = allDocs.filter(d => d.type === 'invoice' && !d.deposit && (d.id === cur.invoiceId || d.fromQuote === cur.id)).sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
+    const links = invs.map(d => `<a href="#/doc/${d.id}">${e(d.number || '(brouillon)')}</a>`).join(', ');
+    return `<div class="invbanner" id="invbanner"><b>Ce devis est facturé</b>${links ? ` (facture n° ${links})` : ''} : vos modifications ne changeront pas la facture. Pour repartir de ses lignes, utilisez « Dupliquer ».</div>`;
   };
   /* Devis : factures d'acompte déjà émises et reste à facturer */
   const depositsCardHtml = () => {

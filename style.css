@@ -437,3 +437,8 @@ nav#nav a,nav#nav button{max-width:160px}
 .depprev.bad{border-left-color:var(--bad,#c0392b);background:#fdf0ee}
 .dpck{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-size:14px}
 .dpck input{margin-top:3px}
+
+/* Devis facturés */
+.invbanner{margin:0 0 12px;padding:9px 12px;border:1px solid #ecd9a0;border-left:4px solid #e0a82e;border-radius:10px;background:#fff8e5;font-size:14px}
+.invnote{margin:4px 2px 8px;font-size:13px;color:var(--mut)}
+.invnote .lnk{border:0;background:none;padding:0;color:var(--p);font:inherit;text-decoration:underline;cursor:pointer}
