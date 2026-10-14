@@ -48,3 +48,29 @@ export async function runImport(data) {
   await db.putMany('payments', pays);
   return { contacts: contacts.length, sites: sites.length, products: products.length, documents: out.length, payments: pays.length, skipped: (data.documents || []).length - out.length };
 }
+
+/* Correction des statuts de devis déjà importés.
+   Fichier { app: 'gestpro', mode: 'statuts', statuts: { <id du devis>: 'invoiced' | 'accepted' | 'sent' | … } } : il ne contient que des identifiants et des statuts.
+   Garde-fous : seuls les devis importés encore « Facturé », sans facture créée depuis dans l'appli, sont modifiés ; un statut changé à la main reste tel quel. */
+export const QSTAT = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' };
+export const isStatusFile = data => !!data && data.app === 'gestpro' && data.mode === 'statuts' && !!data.statuts && typeof data.statuts === 'object';
+export async function planStatuts(data) {
+  if (!isStatusFile(data)) throw new Error('Ce fichier n\'est pas un fichier de correction des statuts GestPro.');
+  const docs = await db.all('documents'), byId = new Map(docs.map(d => [d.id, d]));
+  const fromApp = new Set(docs.filter(d => d.type === 'invoice' && !d.deposit && d.fromQuote && !d.imported).map(d => d.fromQuote)); // facturé depuis l'import, dans l'appli
+  const changes = [], to = {}; let same = 0, edited = 0, missing = 0;
+  for (const [id, st] of Object.entries(data.statuts)) {
+    const q = byId.get(id);
+    if (!q || q.type !== 'quote' || !QSTAT[st]) { missing++; continue; }
+    if (q.status === st) { same++; continue; }
+    if (!q.imported || q.status !== 'invoiced' || q.invoiceId || fromApp.has(id)) { edited++; continue; }
+    changes.push([q, st]); to[st] = (to[st] || 0) + 1;
+  }
+  return { changes, to, same, edited, missing, total: Object.keys(data.statuts).length };
+}
+export async function runStatuts(data) {
+  const plan = await planStatuts(data);
+  const out = plan.changes.map(([q, st]) => ({ ...q, status: st }));
+  await db.putMany('documents', out);
+  return { changed: out.length, to: plan.to, kept: plan.edited };
+}

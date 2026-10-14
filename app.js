@@ -290,7 +290,7 @@ async function renderSettings(el) {
       <li>Copiez l'ID client ici, enregistrez, puis « Créer le classeur ».</li></ol>
       <p class="muted">Sur un autre appareil : saisissez le même identifiant, « Utiliser un classeur existant » et collez l'adresse du classeur. Modifiez les données depuis l'appli (les colonnes lisibles du classeur sont un reflet ; les colonnes id/maj/json ne doivent pas être modifiées).</p></details></details></fieldset></div>
   <div class="card"><h3 style="margin-top:0">Modèles de texte</h3><p class="muted">Textes réutilisables (conditions, mentions, remarques) à insérer dans vos devis et factures.</p><div class="row"><button class="btn" id="snip">Gérer les modèles de texte…</button></div></div>
-  <div class="card"><h3 style="margin-top:0">Importer des devis / factures</h3><p class="muted">Ajoute à vos données (sans rien remplacer) le contenu d'un fichier d'import GestPro : clients, chantiers, produits, devis, factures et règlements. Le fichier est lu sur cet appareil uniquement.</p>
+  <div class="card"><h3 style="margin-top:0">Importer des devis / factures</h3><p class="muted">Ajoute à vos données (sans rien remplacer) le contenu d'un fichier d'import GestPro : clients, chantiers, produits, devis, factures et règlements. Un fichier de correction des statuts (devis importés) est aussi accepté : il ne modifie que le statut des devis concernés. Le fichier est lu sur cet appareil uniquement.</p>
     <div class="row"><label class="btn"><input type="file" id="addimp" accept=".json" hidden>Choisir un fichier d'import…</label></div></div>
   <div class="card" id="fcard"><h3 style="margin-top:0">Photos &amp; fichiers (Drive)</h3>
     <p class="muted">Les photos et pièces jointes (chantiers, devis, factures, factures d'achat) sont envoyées dans votre Google Drive, dossier <b>GestPro</b> (<code>Chantiers/&lt;chantier&gt;/Photos, Devis, Factures, Achats, Autres</code> ; <code>Achats fournisseurs/&lt;année&gt;</code>). Elles sont relues par l'application selon les habilitations : photos et documents de chantier pour tous les membres, devis / factures / achats pour les profils qui voient les montants. Aucun compte Google n'est nécessaire pour les membres.</p>
@@ -382,7 +382,14 @@ async function renderSettings(el) {
   $('#addimp', el).onchange = async ev => {
     const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
     try {
-      const imp = await import('./importer.js'); const data = JSON.parse(await readFileText(f)); const p = await imp.planImport(data);
+      const imp = await import('./importer.js'); const data = JSON.parse(await readFileText(f));
+      if (imp.isStatusFile(data)) { // fichier de correction des statuts de devis déjà importés
+        const sp = await imp.planStatuts(data), list = Object.entries(sp.to).map(([k, n]) => `${n} → ${imp.QSTAT[k]}`).join(', ');
+        if (!sp.changes.length) { alert(`Aucun devis à modifier : ${sp.same} ont déjà le bon statut, ${sp.edited} ont été modifiés depuis l'import (conservés), ${sp.missing} introuvables.`); return; }
+        if (!confirm(`Corriger le statut de ${sp.changes.length} devis importés (${list}) ?\n\n${sp.same} ont déjà le bon statut${sp.edited ? `, ${sp.edited} modifiés depuis l'import sont conservés` : ''}${sp.missing ? `, ${sp.missing} introuvables` : ''}. Aucun autre document n'est touché.`)) return;
+        const sr = await imp.runStatuts(data); toast(`${sr.changed} devis corrigés`); refresh(); return;
+      }
+      const p = await imp.planImport(data);
       if (!confirm(`Importer : ${p.contacts} nouveaux clients, ${p.sites} chantiers, ${p.products} produits, ${p.docs} documents (${p.skippedDocs} déjà présents ignorés) et ${p.payments} règlements ?\n\nVos données actuelles ne seront ni modifiées ni supprimées.`)) return;
       const r = await imp.runImport(data); toast(`Import terminé : ${r.documents} documents, ${r.contacts} clients`); refresh();
     } catch (err) { alert(err.message); }
