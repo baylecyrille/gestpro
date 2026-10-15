@@ -55,27 +55,48 @@ export const sheetId = () => localStorage.getItem(K.id) || '';
 export const scriptMode = () => !!(localStorage.getItem(K.url) && localStorage.getItem(K.skey));
 export const configured = () => scriptMode() || !!sheetId();
 export const scriptUrlValue = () => localStorage.getItem(K.url) || '';
+/* Adresse mal copiée : la page de test copiée depuis la barre d'adresse (…/macros/echo?…), l'adresse de test (/dev)… */
+export function urlProblem(url) {
+  const u = String(url || '').trim();
+  if (!u) return null;
+  if (/script\.googleusercontent\.com|\/macros\/echo/i.test(u)) return "L'adresse enregistrée est une copie de la page de test (…/macros/echo?…), qui répond toujours « GestPro » sans rien lire ni enregistrer. Il faut l'adresse de l'application Web : https://script.google.com/macros/s/…/exec (Apps Script › Déployer › Gérer les déploiements › copier l'URL), à coller dans Réglages › Google Sheets.";
+  if (/\/dev(\?|#|$)/.test(u)) return "L'adresse enregistrée est l'adresse de test (/dev). Il faut l'adresse de déploiement qui se termine par /exec (Apps Script › Déployer › Gérer les déploiements › copier l'URL).";
+  if (!/\/exec\/?(\?[^#]*)?(#.*)?$/.test(u)) return "L'adresse du script doit se terminer par /exec (Apps Script › Déployer › Gérer les déploiements › copier l'URL de l'application Web).";
+  return null;
+}
 export function setScript(url, key) {
+  url = String(url || '').trim();
   if (!/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) throw new Error("L'URL doit être celle de l'application web Apps Script (https://script.google.com/macros/s/…/exec).");
+  const bad = urlProblem(url); if (bad) throw new Error(bad);
   if (!key) throw new Error('Clé secrète manquante');
   localStorage.setItem(K.url, url); localStorage.setItem(K.skey, key);
 }
 export function clearScript() { localStorage.removeItem(K.url); localStorage.removeItem(K.skey); localStorage.removeItem(K.last); setStatus(configured() ? 'auth' : 'off'); }
 
 // Appel de la passerelle Apps Script (texte brut : pas de pré-requête CORS)
-export async function scriptCall(payload) {
+/* La page de test du script (doGet) n'est jamais une réponse valable à une action : aucun enregistrement n'a eu lieu */
+const isTestPage = j => !!j && typeof j === 'object' && j.app === 'GestPro';
+export const RETRY = { ms: 1500 };
+export async function scriptCall(payload, _try = 0) {
+  const url = (localStorage.getItem(K.url) || '').trim(), bad = urlProblem(url);
+  if (bad) throw Object.assign(new Error(bad), { code: 'api' });
   let r;
   try {
-    r = await fetch(localStorage.getItem(K.url), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: localStorage.getItem(K.skey), ...payload }) });
+    r = await fetch(url, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: localStorage.getItem(K.skey), ...payload }) });
   } catch { throw Object.assign(new Error('Réseau indisponible ou URL Apps Script incorrecte'), { code: 'net' }); }
   let j, raw = null;
   try { if (typeof r.text === 'function') { raw = await r.text(); j = JSON.parse(raw); } else j = await r.json(); } catch { throw Object.assign(new Error(badReply(r, raw)), { code: 'api' }); }
   if (!j || typeof j !== 'object') throw Object.assign(new Error(badReply(r, raw)), { code: 'api' });
+  if (isTestPage(j)) {
+    // Google a renvoyé la page de test au lieu d'exécuter l'action : on réessaie une fois, puis on explique
+    if (_try < 1) { await new Promise(res => setTimeout(res, RETRY.ms)); return scriptCall(payload, _try + 1); }
+    throw Object.assign(new Error(`Le script Apps Script a répondu par sa page de test au lieu d'exécuter l'action « ${payload.action || '?'} » (version du script : ${j.version || 'ancienne, sans numéro'}). Vérifiez que l'adresse enregistrée (Réglages › Google Sheets) est bien celle de l'application Web (…/macros/s/…/exec, voir Déployer › Gérer les déploiements), puis redéployez : Modifier › Nouvelle version.`), { code: 'api' });
+  }
   if (j.error) throw Object.assign(new Error(authHint(j.error)), { code: 'api' });
   return j;
 }
 /* Le script n'a pas (ou plus) la permission d'utiliser Drive / Sheets / Mail : on ajoute la marche à suivre au message de Google */
-const AUTH_STEPS = " → Dans l'éditeur Apps Script : choisissez la fonction « autoriser », cliquez ▶ Exécuter et acceptez (Paramètres avancés › Accéder à… › Autoriser), puis Déployer › Gérer les déploiements › Modifier › Nouvelle version.";
+const AUTH_STEPS = " → Dans l'éditeur Apps Script : choisissez la fonction « autoriser », cliquez ▶ Exécuter et, sur l'écran Google, cochez TOUTES les cases d'autorisation (« Tout sélectionner ») avant de continuer. Si cela persiste : retirez l'accès du script sur myaccount.google.com/permissions, puis recommencez. Enfin Déployer › Gérer les déploiements › Modifier › Nouvelle version.";
 export const authHint = m => (/autoris[ée]|authoriz|permission|Autorisations requises|auth\/(drive|spreadsheets|script)/i.test(String(m)) && !/Clé secrète|MailApp|send_mail/i.test(String(m)) && !String(m).includes('« autoriser »') ? String(m) + AUTH_STEPS : String(m));
 /* Google a répondu autre chose que du JSON (page de connexion, autorisation requise, erreur…) : on dit ce qui a été reçu et ce qu'il faut vérifier */
 function badReply(r, raw) {

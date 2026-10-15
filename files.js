@@ -51,6 +51,7 @@ export async function upload(file, { path, kind = 'autres', name, px = 2560 }) {
   try {
     if (!navigator.onLine) throw new Error('hors ligne');
     const r = await scriptCall({ action: 'filePut', path, name: att.name, mime: att.mime, b64: await toB64(blob) });
+    if (!r.id) throw Object.assign(new Error("Le script Apps Script n'a pas enregistré le fichier dans le Drive (réponse sans identifiant) : redéployez la dernière version de Code.gs (Déployer › Gérer les déploiements › Modifier › Nouvelle version) et vérifiez l'adresse dans Réglages › Google Sheets."), { code: 'api' });
     att.fid = r.id;
     if (cc) { await cc.put(keyOf(att.fid), new Response(blob, { headers: { 'Content-Type': att.mime } })); await cc.delete(keyOf('local-' + att.id)); }
   } catch (err) {
@@ -78,25 +79,33 @@ export async function remove(att, { trash = true } = {}) {
   if (trash && att.fid && available()) { try { await scriptCall({ action: 'fileDel', id: att.fid }); } catch { /* le fichier reste dans le Drive */ } }
 }
 
-/* Envois en attente (hors ligne) : fiches chantier, documents, contacts */
+/* Envois en attente (hors ligne, ou envoi qui n'avait pas abouti) : fiches chantier, documents, contacts.
+   Une pièce sans identifiant Drive (fid) dont la copie est encore sur l'appareil est renvoyée. */
+let flushing = false;
 export async function flushPending() {
-  if (!available() || !navigator.onLine) return 0;
+  if (flushing || !available() || !navigator.onLine) return 0;
+  flushing = true;
+  try { return await flushAll(); } finally { flushing = false; }
+}
+async function flushAll() {
   let n = 0;
   for (const store of ['sites', 'documents', 'contacts']) {
     for (const rec of await db.all(store)) {
-      const ps = (rec.files || []).filter(a => a.pending);
+      const ps = (rec.files || []).filter(a => !a.fid);
       if (!ps.length) continue;
+      let changed = false;
       for (const a of ps) {
         try {
           const cc = await cache(), hit = cc && await cc.match(keyOf('local-' + a.id));
           if (!hit) continue;
           const b = await hit.blob();
           const r = await scriptCall({ action: 'filePut', path: a.path, name: a.name, mime: a.mime, b64: await toB64(b) });
-          a.fid = r.id; delete a.pending;
+          if (!r.id) continue;
+          a.fid = r.id; delete a.pending; changed = true;
           await cc.put(keyOf(a.fid), new Response(b, { headers: { 'Content-Type': a.mime } })); await cc.delete(keyOf('local-' + a.id)); n++;
         } catch { /* réessai au prochain démarrage */ }
       }
-      await db.put(store, rec);
+      if (changed) await db.put(store, rec);
     }
   }
   return n;
@@ -128,7 +137,7 @@ export function filesCard(o) {
       ${available() ? '' : '<p class="muted" style="margin-top:0">Pour enregistrer des fichiers dans votre Drive, connectez d\'abord le script Google (Réglages).</p>'}
       <div class="fgrid">${list.map(a => `<div class="fitem" data-a="${a.id}" title="${e(a.name)}">
         ${isImg(a) ? `<div class="fth" data-th="${a.id}">🖼</div>` : `<div class="fth">${ICON(a)}</div>`}
-        <div class="fn">${e(a.name)}</div><div class="fs">${a.pending ? '⏳ en attente d\'envoi' : (KINDS[a.kind]?.[1] || '')}</div>
+        <div class="fn">${e(a.name)}</div><div class="fs">${a.pending || !a.fid ? '⏳ en attente d\'envoi' : (KINDS[a.kind]?.[1] || '')}</div>
         ${o.canEdit ? `<button type="button" class="btn sm danger fx" data-rm="${a.id}">✕</button>` : ''}</div>`).join('') || '<p class="muted" style="margin:0">Aucun fichier.</p>'}</div>
       ${o.canEdit && available() ? `<div class="row" style="margin:8px 0 0">
         ${kinds.includes('photos') ? '<label class="btn sm">📷 Photo<input type="file" accept="image/*" capture="environment" multiple hidden data-up="photos"></label><label class="btn sm">🖼 Galerie<input type="file" accept="image/*" multiple hidden data-up="photos"></label>' : ''}

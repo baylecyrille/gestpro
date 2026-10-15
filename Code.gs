@@ -18,8 +18,9 @@ function sheetId_() {
 
 const SECRET = 'CHANGEZ-MOI-PHRASE-SECRETE-LONGUE';
 
+const VERSION = 'maj51 – 15/10/2026'; // affichée par le test ci-dessous : permet de vérifier que le déploiement est à jour
 function doGet() {
-  return out_({ ok: true, app: 'GestPro' }); // simple test dans le navigateur
+  return out_({ ok: true, app: 'GestPro', version: VERSION }); // simple test dans le navigateur
 }
 
 function doPost(e) {
@@ -90,11 +91,18 @@ function doPost(e) {
   }
 }
 
-// À exécuter une seule fois depuis l'éditeur (▶ Exécuter) : accorde les autorisations nécessaires.
+// À exécuter depuis l'éditeur (▶ Exécuter) : accorde les autorisations nécessaires ET vérifie chaque service pour de vrai
+// (même appel que celui des photos : si une autorisation manque, l'erreur s'affiche ici, dans le journal d'exécution).
+// Sur l'écran Google, cochez TOUTES les cases d'autorisation (« Tout sélectionner ») avant de continuer.
 function autoriser() {
-  DriveApp.getRootFolder();
-  SpreadsheetApp.openById(sheetId_());
-  return 'OK – ' + MailApp.getRemainingDailyQuota() + ' e-mails possibles aujourd\'hui';
+  const lignes = [];
+  lignes.push('Classeur : ' + SpreadsheetApp.openById(sheetId_()).getName());
+  lignes.push('Drive : dossier GestPro prêt (' + dir_(['GestPro']).getUrl() + ')'); // crée le dossier au besoin : exige l'autorisation Drive complète
+  lignes.push('E-mails : ' + MailApp.getRemainingDailyQuota() + ' envois possibles aujourd\'hui');
+  lignes.push('Compte : ' + me_());
+  lignes.push('Version du script : ' + VERSION);
+  Logger.log(lignes.join('\n'));
+  return lignes.join(' | ');
 }
 
 function out_(obj) {

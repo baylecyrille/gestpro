@@ -312,7 +312,7 @@ async function renderSettings(el) {
   gstat();
   $('#ftest', el)?.addEventListener('click', async () => {
     const out = $('#fstat', el); out.textContent = 'Test en cours…';
-    try { const r = await sheets.scriptCall({ action: 'fileInfo' }); out.innerHTML = `✔ Drive prêt : dossier <a href="${e(r.folder)}" target="_blank" rel="noopener">GestPro</a> (créé au besoin).`; }
+    try { const r = await sheets.scriptCall({ action: 'fileInfo' }); if (!r.folder) throw new Error('Réponse du script sans dossier : redéployez la dernière version de Code.gs (Déployer › Gérer les déploiements › Modifier › Nouvelle version).'); out.innerHTML = `✔ Drive prêt : dossier <a href="${e(r.folder)}" target="_blank" rel="noopener">GestPro</a> (créé au besoin).`; }
     catch (err) { out.textContent = /Action inconnue/i.test(err.message) ? '✖ Le script Apps Script n\'est pas à jour : collez la dernière version de Code.gs, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version, et acceptez l\'autorisation Drive.' : '✖ ' + err.message; }
   });
   $('#mtest', el)?.addEventListener('click', async () => {
@@ -520,6 +520,8 @@ sheets.onStatus(st => {
   cloud.className = 'cloud ' + st.state;
   cloud.textContent = { busy: '☁ …', ok: '☁ ✓', auth: '☁ reconnecter', err: '☁ !' }[st.state] || '';
   cloud.title = st.msg || '';
+  // la liaison avec Google fonctionne : les pièces restées sur cet appareil partent vers le Drive
+  if (st.state === 'ok' && sheets.scriptMode()) import('./files.js').then(m => m.flushPending()).then(n => { if (n) toast(`${n} fichier(s) envoyé(s) au Drive`); }).catch(() => {});
 });
 cloud.onclick = () => sheets.sync({ interactive: true }).then(r => r?.pulled && toast(`${r.pulled} élément(s) reçus`)).catch(err => toast(err.message));
 sheets.setOnPulled(() => {
