@@ -586,3 +586,9 @@ nav#nav a,nav#nav button{max-width:160px}
 .dz ul,.dz ol{margin:2px 0;padding-left:20px}
 .sheet td ul,.sheet td ol{margin:2px 0;padding-left:18px}
 .sg:empty{display:none}
+
+/* ---- Accueil : Chantiers et Planning côte à côte, plus étroits ---- */
+.duo{display:grid;gap:0 18px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start}
+.duo>section{min-width:0}
+.duo .item{padding:8px 10px}
+.duo .item .t{white-space:nowrap}

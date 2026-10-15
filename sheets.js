@@ -68,15 +68,33 @@ export async function scriptCall(payload) {
   try {
     r = await fetch(localStorage.getItem(K.url), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: localStorage.getItem(K.skey), ...payload }) });
   } catch { throw Object.assign(new Error('Réseau indisponible ou URL Apps Script incorrecte'), { code: 'net' }); }
-  let j;
-  try { j = await r.json(); } catch { throw Object.assign(new Error("Réponse inattendue : le déploiement doit être accessible à « Tout le monde » (voir README)"), { code: 'api' }); }
+  let j, raw = null;
+  try { if (typeof r.text === 'function') { raw = await r.text(); j = JSON.parse(raw); } else j = await r.json(); } catch { throw Object.assign(new Error(badReply(r, raw)), { code: 'api' }); }
+  if (!j || typeof j !== 'object') throw Object.assign(new Error(badReply(r, raw)), { code: 'api' });
   if (j.error) throw Object.assign(new Error(j.error), { code: 'api' });
   return j;
 }
+/* Google a répondu autre chose que du JSON (page de connexion, autorisation requise, erreur…) : on dit ce qui a été reçu et ce qu'il faut vérifier */
+function badReply(r, raw) {
+  const txt = String(raw || ''), snip = txt.replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&[#\w]+;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+  let hint = 'vérifiez le déploiement du script : « Exécuter en tant que : Moi » et « Qui a accès : Tout le monde » (voir README)';
+  if (/accounts\.google\.com|ServiceLogin|Sign in|Se connecter/i.test(txt)) hint = 'Google demande une connexion : le déploiement doit être « Exécuter en tant que : Moi » et « Qui a accès : Tout le monde » (et non « Utilisateurs de Google »)';
+  else if (/Authorization is required|Autorisation requise|autorisation est requise/i.test(txt)) hint = "le script n'est pas (ou plus) autorisé : dans l'éditeur Apps Script, choisissez la fonction « autoriser », cliquez ▶ Exécuter et acceptez, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version";
+  else if (/Script function not found|doPost/i.test(txt)) hint = 'le déploiement ne contient pas la dernière version de Code.gs : Déployer › Gérer les déploiements › Modifier › Nouvelle version';
+  else if (/quota|too many times|trop de fois|simultan/i.test(txt)) hint = "limite d'utilisation de Google atteinte : réessayez dans quelques minutes";
+  else if (r && r.status >= 500) hint = 'Google a renvoyé une erreur temporaire : réessayez dans quelques minutes';
+  return `Réponse inattendue de Google (HTTP ${(r && r.status) || '?'}${snip ? ' – « ' + snip + ' »' : ''}) : ${hint}`;
+}
+
+/* Réponse du script à « read » : si les onglets manquent, on s'arrête (surtout pas de « classeur vide » qui serait pris pour une suppression) */
+const tabsOf = j => {
+  if (!j || typeof j.tabs !== 'object' || !j.tabs) throw Object.assign(new Error(`Réponse incomplète du script Apps Script (onglets absents ; reçu : ${JSON.stringify(j).slice(0, 120)}) : réessayez ; si cela continue, redéployez la dernière version de Code.gs (voir README)`), { code: 'api' });
+  return j.tabs;
+};
 
 // Lecture / écriture des onglets, selon le mode (Apps Script ou API Sheets avec OAuth)
 async function readTabs(interactive) {
-  if (scriptMode()) { const j = await scriptCall({ action: 'read', tabs: TABS.map(t => t.name) }); return TABS.map(t => j.tabs[t.name] || []); }
+  if (scriptMode()) { const j = await scriptCall({ action: 'read', tabs: TABS.map(t => t.name) }); return TABS.map(t => tabsOf(j)[t.name] || []); }
   const ranges = TABS.map(t => `ranges=${encodeURIComponent(`'${t.name}'!A1:${colL(width(t))}`)}`).join('&');
   const res = await api(`/${sheetId()}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE`, {}, interactive);
   return res.valueRanges.map(v => v.values || []);
@@ -169,7 +187,7 @@ const clean = (store, rec) => {
 export const markPhotosDirty = () => localStorage.setItem(K.photo, '1');
 
 async function readOne(name, interactive) {
-  if (scriptMode()) { const j = await scriptCall({ action: 'read', tabs: [name] }); return j.tabs[name] || []; }
+  if (scriptMode()) { const j = await scriptCall({ action: 'read', tabs: [name] }); return tabsOf(j)[name] || []; }
   try {
     const j = await api(`/${sheetId()}/values/${encodeURIComponent(`'${name}'!A:D`)}?valueRenderOption=UNFORMATTED_VALUE`, {}, interactive);
     return j.values || [];

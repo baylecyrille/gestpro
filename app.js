@@ -119,6 +119,9 @@ async function renderDashboard(el) {
   const invoices = docs.filter(d => d.type === 'invoice' && counts(d));
   const unpaidList = invoices.map(d => ({ d, left: Math.max(0, totals(d).ttc - paidOf(payments, d.id)) })).filter(x => x.left > 0.005).sort((a, b) => a.d.date.localeCompare(b.d.date));
   const unpaid = unpaidList.reduce((a, x) => a + x.left, 0);
+  // « Reste à encaisser » de la tuile : ce qui reste dû, à ce jour, sur les factures émises pendant la période choisie
+  const unpaidPer = unpaidList.filter(x => { const dt = (x.d.date || '').slice(0, 10); return dt >= range.from && dt <= range.to; });
+  const unpaidPerSum = unpaidPer.reduce((a, x) => a + x.left, 0);
   const recent = new Date(Date.parse(today()) - 90 * 864e5).toISOString().slice(0, 10); // « en attente » = envoyés depuis moins de 90 jours
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent' && (d.date || '') >= recent);
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
@@ -189,15 +192,17 @@ async function renderDashboard(el) {
     <div class="hero">
       <div class="kpi"><small>CA facturé HT (net d'avoirs)</small><b>${eur(sm.ca)}</b><small>${sm.nbFact} facture(s)</small></div>
       <div class="kpi ok"><small>Encaissé</small><b>${eur(sm.cash)}</b><small>sur la période</small></div>
-      <a class="kpi ${unpaid > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser (toutes factures)</small><b>${eur(unpaid)}</b><small>${unpaidList.length} facture(s)</small></a></div>
+      <a class="kpi ${unpaidPerSum > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser (factures de la période)</small><b>${eur(unpaidPerSum)}</b><small>${unpaidPer.length} facture(s) impayée(s) à ce jour</small></a></div>
     <div class="card"><b>Achats &amp; TVA</b>
       <div class="mini" style="margin-top:8px"><div><small>Achats HT (stock et chantiers)</small><b>${eur(sm.achats)}</b></div><div><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div><div><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div><div><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b class="${sm.tvaDue > 0 ? 'warn' : 'ok'}">${eur(Math.abs(sm.tvaDue))}</b></div></div>
       <p class="cnote">TVA calculée sur les factures émises (et avoirs) et sur les achats : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit).</p></div>
     <div class="card"><b>12 derniers mois</b> <span class="muted" style="font-size:12px"><span style="color:var(--p)">■</span> CA HT &nbsp;<span style="color:var(--warn)">■</span> Achats HT</span>${chart}</div>
-    ${open.length ? `<h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a>` : ''}
-    <h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a>
+    <div class="duo">
+      ${open.length ? `<section><h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a></section>` : ''}
+      <section><h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a></section>
+    </div>
     ${habAlerts.length ? `<h3>Habilitations à renouveler</h3>${habAlerts.map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.m.name)}</div><div class="s">${e(x.h.label)}</div></div><span class="chip ${x.st}">${x.st === 'bad' ? 'expirée le ' : 'expire le '}${dateFr(x.h.expiry)}</span></div>`).join('')}` : ''}
-    ${unpaidList.length ? `<h3>Factures à encaisser</h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
+    ${unpaidList.length ? `<h3>Factures à encaisser <span class="muted" style="font-size:12px;font-weight:400">· toutes périodes : ${eur(unpaid)} (${unpaidList.length})</span></h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
     ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
     ${lateHtml}
     ${startCard}

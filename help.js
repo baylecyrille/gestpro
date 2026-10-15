@@ -66,12 +66,12 @@ export const TOPICS = {
       S('Chiffres de la période', `<p>Choisissez la période dans la liste (30 jours, 3 ou 12 derniers mois, mois, trimestre, année, année dernière, ou « Date à date »). Les trois grandes tuiles :</p>${ul([
         '<b>CA facturé HT</b> (net d\'avoirs) : le chiffre d\'affaires hors taxes des factures émises, avoirs déduits',
         '<b>Encaissé</b> : les règlements reçus sur la période',
-        '<b>Reste à encaisser</b> : ce que les clients doivent encore, toutes factures confondues. Touchez la tuile pour ouvrir la liste des factures'])}
+        '<b>Reste à encaisser</b> : ce que les clients doivent encore, à ce jour, sur les factures émises pendant la période choisie (comme les autres chiffres). Le total toutes périodes est rappelé à côté de « Factures à encaisser ». Touchez la tuile pour ouvrir la liste des factures'])}
         <p>La carte <b>Achats &amp; TVA</b> donne les achats HT, la TVA collectée, déductible et due : ce sont des aides au calcul, à faire valider par votre cabinet comptable. La courbe compare, mois par mois, le CA HT (bleu) et les achats HT (orange).</p>`),
       S('Ce qui demande votre attention', ul([
         '<b>Chantiers en cours &amp; marge</b> : les 8 chantiers ouverts les plus récents ; « (prév.) » = marge prévisionnelle',
         '<b>Chantiers en retard</b> : ouverts, date de fin dépassée',
-        '<b>Planning des 7 prochains jours</b> : qui travaille où',
+        '<b>Planning des 7 prochains jours</b> : qui travaille où (affiché à côté des chantiers sur un grand écran, en dessous sur téléphone)',
         '<b>Habilitations à renouveler</b> : expirées ou bientôt expirées',
         '<b>Factures à encaisser</b> : les plus anciennes d\'abord',
         '<b>À réapprovisionner</b> : produits sous leur seuil'])),
