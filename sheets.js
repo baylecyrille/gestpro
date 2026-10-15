@@ -97,7 +97,7 @@ export async function scriptCall(payload, _try = 0) {
 }
 /* Le script n'a pas (ou plus) la permission d'utiliser Drive / Sheets / Mail : on ajoute la marche à suivre au message de Google */
 const AUTH_STEPS = " → Dans l'éditeur Apps Script : choisissez la fonction « autoriser », cliquez ▶ Exécuter et, sur l'écran Google, cochez TOUTES les cases d'autorisation (« Tout sélectionner ») avant de continuer. Si cela persiste : retirez l'accès du script sur myaccount.google.com/permissions, puis recommencez. Enfin Déployer › Gérer les déploiements › Modifier › Nouvelle version.";
-export const authHint = m => (/autoris[ée]|authoriz|permission|Autorisations requises|auth\/(drive|spreadsheets|script)/i.test(String(m)) && !/Clé secrète|MailApp|send_mail/i.test(String(m)) && !String(m).includes('« autoriser »') ? String(m) + AUTH_STEPS : String(m));
+export const authHint = m => (/autoris[ée]|authoriz|permission|Autorisations requises|auth\/(drive|spreadsheets|script)/i.test(String(m)) && !/Clé secrète|MailApp|send_mail|^OneDrive/i.test(String(m)) && !String(m).includes('« autoriser »') ? String(m) + AUTH_STEPS : String(m));
 /* Google a répondu autre chose que du JSON (page de connexion, autorisation requise, erreur…) : on dit ce qui a été reçu et ce qu'il faut vérifier */
 function badReply(r, raw) {
   const txt = String(raw || ''), snip = txt.replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&[#\w]+;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);

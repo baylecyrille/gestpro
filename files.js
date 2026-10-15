@@ -1,5 +1,5 @@
-// Fichiers (photos, PDF…) : envoyés dans le Drive de l'utilisateur via la passerelle Apps Script, dossier « GestPro ».
-// L'appli ne garde que {id Drive, nom, type, taille} dans la fiche ; le contenu est relu à la demande (et gardé en cache sur l'appareil).
+// Fichiers (photos, PDF…) : envoyés dans le Google Drive ou le OneDrive de l'utilisateur via la passerelle Apps Script, dossier « GestPro ».
+// L'appli ne garde que {id Drive / OneDrive (préfixe « od: »), nom, type, taille} dans la fiche ; le contenu est relu à la demande (et gardé en cache sur l'appareil).
 import * as db from './db.js';
 import { e, today, modal, toast, refresh, $, $$ } from './util.js';
 import { scriptCall, scriptMode } from './sheets.js';
@@ -41,7 +41,7 @@ const keyOf = id => new Request('/__gpfile/' + encodeURIComponent(id));
 
 /* Envoie un fichier ; hors ligne, il est gardé sur l'appareil puis envoyé plus tard (att.pending) */
 export async function upload(file, { path, kind = 'autres', name, px = 2560 }) {
-  if (!available()) throw new Error('Connectez d\'abord le Google Drive (Réglages › Google Sheets avec le script Apps Script).');
+  if (!available()) throw new Error('Connectez d\'abord le stockage des fichiers : Google Drive ou OneDrive, via le script Apps Script (Réglages › Google Sheets).');
   if (file.size > 25 * 1024 * 1024) throw new Error('Fichier trop volumineux (25 Mo maximum).');
   const blob = await prepare(file, px);
   const att = { id: db.uid(), name: name || file.name || 'fichier', mime: blob.type || file.type || 'application/octet-stream', size: blob.size, kind, date: today(), by: auth.currentUser()?.name || '', path };
@@ -51,7 +51,7 @@ export async function upload(file, { path, kind = 'autres', name, px = 2560 }) {
   try {
     if (!navigator.onLine) throw new Error('hors ligne');
     const r = await scriptCall({ action: 'filePut', path, name: att.name, mime: att.mime, b64: await toB64(blob) });
-    if (!r.id) throw Object.assign(new Error("Le script Apps Script n'a pas enregistré le fichier dans le Drive (réponse sans identifiant) : redéployez la dernière version de Code.gs (Déployer › Gérer les déploiements › Modifier › Nouvelle version) et vérifiez l'adresse dans Réglages › Google Sheets."), { code: 'api' });
+    if (!r.id) throw Object.assign(new Error("Le script Apps Script n'a pas enregistré le fichier (réponse sans identifiant) : redéployez la dernière version de Code.gs (Déployer › Gérer les déploiements › Modifier › Nouvelle version) et vérifiez l'adresse dans Réglages › Google Sheets."), { code: 'api' });
     att.fid = r.id;
     if (cc) { await cc.put(keyOf(att.fid), new Response(blob, { headers: { 'Content-Type': att.mime } })); await cc.delete(keyOf('local-' + att.id)); }
   } catch (err) {
@@ -134,7 +134,7 @@ export function filesCard(o) {
   const draw = () => {
     const list = o.list().filter(canSee);
     host.innerHTML = `<h3>${e(o.title || 'Photos & fichiers')}</h3><div class="card">
-      ${available() ? '' : '<p class="muted" style="margin-top:0">Pour enregistrer des fichiers dans votre Drive, connectez d\'abord le script Google (Réglages).</p>'}
+      ${available() ? '' : '<p class="muted" style="margin-top:0">Pour enregistrer des fichiers (Google Drive ou OneDrive), connectez d\'abord le script Google (Réglages).</p>'}
       <div class="fgrid">${list.map(a => `<div class="fitem" data-a="${a.id}" title="${e(a.name)}">
         ${isImg(a) ? `<div class="fth" data-th="${a.id}">🖼</div>` : `<div class="fth">${ICON(a)}</div>`}
         <div class="fn">${e(a.name)}</div><div class="fs">${a.pending || !a.fid ? '⏳ en attente d\'envoi' : (KINDS[a.kind]?.[1] || '')}</div>
@@ -152,7 +152,7 @@ export function filesCard(o) {
   };
   host.onclick = ev => {
     const rm = ev.target.closest('[data-rm]');
-    if (rm) { ev.stopPropagation(); const a = o.list().find(x => x.id === rm.dataset.rm); if (a && confirm(`Retirer « ${a.name} » ? Le fichier est mis à la corbeille du Drive.`)) { remove(a, { trash: !a.shared }).then(() => o.remove(a)).then(draw); } return; }
+    if (rm) { ev.stopPropagation(); const a = o.list().find(x => x.id === rm.dataset.rm); if (a && confirm(`Retirer « ${a.name} » ? Le fichier est mis à la corbeille (Drive ou OneDrive).`)) { remove(a, { trash: !a.shared }).then(() => o.remove(a)).then(draw); } return; }
     const it = ev.target.closest('.fitem'); if (it) { const a = o.list().find(x => x.id === it.dataset.a); if (a) openAtt(a); }
   };
   host.onchange = async ev => {

@@ -18,7 +18,7 @@ function sheetId_() {
 
 const SECRET = 'CHANGEZ-MOI-PHRASE-SECRETE-LONGUE';
 
-const VERSION = 'maj51 – 15/10/2026'; // affichée par le test ci-dessous : permet de vérifier que le déploiement est à jour
+const VERSION = 'maj52 – 15/10/2026'; // affichée par le test ci-dessous : permet de vérifier que le déploiement est à jour
 function doGet() {
   return out_({ ok: true, app: 'GestPro', version: VERSION }); // simple test dans le navigateur
 }
@@ -29,6 +29,8 @@ function doPost(e) {
     lock.waitLock(25000);
     const req = JSON.parse(e.postData.contents);
     if (req.key !== SECRET) return out_({ error: 'Clé secrète incorrecte' });
+    // --- Stockage des fichiers sur OneDrive (facultatif : fichier OneDrive.gs ; sans lui, tout reste sur Google Drive) ---
+    if (typeof filesOneDrive_ === 'function') { const fr = filesOneDrive_(req); if (fr) return out_(fr); }
     // --- Fichiers (photos, PDF…) : stockés dans votre Drive, dossier « GestPro » uniquement ---
     if (req.action === 'fileInfo') return out_({ ok: true, folder: dir_(['GestPro']).getUrl() });
     if (req.action === 'filePut') {

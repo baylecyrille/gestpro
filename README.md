@@ -68,6 +68,30 @@ Après toute modification de `Code.gs` : *Déployer → Gérer les déploiements
 **Adresse du script** : dans Réglages › Google Sheets, il faut l'adresse de l'application Web qui se termine par `/exec` (Apps Script › Déployer › Gérer les déploiements › copier l'URL). Une adresse copiée depuis la barre du navigateur après avoir ouvert le script (`script.googleusercontent.com/macros/echo?…`) ou l'adresse de test `/dev` est refusée : elle répond toujours « GestPro » sans lire ni enregistrer quoi que ce soit. Si Google renvoie malgré tout cette page de test, l'appli réessaie une fois puis affiche une erreur explicite (aucune donnée n'est effacée ni marquée comme envoyée). Les fichiers restés sur un appareil faute de réponse correcte du script sont renvoyés automatiquement au Drive dès que la synchronisation refonctionne.
 Pour l'envoi d'e-mails : dans l'éditeur Apps Script, choisissez la fonction `autoriser`, cliquez ▶ **Exécuter** et acceptez les autorisations (classeur, Drive, envoi d'e-mails), puis redéployez une nouvelle version. Test dans l'appli : *Réglages → E-mails → Envoyer un e-mail de test*. Les envois sont limités à 40 par jour (quota Google : 100 pour un compte gratuit).
 
+## Stocker les photos et documents sur OneDrive (Microsoft 365, compte personnel / Famille)
+
+Par défaut, les fichiers vont dans votre Google Drive (dossier `GestPro`). Pour les envoyer plutôt dans votre OneDrive, le script Apps Script sert toujours d'intermédiaire : vous vous connectez à Microsoft **une seule fois**, puis tous les appareils et les membres de l'équipe continuent d'utiliser l'appli sans aucun compte Microsoft. Les données (clients, devis, factures, stock) restent dans le classeur Google Sheets ; seuls les **nouveaux** fichiers vont sur OneDrive, les anciens restent lisibles dans Google Drive.
+
+GestPro n'a accès qu'à **son propre dossier** (OneDrive › Applications › GestPro), jamais au reste de votre OneDrive. Le jeton de connexion est gardé dans les propriétés de votre script (votre compte Google).
+
+**A. Côté Microsoft (une fois, gratuit, environ 10 minutes)**
+1. Allez sur <https://entra.microsoft.com> (ou portal.azure.com) et connectez-vous avec le compte Microsoft de votre abonnement Microsoft 365 Famille. Si le portail propose de créer un annuaire ou un abonnement gratuit, acceptez.
+2. **Applications › Inscriptions d'applications › Nouvelle inscription.** Nom : `GestPro` (ce nom devient celui du dossier dans OneDrive). Types de comptes : **Comptes Microsoft personnels uniquement**. URI de redirection : laissez vide. **Inscrire.**
+3. Sur la page de l'application, copiez l'**ID d'application (client)**.
+4. **Authentification › Paramètres › « Autoriser les flux clients publics » : Oui › Enregistrer.**
+5. **Autorisations d'API › Ajouter une autorisation › Microsoft Graph › Autorisations déléguées** : cochez `Files.ReadWrite.AppFolder` et `offline_access` › Ajouter. (Le consentement vous sera demandé à la connexion.)
+
+**B. Côté Apps Script (même projet que Code.gs)**
+6. Cliquez sur **+** à côté de « Fichiers » › **Script**, nommez-le `OneDrive`, collez le contenu de `OneDrive.gs` et remplacez `COLLEZ_ICI_ID_APPLICATION_CLIENT` par l'ID copié à l'étape 3.
+7. Dans `Code.gs`, fonction `doPost`, juste après la ligne `if (req.key !== SECRET) return out_({ error: 'Clé secrète incorrecte' });`, ajoutez : `if (typeof filesOneDrive_ === 'function') { const fr = filesOneDrive_(req); if (fr) return out_(fr); }`
+8. Enregistrez, choisissez la fonction **`onedriveConnecter`** › ▶ Exécuter. Google demande une nouvelle autorisation (envoi de requêtes vers un service externe) : cochez **toutes** les cases. Le journal d'exécution affiche une page Microsoft et un code.
+9. Ouvrez cette page, saisissez le code, connectez-vous avec votre compte Microsoft et acceptez.
+10. Revenez dans Apps Script, choisissez **`onedriveTerminer`** › ▶ Exécuter : le journal indique « OneDrive connecté ».
+11. **Déployer › Gérer les déploiements › Modifier › Nouvelle version.**
+12. Dans l'appli : **Réglages › Photos & fichiers › Tester le stockage** doit afficher « ✔ OneDrive prêt ».
+
+Si le journal ou l'appli indique que la connexion Microsoft est expirée (non utilisée depuis plus de 90 jours, mot de passe changé…), refaites simplement les étapes 8 à 11. Pour revenir à Google Drive : exécutez `onedriveRevenirDrive`.
+
 ## Autre méthode : OAuth Google (sans Apps Script, avancé – nécessite un projet Google Cloud)
 
 1. <https://console.cloud.google.com> → nouveau projet « GestPro ».

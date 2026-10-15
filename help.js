@@ -112,7 +112,7 @@ export const TOPICS = {
     sections: [
       S('En-tête et boutons', `<p>Statut (liste déroulante), dates, client avec son téléphone, adresse, architecte, notes. Les boutons <b>🗺 Plan</b>, <b>🧭 Itinéraire</b>, <b>👁 Street View</b> et <b>📤 Envoyer</b> affichent la carte, lancent le guidage ou partagent l'adresse et l'itinéraire.</p>
         <p><b>✓ Terminer le chantier</b> prévient s'il reste une somme à encaisser et renseigne la date de fin du jour si elle était vide. <b>↺ Rouvrir le chantier</b> le remet « En cours » s'il a des factures, « Signé » sinon.</p>`),
-      S('Photos, fichiers et liens', `<p>Les photos et documents sont rangés dans le dossier GestPro de votre Drive. Les profils qui voient les montants peuvent aussi classer des devis, factures et factures d'achat. « Liens » garde des adresses utiles (plans, dossier partagé) avec un libellé.</p>`),
+      S('Photos, fichiers et liens', `<p>Les photos et documents sont rangés dans le dossier GestPro de votre Google Drive ou de votre OneDrive (selon la configuration du script). Les profils qui voient les montants peuvent aussi classer des devis, factures et factures d'achat. « Liens » garde des adresses utiles (plans, dossier partagé) avec un libellé.</p>`),
       S('Avancement et chiffres', `<p>Trois jauges : <b>Paiement</b> (encaissé sur le marché), <b>Travaux</b> (le curseur d'avancement, saisi à la main) et <b>Délai</b> (elle rougit quand la date de fin est dépassée).</p>
         <p>Quatre chiffres : marché signé TTC (devis acceptés ou facturés), facturé TTC avec le reste à facturer, encaissé, reste à payer.</p>
         <p>Les boutons <b>+ Devis</b> et <b>+ Facture</b> créent un document déjà rattaché au chantier.</p>`),
@@ -318,7 +318,7 @@ export const TOPICS = {
         ['Google Sheets', 'Connexion, synchronisation, état de la dernière synchro'],
         ['Modèles de texte', 'Textes réutilisables à insérer dans les devis et factures'],
         ['Importer des devis / factures', 'Voir ci-dessous'],
-        ['Photos & fichiers (Drive)', '« Tester le Drive » vérifie l\'envoi dans le dossier GestPro'],
+        ['Photos & fichiers (Drive ou OneDrive)', '« Tester le stockage » vérifie l\'envoi dans le dossier GestPro et indique où partent les fichiers'],
         ['Sauvegarde', 'Exporter (JSON) et Restaurer']])
         + `<p>Les numéros sont attribués dans l'ordre : si vous reprenez un historique, réglez le « prochain numéro » avant d'émettre un document.</p>`),
       S('Importer des devis et des factures', `<p>La carte ajoute à vos données le contenu d'un fichier d'import GestPro (clients, chantiers, produits, devis, factures, règlements) <b>sans rien remplacer ni modifier</b> : ce qui existe déjà est ignoré. Une confirmation indique d'abord ce qui sera ajouté.</p>

@@ -111,7 +111,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
       ${doc ? '' : `<label class="f full"><span>Destination des lignes : tapez pour chercher un chantier (charge comptée dans sa rentabilité) ou un emplacement de stock. Vide = suit l'option « entrée en stock » ci-dessous. Proposé d'après le « N° commande » de la facture quand il correspond ; « Appliquer » le met sur toutes les lignes cochées.</span><span style="display:flex;gap:6px"><input id="spsite" list="spdl" placeholder="chantier ou emplacement…" autocomplete="off" style="flex:1"><button type="button" class="btn" id="spapply">Appliquer</button></span>${dlist}</label>
       ${r.fees.length ? `<label class="f full"><span><input type="checkbox" id="spfees" checked> Répartir les frais (${eur(feeTot)} : port…) sur les chantiers, au prorata des lignes</span></label>` : ''}`}
-      ${!doc && fl.available() && file ? '<label class="f full"><span><input type="checkbox" id="spkeep" checked> Conserver le PDF dans le Drive (GestPro/Achats fournisseurs, et dans le chantier si affecté)</span></label>' : ''}
+      ${!doc && fl.available() && file ? '<label class="f full"><span><input type="checkbox" id="spkeep" checked> Conserver le PDF dans le stockage Drive / OneDrive (GestPro/Achats fournisseurs, et dans le chantier si affecté)</span></label>' : ''}
       <label class="f full"><span><input type="checkbox" id="spsup" ${S.name && !doc ? 'checked' : ''} ${S.name ? '' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
     </div><p id="spcnt" class="muted"></p>`;
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
@@ -192,9 +192,9 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         att.shared = targets.length > 1;
         if (!att.pending) delete att.path;
         for (const [store, rec] of targets) { rec.files = [...(rec.files || []), { ...att }]; await db.put(store, rec); }
-        kept = att.pending ? 'PDF en attente d\'envoi' : 'PDF conservé dans le Drive';
+        kept = att.pending ? 'PDF en attente d\'envoi' : 'PDF conservé';
         if (!targets.length) kept += ' (non rattaché : cochez le fournisseur)';
-      } catch (err) { alert('PDF non enregistré dans le Drive : ' + (err.message || err)); }
+      } catch (err) { alert('PDF non enregistré : ' + (err.message || err)); }
     }
     if (doc) {
       opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));
