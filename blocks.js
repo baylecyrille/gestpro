@@ -2,7 +2,7 @@
 import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
-import { UNITS, pickProduct, productModal, total as stockOf } from './stock.js';
+import { UNITS, pickProduct, productModal, total as stockOf, CATS, CAT_NAMES, catIcon } from './stock.js';
 import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt, hasCost, lineMargin, refOn } from './vat.js';
 
 let SEQ = 0;
@@ -167,10 +167,14 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   let active = null; // éditeur texte actif
   const updSub = () => { const st = sectionTotals(d.blocks); $$('[data-sub]', box).forEach(n => { const b = d.blocks.find(x => x.id === n.dataset.sub); n.textContent = b && b.sub ? 'Sous-total : ' + eur(st[b.id]) : ''; }); };
   const change = () => { syncLines(d); updSub(); onChange(); };
-  box.innerHTML = `<div class="rte-wrap">${toolbarHtml()}</div><div id="blks"></div>
-    <div class="row addbar"><button type="button" class="btn" id="addp">+ Produit</button><button type="button" class="btn" id="addl">+ Ligne libre</button><button type="button" class="btn" id="addpdf">📄 Lignes depuis un PDF</button>
-      <button type="button" class="btn" id="adds">+ Section</button><button type="button" class="btn" id="adde" title="Termine la section en cours : les lignes suivantes n'en font plus partie">+ Fin de section</button><button type="button" class="btn" id="addt">+ Texte</button><button type="button" class="btn" id="addm">Modèles de texte…</button><button type="button" class="btn" id="addb">+ Saut de page</button></div>`;
-  bindToolbar(box, () => active, t => { const blk = d.blocks.find(x => x.id === t.closest('.blk')?.dataset.id); if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
+  const AB = (id, ico, label, title) => `<button type="button" class="ab" id="${id}" title="${e(title)}" aria-label="${e(label)}"><i>${ico}</i><span>${e(label)}</span></button>`;
+  box.innerHTML = `<div id="blks"></div>
+    <div class="abarbox"><div class="abar" role="toolbar" aria-label="Ajouter au document">
+      <div class="abwrap"><button type="button" class="ab pri" id="addp" aria-haspopup="true" aria-expanded="false" aria-label="Produit" title="Ajouter un produit du catalogue : choisissez d'abord la catégorie"><i>📦</i><span>Produit</span><i class="car">▾</i></button>
+        <div class="pmenu" id="pmenu" role="menu" hidden>${CATS.map(([c, ic]) => `<button type="button" role="menuitem" data-cat="${e(c)}"><i>${ic}</i>${e(c)}</button>`).join('')}<hr><button type="button" role="menuitem" data-cat="*"><i>🔎</i>Tout le catalogue / scanner…</button></div></div>
+      ${AB('addl', '✏️', 'Ligne libre', 'Ligne libre : saisir une prestation à la main')}${AB('addpdf', '📄', 'PDF', 'Reprendre des lignes depuis une facture fournisseur (PDF)')}<span class="asep"></span>
+      ${AB('adds', '📑', 'Section', 'Section : regroupe des lignes sous un titre')}${AB('adde', '⏹', 'Fin de section', 'Termine la section en cours : les lignes suivantes n\'en font plus partie')}<span class="asep"></span>
+      ${AB('addt', '📝', 'Texte', 'Texte libre : commentaire, précision, mention…')}${AB('addm', '📋', 'Modèles', 'Modèles de texte…')}${AB('addb', '⏭', 'Saut de page', 'Saut de page : la suite s\'imprime sur une nouvelle page')}</div></div>`;
   const host = $('#blks', box);
   /* Options de saisie (bouton « Options » de l'éditeur) : masque le taux de TVA et/ou la remise de chaque ligne (view() → { tva, rem }) */
   const V = () => ({ tva: true, rem: true, ref: false, margin: false, stock: false, photo: false, opt: true, sub: true, ...((view && view()) || {}) });
@@ -225,7 +229,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   /* Total de la ligne : montant brut barré si remise, mention « option » si non comptée */
   const totHtml = b => (isOpt(b) ? '<small class="muted optlbl">option<span class="lg">, non comptée</span></small> ' : '') + (remOf(b) ? `<s class="muted">${eur(grossHt(b))}</s> ` : '') + eur(lineHt(b));
   const inner = b => {
-    if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<input data-k="desig" list="gp-prods" autocomplete="off" value="${e(b.desig)}" placeholder="Désignation"></div>
+    if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<input data-k="desig" ${b.cat ? '' : 'list="gp-prods" '}autocomplete="off" value="${e(b.desig)}" placeholder="${b.cat ? e('Rechercher : ' + b.cat + '…') : 'Désignation'}"></div>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${b.qty}" placeholder="Qté">
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT">
@@ -244,11 +248,23 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     return '<div class="pbk-ed">— Saut de page —</div>';
   };
   const LABEL = { line: 'Ligne', section: 'Section', text: 'Texte', pagebreak: 'Page', sectionend: 'Fin de section' };
+  /* Mise en forme du texte : une barre sur une ligne, dépliable / repliable dans chaque bloc texte (bouton « Aa ») */
+  const tbOpen = new Set();
+  const openTb = (row, focus) => {
+    const bb = $('.bb', row); if (!bb || $('.rtb', bb)) return;
+    bb.insertAdjacentHTML('afterbegin', toolbarHtml());
+    bindToolbar(row, () => $('.rte', row), t => { const blk = d.blocks[idx(row.dataset.id)]; if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
+    $('[data-tb]', row)?.classList.add('on');
+    if (focus) $('.rte', row)?.focus();
+  };
+  const closeTb = row => { $('.rtb', row)?.remove(); $('[data-tb]', row)?.classList.remove('on'); };
+  let sg = null; // liste de suggestions ouverte dans une ligne classée par catégorie
   const draw = () => {
-    let open = false;
-    host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}${b.type === 'line' && isOpt(b) ? ' optl' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${LABEL[b.type]}</span><span class="sp"></span>
-      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
+    sg = null; let open = false;
+    host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}${b.type === 'line' && isOpt(b) ? ' optl' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${b.type === 'line' && b.cat ? `${catIcon(b.cat)} ${e(b.cat)}` : LABEL[b.type]}</span><span class="sp"></span>
+      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tb title="Mise en forme du texte (gras, couleur, taille…)" aria-label="Mise en forme du texte">Aa</button><button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
+    tbOpen.forEach(id => { const r = host.querySelector(`.blk[data-id="${id}"]`); if (r) openTb(r); else tbOpen.delete(id); });
     updSub(); const snapped = snapAll(); paintMeta(); loadMeta(); if (snapped) change();
   };
   draw(); applyView();
@@ -286,7 +302,8 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
         });
       });
     }
-    else if (ev.target.closest('[data-rm]')) { d.blocks.splice(i, 1); active = null; draw(); change(); }
+    else if (ev.target.closest('[data-tb]')) { if (tbOpen.has(b.id)) { tbOpen.delete(b.id); closeTb(row); } else { tbOpen.add(b.id); openTb(row, true); } }
+    else if (ev.target.closest('[data-rm]')) { tbOpen.delete(b.id); d.blocks.splice(i, 1); active = null; draw(); change(); }
     else if (ev.target.closest('[data-tpl]')) {
       const name = prompt('Nom du modèle de texte :'); if (!name) return;
       getS().then(async S => { await db.saveSettings({ ...S, snippets: [...(S.snippets || []), { name: name.trim(), html: sanitize(b.html) }] }); toast('Modèle enregistré'); });
@@ -309,11 +326,85 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     $('[data-t]', row).innerHTML = totHtml(b); change(); loadMeta(); paintMeta();
   };
   db.all('products').then(ps => {
-    const sale = ps.filter(p => p.kind !== 'internal' && p.name).sort((a, b) => a.name.localeCompare(b.name, 'fr')).slice(0, 1500);
+    const all = ps.filter(p => p.kind !== 'internal' && p.name).sort((a, b) => a.name.localeCompare(b.name, 'fr')), sale = all.slice(0, 1500);
+    catalog = all; if (sg) sgDraw(true);
     sale.forEach(p => byName.set(p.name.trim().toLowerCase(), p));
     if (box.isConnected && sale.length) box.insertAdjacentHTML('beforeend', `<datalist id="gp-prods">${sale.map(p => `<option value="${e(p.name)}" label="${e(eur(p.sell || 0))}${p.unit ? ' / ' + e(p.unit) : ''}"></option>`).join('')}</datalist>`);
   }).catch(() => {});
   host.addEventListener('change', ev => { if (ev.target.matches('[data-k=desig]')) { const row = ev.target.closest('.blk'), b = row && d.blocks[idx(row.dataset.id)]; if (b) autofill(b, row); } });
+  /* Recherche dans la ligne : produits de la catégorie choisie (« + Produit »), premières lettres d'abord */
+  let catalog = null; // produits vendus, triés (chargés ci-dessous)
+  const norm = t => String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const rankOf = (p, qt, q) => {
+    if (!qt.length) return 3;
+    const n = norm(p.name), words = n.split(/[^a-z0-9]+/).filter(Boolean);
+    if (qt.every(t => words.some(w => w.startsWith(t)))) return n.startsWith(qt[0]) ? 0 : 1;
+    return n.includes(q) || norm(p.ref).includes(q) || norm(p.barcode).includes(q) ? 2 : null;
+  };
+  const sgFind = (cat, text, all) => {
+    const q = norm(text).trim(), qt = q.split(/\s+/).filter(Boolean);
+    return (catalog || []).filter(p => all || p.category === cat).map(p => [rankOf(p, qt, q), p]).filter(x => x[0] !== null)
+      .sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name, 'fr')).slice(0, 40).map(x => x[1]);
+  };
+  const sgClose = () => { if (sg) { sg.el.remove(); sg = null; } };
+  const sgDraw = reset => {
+    if (!sg) return;
+    const row = sg.row, b = d.blocks[idx(row.dataset.id)], inp = $('[data-k=desig]', row);
+    if (!b || !inp) return sgClose();
+    const catNo = (catalog || []).filter(p => p.category === b.cat).length, all = sg.all || (!!catalog && !catNo);
+    sg.items = catalog ? sgFind(b.cat, inp.value, all) : [];
+    if (reset) sg.on = inp.value.trim() && sg.items.length ? 0 : -1;
+    const head = `<div class="sgh"><span>${all ? (catNo ? 'Tout le catalogue' : `Aucun produit classé « ${e(b.cat)} » : tout le catalogue`) : `${catIcon(b.cat)} ${e(b.cat)} · ${catNo}`}</span>${catNo ? `<button type="button" data-sgall>${all ? 'Cette catégorie' : 'Tout le catalogue'}</button>` : ''}</div>`;
+    const list = !catalog ? '<div class="sgn">Chargement…</div>' : sg.items.length
+      ? sg.items.map((p, i) => `<button type="button" class="sgi${i === sg.on ? ' on' : ''}" data-pid="${p.id}"><span class="n">${e(p.name)}</span><small>${e(p.ref || '')}</small><b>${eur(p.sell || 0)}${p.unit ? ' / ' + e(p.unit) : ''}</b></button>`).join('')
+      : `<div class="sgn">Aucun résultat${all ? '' : ' dans cette catégorie'}. Saisissez la désignation à la main${all || !catNo ? '' : ', ou cherchez dans tout le catalogue'}.</div>`;
+    sg.el.innerHTML = head + list;
+  };
+  const sgOpen = row => {
+    const b = row && d.blocks[idx(row.dataset.id)]; if (!b || b.type !== 'line' || !b.cat) return;
+    if (sg && sg.row === row) return sgDraw();
+    sgClose();
+    const el = document.createElement('div'); el.className = 'ac sg'; $('.d', row).appendChild(el);
+    sg = { row, el, all: false, items: [], on: -1 };
+    sgDraw(true);
+  };
+  /* Choix d'un produit dans la liste : reprend désignation, unité, prix, référence et prix d'achat de la fiche */
+  const sgPick = pid => {
+    if (!sg) return; const row = sg.row, b = d.blocks[idx(row.dataset.id)], p = (catalog || []).find(x => x.id === pid); if (!b || !p) return;
+    const fresh = b.pid !== p.id, setv = (k, v) => { const el = $(`[data-k=${k}]`, row); if (el) el.value = v; };
+    b.pid = p.id; byId.set(p.id, p); b.desig = p.name; setv('desig', p.name);
+    if (fresh || !num(b.pu)) { b.pu = p.sell || 0; setv('pu', b.pu); }
+    if (fresh) {
+      if (p.unit) { b.unit = p.unit; setv('unit', p.unit); }
+      if (String(p.ref ?? '').trim()) b.ref = p.ref; else delete b.ref; setv('ref', b.ref ?? '');
+      if (num(p.buy) > 0) b.pa = p.buy; else delete b.pa; setv('pa', b.pa ?? '');
+    }
+    $('[data-t]', row).innerHTML = totHtml(b);
+    sgClose(); change(); loadMeta(); paintMeta(); focusField(b.id, 'qty');
+  };
+  host.addEventListener('focusin', ev => {
+    const t = ev.target;
+    if (t.matches?.('[data-k=desig]')) { const row = t.closest('.blk'); if (!t.value.trim()) sgOpen(row); else if (!(sg && sg.row === row)) sgClose(); }
+    else if (!t.closest?.('.sg')) sgClose();
+  });
+  host.addEventListener('focusout', () => setTimeout(() => { if (sg && !host.contains(document.activeElement)) sgClose(); }, 150));
+  host.addEventListener('input', ev => { if (ev.target.matches?.('[data-k=desig]')) { sgOpen(ev.target.closest('.blk')); sgDraw(true); } });
+  host.addEventListener('mousedown', ev => { if (ev.target.closest('.sg')) ev.preventDefault(); }); // garde le focus dans le champ
+  host.addEventListener('click', ev => {
+    if (!sg || !ev.target.closest('.sg')) return;
+    if (ev.target.closest('[data-sgall]')) { sg.all = !sg.all; sgDraw(true); return; }
+    const it = ev.target.closest('[data-pid]'); if (it) sgPick(it.dataset.pid);
+  });
+  host.addEventListener('keydown', ev => {
+    if (!sg || !ev.target.matches?.('[data-k=desig]')) return;
+    const n = sg.items.length;
+    if ((ev.key === 'ArrowDown' || ev.key === 'ArrowUp') && n) {
+      ev.preventDefault(); const dn = ev.key === 'ArrowDown';
+      sg.on = sg.on < 0 ? (dn ? 0 : n - 1) : (sg.on + (dn ? 1 : n - 1)) % n;
+      $$('.sgi', sg.el).forEach((x, i) => { x.classList.toggle('on', i === sg.on); if (i === sg.on) x.scrollIntoView?.({ block: 'nearest' }); });
+    } else if (ev.key === 'Enter' && sg.on >= 0 && sg.items[sg.on]) { ev.preventDefault(); ev.stopImmediatePropagation(); sgPick(sg.items[sg.on].id); }
+    else if (ev.key === 'Escape') { ev.stopPropagation(); sgClose(); }
+  });
   const fine = () => typeof matchMedia === 'function' && matchMedia('(pointer:fine)').matches;
   const focusField = (id, k) => { const el = host.querySelector(`.blk[data-id="${id}"] [data-k=${k}]`); if (el) { el.focus(); if (el.select && fine()) el.select(); } };
   host.addEventListener('focusin', ev => { if (ev.target.matches?.('.ln input[type=number]') && fine()) ev.target.select(); });
@@ -342,7 +433,24 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   });
 
   $('#addl', box).onclick = () => add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
-  $('#addp', box).onclick = () => { readHeader(); pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}) }); }, { sale: true }); };
+  /* « + Produit » : liste des catégories, puis une ligne dont la désignation cherche dans cette catégorie */
+  const pmenu = $('#pmenu', box), pbtn = $('#addp', box);
+  const menuClose = () => { pmenu.hidden = true; pbtn.setAttribute('aria-expanded', 'false'); };
+  const menuOpen = () => {
+    pmenu.hidden = false; pbtn.setAttribute('aria-expanded', 'true');
+    const r = pbtn.getBoundingClientRect(); pmenu.classList.toggle('up', window.innerHeight - r.bottom < 300 && r.top > 280); // s'ouvre vers le haut s'il manque de la place dessous
+  };
+  pbtn.onclick = ev => { ev.stopPropagation(); if (pmenu.hidden) menuOpen(); else menuClose(); };
+  pmenu.onclick = ev => {
+    const it = ev.target.closest('[data-cat]'); if (!it) return; menuClose(); readHeader();
+    const cat = it.dataset.cat;
+    if (cat === '*') return pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, ...(CAT_NAMES.includes(p.category) ? { cat: p.category } : {}), desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}) }); }, { sale: true });
+    const nl = add({ type: 'line', cat, pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
+    focusField(nl.id, 'desig');
+  };
+  const outside = ev => { if (!box.isConnected) document.removeEventListener('click', outside); else if (!ev.target.closest?.('.abwrap')) menuClose(); };
+  document.addEventListener('click', outside);
+  box.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !pmenu.hidden) { menuClose(); pbtn.focus(); } });
   $('#addpdf', box).onclick = () => { readHeader(); import('./supplier-import.js').then(m => m.supplierImportModal({ onLines: ls => ls.forEach(l => add(l)) })); };
   $('#adds', box).onclick = () => add({ type: 'section', title: '', bold: true, sub: V().sub !== false });
   $('#adde', box).onclick = () => add({ type: 'sectionend' });

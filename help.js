@@ -170,6 +170,7 @@ export const TOPICS = {
         <p><b>Rechercher</b> par nom, référence, code-barres ou catégorie. <b>⚙ Filtres &amp; tri</b> : tri, catégorie, emplacement, type (vendus ou usage interne), « Stock bas / épuisé ».</p>
         <p><b>▦ Scanner</b> lit un code-barres avec la caméra et ouvre le produit ; si le code est inconnu, l'application propose de créer le produit. Vous pouvez aussi saisir le code à la main ou utiliser une douchette.</p>`),
       S('Créer ou modifier un produit', `<p>Touchez <b>+ Produit</b>.</p>${ul([
+        '<b>Catégorie</b> : Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance ou Ouvrage. Elle sert au menu « Produit » des devis et factures',
         '<b>Type d\'article</b> : « Vendu aux clients », ou « Usage interne » (encre, papier, consommables) : un article interne n\'est jamais proposé dans les devis',
         '<b>Prix d\'achat HT</b> : sert aux achats, à la TVA déductible et à la marge. <b>Prix de vente HT</b> : repris dans les devis',
         '<b>Seuil d\'alerte stock</b> : en dessous, le produit apparaît dans « À réapprovisionner » sur l\'accueil',
@@ -227,11 +228,13 @@ export const TOPICS = {
     sections: [
       S('Remplir un devis', `<p><b>En-tête</b> (replié en une ligne de résumé) : client, chantier (le « + » en crée un), date, validité, adresse du chantier, intitulé, remarque, statut et TVA par défaut. Le numéro se donne tout seul à l'enregistrement.</p>
         <p><b>Lignes</b> :</p>${ul([
-        '<b>+ Produit</b> : un article du catalogue (recherche ou scan), avec son prix, son unité et sa TVA',
-        '<b>+ Ligne libre</b> : une prestation saisie à la main',
-        '<b>+ Section</b> : regroupe des lignes avec un titre et un sous-total ; <b>+ Texte</b> : un paragraphe ; <b>+ Saut de page</b>',
-        '<b>📄 Lignes depuis un PDF</b> : reprend des lignes d\'une facture fournisseur'])}
-        <p><b>Saisie rapide</b> : en tapant une désignation, le catalogue est proposé. Entrée passe au champ suivant ; Ctrl + Entrée insère une ligne.</p>
+        '<b>📦 Produit ▾</b> : choisissez d\'abord une catégorie (Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance, Ouvrage). Une ligne s\'ouvre : tapez les premières lettres de la désignation, la liste ne montre que les produits de cette catégorie. Entrée ou un toucher reprend le prix, l\'unité et la référence de la fiche. « Tout le catalogue » élargit la recherche ; « Tout le catalogue / scanner… » ouvre le sélecteur complet avec le scan',
+        '<b>✏️ Ligne libre</b> : une prestation saisie à la main',
+        '<b>📑 Section</b> : regroupe des lignes avec un titre et un sous-total (<b>⏹ Fin de section</b> la termine) ; <b>📝 Texte</b> : un paragraphe ; <b>⏭ Saut de page</b>',
+        '<b>📄 PDF</b> : reprend des lignes d\'une facture fournisseur ; <b>📋 Modèles</b> : insère un modèle de texte',
+        '<b>Aa</b> (en haut d\'un bloc texte) : déplie ou replie la barre de mise en forme (gras, couleur, taille, listes…) de ce texte'])}
+        <p>La catégorie d'une ligne se choisit aussi dans la fiche produit (champ <b>Catégorie</b>) : classez vos produits pour les retrouver par catégorie.</p>
+        <p><b>Saisie rapide</b> : Entrée passe au champ suivant ; Ctrl + Entrée insère une ligne ; ↑ ↓ parcourent les propositions.</p>
         <p>Une barre fixe en bas affiche le total HT, le total TTC, <b>Enregistrer</b> et la pastille « points à vérifier ». Avant d'enregistrer, l'application contrôle le document : une anomalie bloquante empêche l'enregistrement, un avertissement se confirme une fois.</p>`),
       S('Le bouton ⚙ Options', `<p>En haut de l'éditeur, il choisit ce qui se saisit et s'affiche sur les lignes.</p>${table(['Option', 'Effet'], [
         ['TVA par ligne', 'Un taux propre à chaque ligne ; décoché, tout suit la TVA du document'],

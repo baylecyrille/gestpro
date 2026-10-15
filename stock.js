@@ -7,6 +7,10 @@ export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
 export const UNITS = ['u', 'm', 'm²', 'm³', 'ml', 'kg', 'L', 'lot', 'h', 'forfait'];
 const TVAS = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
+/* Catégories de produits (fiche produit, et menu « + Produit » des devis / factures) */
+export const CATS = [['Produit (fourniture)', '📦'], ['Matériel', '🛠'], ["Main d'œuvre", '👷'], ['Sous-traitance', '🤝'], ['Ouvrage', '🧩']];
+export const CAT_NAMES = CATS.map(c => c[0]);
+export const catIcon = c => (CATS.find(x => x[0] === c) || [])[1] || '';
 
 export async function ensureDefaultLocation() {
   const l = await db.all('locations');
@@ -124,7 +128,7 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     ${F('Désignation', 'name', p.name, { req: true, cls: 'full' })}
     ${F('Référence', 'ref', p.ref)}
     <div><label class="f"><span>Code-barres</span><div style="display:flex;gap:6px"><input name="barcode" value="${e(p.barcode)}" inputmode="text"><button type="button" class="btn" data-scan>▦</button></div></label></div>
-    ${F('Catégorie', 'category', p.category)}
+    ${F('Catégorie', 'category', p.category || '', { type: 'select', options: [['', '— aucune —'], ...CATS.map(([c, i]) => [c, `${i} ${c}`]), ...(p.category && !CAT_NAMES.includes(p.category) ? [[p.category, `${p.category} (ancienne catégorie)`]] : [])] })}
     ${F('Type d\'article', 'kind', p.kind || 'sale', { type: 'select', options: [['sale', 'Vendu aux clients'], ['internal', 'Usage interne (non vendu : encre, papier, consommables…)']], cls: 'full' })}
     ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: UNITS.map(u => [u, u]) })}
     ${F('Prix d\'achat HT', 'buy', p.buy ?? '', { type: 'number', step: '0.01' })}

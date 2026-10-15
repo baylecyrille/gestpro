@@ -275,9 +275,9 @@ nav#nav a[hidden]{display:none}
 .rte:empty:before{content:attr(data-ph);color:var(--mut)}
 .rte ul,.rte ol{margin:4px 0;padding-left:22px}
 .rtb{display:flex;flex-wrap:wrap;gap:4px;align-items:center;position:sticky;top:0;z-index:5;background:var(--card,#fff);padding:4px 0;border-bottom:1px solid var(--bd);margin-bottom:8px}
+.rtb select{width:auto}
 .rtb button,.rtb label,.rtb select{border:1px solid var(--bd);border-radius:6px;background:transparent;color:inherit;font:inherit;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;min-height:30px}
 .rtb input[type=color]{width:22px;height:22px;padding:0;border:0;background:none}
-.addbar{flex-wrap:wrap;margin-top:6px}
 .sheet tr.sec td{background:#eef3fa}
 .sheet tr.txt td{border-top:0;border-bottom:0;white-space:normal}
 .sheet tr.txt ul,.sheet tr.txt ol{margin:2px 0;padding-left:20px}
@@ -516,3 +516,39 @@ nav#nav a,nav#nav button{max-width:160px}
 .help .hchips{display:flex;flex-wrap:wrap;gap:6px}
 .help .hchip{font:inherit;font-size:13px;border:1px solid var(--bd);background:#eaf1fb;color:var(--p);border-radius:99px;padding:4px 11px;cursor:pointer}
 .help .hchip:hover{background:#dbe8f8}
+
+/* Éditeur de lignes : barre d'ajout compacte, menu des catégories, recherche dans la ligne, mise en forme repliable */
+.abar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:8px}
+.ab{font:inherit;font-size:13px;line-height:1;display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:4px 9px;border:1px solid var(--bd);border-radius:8px;background:#fff;color:var(--tx);cursor:pointer;white-space:nowrap}
+.ab:hover,.ab:focus-visible{background:#eef3fb}
+.ab i{font-style:normal;font-size:15px;line-height:1}
+.ab .car{font-size:10px}
+.ab.pri{background:var(--p);border-color:var(--p);color:#fff}
+.ab.pri:hover,.ab.pri:focus-visible{background:var(--p2)}
+.asep{width:1px;height:20px;background:var(--bd);margin:0 3px}
+.abwrap{position:relative}
+.pmenu{position:absolute;left:0;top:calc(100% + 4px);z-index:40;min-width:250px;padding:4px;background:var(--card,#fff);border:1px solid var(--bd);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.22)}
+.pmenu[hidden]{display:none}
+.pmenu.up{top:auto;bottom:calc(100% + 4px)}
+.pmenu button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:7px;font:inherit;color:inherit;cursor:pointer}
+.pmenu button:hover,.pmenu button:focus-visible{background:rgba(47,122,214,.14)}
+.pmenu button i{font-style:normal;width:1.4em;text-align:center}
+.pmenu hr{border:0;border-top:1px solid var(--bd);margin:4px 2px}
+/* La barre reste sur une seule rangée : les libellés disparaissent (emoji seuls) quand la place manque, selon la largeur réelle de l'éditeur */
+.abarbox{container-type:inline-size}
+@container (max-width:830px){ #addpdf span,#adde span,#addm span,#addb span{display:none} }
+@container (max-width:570px){ #addl span,#adds span,#addt span{display:none} .asep{margin:0 1px} }
+@container (max-width:380px){ #addp span{display:none} .asep{display:none} .abar{gap:2px} .ab{padding:4px 6px} }
+.lines .ln .d{position:relative}
+.sg{max-height:290px}
+.sg .sgh{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 10px;font-size:12px;color:var(--mut);background:#f3f6fb;border-bottom:1px solid var(--bd);position:sticky;top:0}
+.sg .sgh button{display:inline-block;width:auto;border:0;padding:2px 6px;font-size:12px;color:var(--p);background:none;cursor:pointer}
+.ac.sg button.sgi{display:flex;gap:8px;align-items:baseline}
+.sg .sgi .n{flex:1;min-width:0}
+.sg .sgi small{color:var(--mut)}
+.sg .sgi b{font-weight:600;white-space:nowrap}
+.sg .sgi.on{background:rgba(47,122,214,.18)}
+.sg .sgn{padding:10px;color:var(--mut);font-size:13px}
+.blk .rtb{position:static;margin:0 0 6px;padding:0 0 6px;border-bottom:1px dashed var(--bd);gap:3px}
+.blk .rtb button,.blk .rtb label,.blk .rtb select,.blk .rtb .pal>summary{min-height:26px;padding:1px 7px;font-size:13px}
+.blk .bh [data-tb].on{background:var(--p);border-color:var(--p);color:#fff}
