@@ -118,7 +118,7 @@ dialog::backdrop{background:#0006}
 .optpanel .og>b{font-size:13px}
 /* informations internes sous chaque ligne : référence, photo, prix d'achat, marge, stock */
 .lines .ln .d{display:flex;gap:6px;align-items:center;min-width:0}
-.lines .ln .d>input[data-k=desig]{flex:1;min-width:0}
+.lines .ln .d>[data-k=desig]{flex:1;min-width:0}
 .lines .ln .d .lref{width:84px;flex:none;min-width:0}
 .lines .ln .lth{flex:none;width:38px;height:38px;border-radius:7px;overflow:hidden;background:#eef2f8;display:inline-flex}
 .lines .ln .lth:empty{display:none}
@@ -143,7 +143,7 @@ dialog::backdrop{background:#0006}
 }
 @media(max-width:620px){
  .lines .ln .d{flex-wrap:wrap}
- .lines .ln .d>input[data-k=desig]{flex:1 1 100%;order:3}
+ .lines .ln .d>[data-k=desig]{flex:1 1 100%;order:3}
  .lines .ln .d .lref{flex:1;width:auto;max-width:170px}
  .optpanel{grid-template-columns:1fr}
  .lines #blks.nv .ln{grid-template-columns:1fr 1fr 1fr}
@@ -552,3 +552,37 @@ nav#nav a,nav#nav button{max-width:160px}
 .blk .rtb{position:static;margin:0 0 6px;padding:0 0 6px;border-bottom:1px dashed var(--bd);gap:3px}
 .blk .rtb button,.blk .rtb label,.blk .rtb select,.blk .rtb .pal>summary{min-height:26px;padding:1px 7px;font-size:13px}
 .blk .bh [data-tb].on{background:var(--p);border-color:var(--p);color:#fff}
+
+/* ---- Classement des produits en lot (Stock › Produits › 🏷 Classer) ---- */
+.clf-bar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 8px}
+.clf-bar .search{flex:1 1 220px;min-width:0}
+.clf-bar select{width:auto;flex:0 1 230px;max-width:100%}
+.clf-act{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:#eaf1fb;border-radius:10px}
+.clf-act select{width:auto;max-width:100%;flex:0 1 210px}
+.clf-act .muted{font-size:13px}
+.clf-all{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;white-space:nowrap}
+.clf-all input,.clf-n input{width:18px;height:18px;flex:none;margin:0}
+.clf-list{max-height:48vh;overflow:auto;border:1px solid var(--bd);border-radius:10px;margin-top:8px;background:#fff}
+.clf-r{display:grid;grid-template-columns:1fr minmax(150px,230px);gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--bd)}
+.clf-r:last-child{border-bottom:0}
+.clf-r.done{background:#f1faf4}
+.clf-n{display:flex;gap:10px;align-items:center;min-width:0;cursor:pointer}
+.clf-n span{min-width:0;display:block}
+.clf-n b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clf-n small{display:block;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clf-r select{width:100%;padding:6px 8px}
+.clf-r.done select{border-color:var(--ok)}
+@media (max-width:560px){
+  .clf-r{grid-template-columns:1fr}
+  .clf-n b,.clf-n small{white-space:normal}
+  .clf-list{max-height:50vh}
+  .clf-intro{display:none}
+}
+
+/* ---- Désignation d'une ligne : champ mis en forme (gras, couleur, taille, listes, saut de ligne) ---- */
+.dz{border:1px solid var(--bd);border-radius:8px;padding:8px;min-height:38px;background:#fff;color:var(--tx);outline:none;line-height:1.35;overflow-wrap:anywhere;cursor:text}
+.dz:focus{border-color:var(--p2)}
+.dz:empty:before{content:attr(data-ph);color:var(--mut);pointer-events:none}
+.dz ul,.dz ol{margin:2px 0;padding-left:20px}
+.sheet td ul,.sheet td ol{margin:2px 0;padding-left:18px}
+.sg:empty{display:none}

@@ -78,7 +78,8 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     <input class="search" id="q" type="search" placeholder="Rechercher (nom, réf., code-barres…)">
     <button class="btn primary" id="scanb">▦ Scanner</button>
     <button class="btn" id="add">+ Produit</button>
-    <button class="btn" id="imp">Importer</button></div>
+    <button class="btn" id="imp">Importer</button>
+    <button class="btn" id="clf" title="Ranger les produits existants dans les catégories des devis">🏷 Classer${toClassify(products) ? ` (${toClassify(products)})` : ''}</button></div>
     <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="spdf">📄 Facture fournisseur (PDF)</button></div>
     ${filterBar(FC)}
     <div id="list"></div>`;
@@ -109,6 +110,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
   list.onclick = ev => { const it = ev.target.closest('.item'); if (it) import('./lock.js').then(L => L.withLock(it.dataset.id, () => productModal(products.find(p => p.id === it.dataset.id), locs, contacts, products))); };
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);
+  $('#clf', body).onclick = () => classifyModal(products);
   $('#scanb', body).onclick = lookupScan;
   $('#recv', body).onclick = () => receptionModal(products, locs);
   $('#sout', body).onclick = () => siteOutModal(products, locs);
@@ -311,6 +313,130 @@ const FIELDS = [
   ['category', 'Catégorie', /cat[ée]gorie|famille/i],
   ['qty', 'Quantité en stock', /stock|quantit|qt[ée]/i]
 ];
+
+/* ---------- Classement des produits existants en lot ---------- */
+const ascii = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+export const toClassify = products => products.filter(p => !CAT_NAMES.includes(p.category)).length;
+
+export function classifyModal(products) {
+  const MAX = 300;
+  const list = [...products].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const byId = new Map(list.map(p => [p.id, p]));
+  const checked = new Set();
+  let shown = [], last = null, changed = false;
+  const catOpts = (cur, none = '— aucune —') => `<option value="">${none}</option>${CATS.map(([c, i]) => `<option value="${e(c)}" ${cur === c ? 'selected' : ''}>${i} ${e(c)}</option>`).join('')}${cur && !CAT_NAMES.includes(cur) ? `<option value="${e(cur)}" selected>${e(cur)} (ancienne)</option>` : ''}`;
+  const body = `<p class="muted clf-intro">Rangez vos produits existants dans les catégories des devis. Filtrez ou cherchez, cochez les lignes, choisissez la catégorie puis <b>Classer</b> — ou changez la catégorie d'une ligne directement. Chaque changement est enregistré tout de suite, et <b>Annuler</b> revient en arrière.</p>
+    <div class="clf-bar"><input class="search" id="cq" type="search" placeholder="Rechercher (nom, réf., ancienne catégorie…)"><select id="cf" aria-label="Afficher"></select></div>
+    <div class="clf-act"><label class="clf-all"><input type="checkbox" id="call"> <span id="calll">Tout cocher</span></label><span class="muted" id="cn"></span><span class="sp"></span>
+      <select id="ct" aria-label="Catégorie à appliquer">${catOpts('', 'Classer dans…')}</select>
+      <button type="button" class="btn primary" id="cgo" disabled>Classer</button><button type="button" class="btn ghost" id="cundo" hidden>↩ Annuler</button></div>
+    <div class="clf-list" id="cl" aria-live="polite"></div>`;
+  modal('Classer les produits', body, null, {
+    wide: true,
+    onOpen: (f, d) => {
+      const q = $('#cq', f), sel = $('#cf', f), box = $('#cl', f), all = $('#call', f), target = $('#ct', f), goBtn = $('#cgo', f), undo = $('#cundo', f);
+      const count = fn => list.filter(fn).length;
+      const legacy = () => [...new Set(list.map(p => p.category).filter(c => c && !CAT_NAMES.includes(c)))].sort((a, b) => a.localeCompare(b, 'fr'));
+      const filterOpts = () => {
+        const cur = sel.value || 'todo';
+        sel.innerHTML = `<option value="todo">À classer (${count(p => !CAT_NAMES.includes(p.category))})</option><option value="all">Tous (${list.length})</option><option value="none">Sans catégorie (${count(p => !p.category)})</option>`
+          + `<optgroup label="Catégories des devis">${CATS.map(([c, i]) => `<option value="c:${e(c)}">${i} ${e(c)} (${count(p => p.category === c)})</option>`).join('')}</optgroup>`
+          + (legacy().length ? `<optgroup label="Anciennes catégories">${legacy().map(c => `<option value="c:${e(c)}">${e(c)} (${count(p => p.category === c)})</option>`).join('')}</optgroup>` : '');
+        sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'todo';
+      };
+      const match = () => {
+        const v = sel.value, toks = ascii(q.value).split(/\s+/).filter(Boolean);
+        return list.filter(p => {
+          if (v === 'todo' ? CAT_NAMES.includes(p.category) : v === 'none' ? p.category : v.startsWith('c:') ? p.category !== v.slice(2) : false) return false;
+          if (!toks.length) return true;
+          const h = ascii([p.name, p.ref, p.barcode, p.category].join(' '));
+          return toks.every(t => h.includes(t));
+        });
+      };
+      const rowHtml = p => `<div class="clf-r${CAT_NAMES.includes(p.category) ? ' done' : ''}" data-id="${e(p.id)}">
+        <label class="clf-n"><input type="checkbox" class="ck" ${checked.has(p.id) ? 'checked' : ''}><span><b>${e(p.name)}</b><small>${[p.ref, p.kind === 'internal' ? 'usage interne' : (p.sell ? eur(p.sell) + ' HT' : '')].filter(Boolean).map(e).join(' · ')}</small></span></label>
+        <select class="cs" aria-label="Catégorie de ${e(p.name)}">${catOpts(p.category || '')}</select></div>`;
+      const status = () => {
+        const n = checked.size;
+        $('#cn', f).textContent = `${shown.length} affiché${shown.length > 1 ? 's' : ''} · ${n} coché${n > 1 ? 's' : ''}`;
+        all.checked = shown.length > 0 && n === shown.length;
+        $('#calll', f).textContent = shown.length ? `Tout cocher (${shown.length})` : 'Tout cocher';
+        goBtn.disabled = !(n && target.value);
+        goBtn.textContent = n ? `Classer (${n})` : 'Classer';
+      };
+      const draw = () => {
+        shown = match();
+        checked.clear();
+        const note = shown.length > MAX ? `<div class="empty">${MAX} premiers sur ${shown.length} — affinez la recherche pour voir les autres (« Tout cocher » prend bien les ${shown.length}).</div>` : '';
+        box.innerHTML = shown.length
+          ? shown.slice(0, MAX).map(rowHtml).join('') + note
+          : `<div class="empty">${sel.value === 'todo' && !q.value.trim() && list.length ? '🎉 Tous les produits sont classés.' : 'Aucun produit ne correspond.'}</div>`;
+        status();
+      };
+      const recount = () => { filterOpts(); status(); };
+      const paintRow = p => {
+        const r = [...box.querySelectorAll('.clf-r')].find(x => x.dataset.id === p.id);
+        if (!r) return;
+        r.classList.toggle('done', CAT_NAMES.includes(p.category));
+        r.querySelector('.cs').innerHTML = catOpts(p.category || '');
+      };
+      const apply = async (ids, cat) => {
+        const ps = ids.map(id => byId.get(id)).filter(p => p && (p.category || '') !== cat);
+        if (!ps.length) return 0;
+        last = ps.map(p => [p.id, p.category || '']);
+        ps.forEach(p => { if (cat) p.category = cat; else delete p.category; });
+        await db.putMany('products', ps);
+        changed = true;
+        ps.forEach(paintRow);
+        undo.hidden = false; undo.textContent = `↩ Annuler (${ps.length})`;
+        return ps.length;
+      };
+      q.oninput = draw;
+      sel.onchange = draw;
+      target.onchange = status;
+      all.onchange = () => {
+        checked.clear();
+        if (all.checked) shown.forEach(p => checked.add(p.id));
+        box.querySelectorAll('.ck').forEach(c => { c.checked = all.checked; });
+        status();
+      };
+      box.onchange = async ev => {
+        const r = ev.target.closest('.clf-r'); if (!r) return;
+        if (ev.target.matches('.ck')) {
+          ev.target.checked ? checked.add(r.dataset.id) : checked.delete(r.dataset.id);
+          return status();
+        }
+        if (ev.target.matches('.cs')) {
+          const n = await apply([r.dataset.id], ev.target.value);
+          if (n) { recount(); toast('Catégorie enregistrée'); }
+        }
+      };
+      goBtn.onclick = async () => {
+        const cat = target.value, ids = [...checked];
+        if (!cat || !ids.length) return;
+        const n = await apply(ids, cat);
+        checked.clear();
+        box.querySelectorAll('.ck').forEach(c => { c.checked = false; });
+        recount();
+        toast(n ? `${n} produit${n > 1 ? 's' : ''} classé${n > 1 ? 's' : ''} : ${cat}` : 'Déjà dans cette catégorie');
+      };
+      undo.onclick = async () => {
+        if (!last) return;
+        const back = last; last = null;
+        const ps = back.map(([id, c]) => { const p = byId.get(id); if (c) p.category = c; else delete p.category; return p; });
+        await db.putMany('products', ps);
+        ps.forEach(paintRow);
+        undo.hidden = true;
+        recount();
+        toast(`${ps.length} produit${ps.length > 1 ? 's' : ''} remis comme avant`);
+      };
+      d.addEventListener('close', () => { if (changed) refresh(); }, { once: true });
+      filterOpts();
+      draw();
+      q.focus();
+    },
+  });
+}
 
 export function importModal(products) {
   const body = `<p class="muted">Choisissez un fichier .csv ou .xlsx (par ex. une liste de vos factures Excel). Les désignations identiques sont fusionnées : le dernier prix rencontré est conservé. Aucune donnée n'est envoyée sur Internet (le lecteur Excel se charge une fois depuis un CDN).</p>

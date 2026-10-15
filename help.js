@@ -170,13 +170,21 @@ export const TOPICS = {
         <p><b>Rechercher</b> par nom, référence, code-barres ou catégorie. <b>⚙ Filtres &amp; tri</b> : tri, catégorie, emplacement, type (vendus ou usage interne), « Stock bas / épuisé ».</p>
         <p><b>▦ Scanner</b> lit un code-barres avec la caméra et ouvre le produit ; si le code est inconnu, l'application propose de créer le produit. Vous pouvez aussi saisir le code à la main ou utiliser une douchette.</p>`),
       S('Créer ou modifier un produit', `<p>Touchez <b>+ Produit</b>.</p>${ul([
-        '<b>Catégorie</b> : Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance ou Ouvrage. Elle sert au menu « Produit » des devis et factures',
+        '<b>Catégorie</b> : Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance ou Ouvrage. Elle sert au menu « Produit » des devis et factures (pour classer d\'un coup tous les produits existants, voir « Classer les produits existants »)',
         '<b>Type d\'article</b> : « Vendu aux clients », ou « Usage interne » (encre, papier, consommables) : un article interne n\'est jamais proposé dans les devis',
         '<b>Prix d\'achat HT</b> : sert aux achats, à la TVA déductible et à la marge. <b>Prix de vente HT</b> : repris dans les devis',
         '<b>Seuil d\'alerte stock</b> : en dessous, le produit apparaît dans « À réapprovisionner » sur l\'accueil',
         '<b>Quantité initiale et emplacement</b> : à la création seulement ; enregistre un premier mouvement « Stock initial »',
         'Un code-barres ne peut servir qu\'à un seul produit'])}
         <p>Un produit existant propose <b>+ Entrée</b>, <b>− Sortie</b>, <b>⇄ Transfert</b> et <b>Inventaire</b>.</p>`),
+      S('Classer les produits existants', `<p>Le bouton <b>🏷 Classer (N)</b> (N = produits qui ne sont pas encore dans l'une des 5 catégories) ouvre un outil pour ranger tous vos produits d'un coup, sans ouvrir chaque fiche.</p>${ul([
+        '<b>Afficher</b> : « À classer » (par défaut), « Tous », « Sans catégorie », l\'une des 5 catégories, ou une <b>ancienne catégorie</b> reprise d\'un import. Le compteur de chaque choix se met à jour tout seul',
+        '<b>Rechercher</b> par nom, référence ou ancienne catégorie (les accents et les majuscules ne comptent pas) : par exemple « vis », puis <b>Tout cocher</b>',
+        'Choisissez la catégorie dans <b>Classer dans…</b>, puis touchez <b>Classer</b> : les produits cochés sont rangés et restent affichés en vert',
+        'Pour un seul produit, changez directement la catégorie dans la liste à droite de son nom',
+        'Tout est <b>enregistré tout de suite</b> (et synchronisé). <b>↩ Annuler</b> remet comme avant la dernière opération',
+        'La liste montre les 300 premiers résultats ; « Tout cocher » prend bien tous les résultats, même ceux qui ne sont pas affichés'])}
+        <p>La sélection est vidée dès que vous changez la recherche ou le filtre : vous ne classez jamais un produit que vous ne voyez pas.</p>`),
       S('Importer des produits ou une facture fournisseur', `<p><b>Importer</b> lit un fichier .csv ou .xlsx, vous laisse faire correspondre les colonnes et fusionne les désignations identiques en gardant le dernier prix.</p>
         <p><b>📄 Facture fournisseur (PDF)</b> lit les lignes d'une facture PDF, sur l'appareil, sans l'envoyer sur Internet. Pour chaque ligne, choisissez la destination (un chantier, la ligne compte alors comme charge, ou un emplacement de stock).</p>
         <p class="warnnote">Vérifiez toujours le tableau de lecture avant de valider : la lecture d'un PDF peut se tromper sur une quantité ou un prix.</p>`)
@@ -232,9 +240,10 @@ export const TOPICS = {
         '<b>✏️ Ligne libre</b> : une prestation saisie à la main',
         '<b>📑 Section</b> : regroupe des lignes avec un titre et un sous-total (<b>⏹ Fin de section</b> la termine) ; <b>📝 Texte</b> : un paragraphe ; <b>⏭ Saut de page</b>',
         '<b>📄 PDF</b> : reprend des lignes d\'une facture fournisseur ; <b>📋 Modèles</b> : insère un modèle de texte',
-        '<b>Aa</b> (en haut d\'un bloc texte) : déplie ou replie la barre de mise en forme (gras, couleur, taille, listes…) de ce texte'])}
+        '<b>Aa</b> (dans l\'en-tête d\'une ligne produit ou d\'un bloc texte) : déplie ou replie, sur une seule ligne, la barre de mise en forme (gras, italique, souligné, couleur, surlignage, taille, alignement, listes…). Sur une <b>ligne produit</b>, elle met en forme la désignation, imprimée telle quelle sur le document ; <b>↵</b> ajoute un saut de ligne'])}
         <p>La catégorie d'une ligne se choisit aussi dans la fiche produit (champ <b>Catégorie</b>) : classez vos produits pour les retrouver par catégorie.</p>
-        <p><b>Saisie rapide</b> : Entrée passe au champ suivant ; Ctrl + Entrée insère une ligne ; ↑ ↓ parcourent les propositions.</p>
+        <p><b>Saisie rapide</b> : Entrée passe au champ suivant ; Ctrl + Entrée insère une ligne ; ↑ ↓ parcourent les propositions. Dans la désignation, <b>Maj + Entrée</b> va à la ligne (dans une liste à puces, Entrée crée l'élément suivant). Sur une <b>ligne libre</b>, les produits du catalogue sont aussi proposés pendant la frappe : ↓ puis Entrée (ou un toucher) en choisit un, sinon Entrée passe simplement à la quantité.</p>
+        <p>Le collage dans une désignation se fait en texte brut (sans la mise en page de Word ou d'un site). Choisir un autre produit dans la liste remplace la désignation et sa mise en forme.</p>
         <p>Une barre fixe en bas affiche le total HT, le total TTC, <b>Enregistrer</b> et la pastille « points à vérifier ». Avant d'enregistrer, l'application contrôle le document : une anomalie bloquante empêche l'enregistrement, un avertissement se confirme une fois.</p>`),
       S('Le bouton ⚙ Options', `<p>En haut de l'éditeur, il choisit ce qui se saisit et s'affiche sur les lignes.</p>${table(['Option', 'Effet'], [
         ['TVA par ligne', 'Un taux propre à chaque ligne ; décoché, tout suit la TVA du document'],

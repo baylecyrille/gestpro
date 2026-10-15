@@ -40,7 +40,13 @@ export function sanitize(html) {
   cleanNode(doc.body, box, doc);
   return box.innerHTML;
 }
-export const plain = html => { const d = new DOMParser().parseFromString('<body>' + String(html || '').replace(/<br\s*\/?>/gi, ' ') + '</body>', 'text/html'); return (d.body.textContent || '').replace(/\s+/g, ' ').trim(); };
+export const plain = html => { const d = new DOMParser().parseFromString('<body>' + String(html || '').replace(/<br\s*\/?>|<\/(?:div|p|li)>/gi, ' ') + '</body>', 'text/html'); return (d.body.textContent || '').replace(/\s+/g, ' ').trim(); };
+/* Désignation d'une ligne : `desig` reste toujours le texte brut (recherche, facture électronique, contrôles) ; `dhtml` garde la mise en forme, s'il y en a */
+export const hasFmt = html => /<[a-z]/i.test(html);
+export const desigHtml = b => {
+  if (b.dhtml) { const h = sanitize(b.dhtml); if (plain(h) === String(b.desig ?? '').trim()) return h; } // mise en forme périmée (texte changé ailleurs) : ignorée
+  return e(b.desig);
+};
 
 /* ---------- Modèle ---------- */
 export const linesOf = bl => bl.filter(b => b.type === 'line');
@@ -98,7 +104,7 @@ export function printRows(d) {
     const bgt = STY.textBg && STY.textBg.toLowerCase() !== '#ffffff' ? ` style="background:${e(STY.textBg)}"` : '';
     if (b.type === 'line') {
       const opt = isOpt(b), rem = remOf(b), net = lineHt(b);
-      const des = `${opt ? '<b>Option :</b> ' : ''}${e(b.desig)}${rem ? `<div class="small">Remise ${e(fmtRate(rem))} : − ${eur(lineDisc(b))}</div>` : ''}`;
+      const des = `${opt ? '<b>Option :</b> ' : ''}${desigHtml(b)}${rem ? `<div class="small">Remise ${e(fmtRate(rem))} : − ${eur(lineDisc(b))}</div>` : ''}`;
       return `<tr${opt ? ' class="opt"' : ''}${bgl}>${rf ? `<td class="ref">${e(b.ref ?? '')}</td>` : ''}<td>${des}</td><td class="n">${num(b.qty)}</td><td>${e(b.unit)}</td><td class="n">${eur(num(b.pu))}</td>${vat ? `<td class="n">${e(fmtRate(rateOf(b, d.tva)))}</td>` : ''}<td class="n">${opt ? `<i>${eur(net)}</i><div class="small">non compté</div>` : eur(net)}</td></tr>`;
     }
     if (b.type === 'section') return `<tr class="sec"><td colspan="${NC}" style="${e(secStyle(b))}">${e(b.title)}</td></tr>`;
@@ -137,7 +143,7 @@ export async function snippetsModal(onInsert) {
 }
 
 /* ---------- Barre de mise en forme (traitement de texte) ---------- */
-function toolbarHtml() {
+function toolbarHtml(br = false) {
   return `<div class="rtb">
     <button type="button" data-cmd="bold" title="Gras"><b>G</b></button><button type="button" data-cmd="italic" title="Italique"><i>I</i></button>
     <button type="button" data-cmd="underline" title="Souligné"><u>S</u></button><button type="button" data-cmd="strikeThrough" title="Barré"><s>B</s></button>
@@ -145,7 +151,7 @@ function toolbarHtml() {
     <select data-size title="Taille"><option value="">Taille</option><option value="2">Petit</option><option value="3">Normal</option><option value="5">Grand</option><option value="6">Très grand</option></select>
     <button type="button" data-cmd="justifyLeft" title="Aligner à gauche">⟸</button><button type="button" data-cmd="justifyCenter" title="Centrer">≡</button><button type="button" data-cmd="justifyRight" title="Aligner à droite">⟹</button>
     <button type="button" data-cmd="insertUnorderedList" title="Liste à puces">•≡</button><button type="button" data-cmd="insertOrderedList" title="Liste numérotée">1.</button>
-    <button type="button" data-cmd="removeFormat" title="Effacer la mise en forme">⌫</button>
+    ${br ? '<button type="button" data-cmd="insertLineBreak" title="Saut de ligne dans la désignation (Maj + Entrée)">↵</button>' : ''}<button type="button" data-cmd="removeFormat" title="Effacer la mise en forme">⌫</button>
   </div>`;
 }
 /* `target()` renvoie l'éditeur actif ; `after` est appelé après chaque commande. */
@@ -157,6 +163,7 @@ function bindToolbar(root, target, after = () => {}) {
   tb.addEventListener('click', ev => {
     const f = ev.target.closest('[data-fc]'), h = ev.target.closest('[data-hc]');
     if (f) run('foreColor', f.dataset.fc); if (h) run('hiliteColor', h.dataset.hc);
+    (f || h)?.closest('details')?.removeAttribute('open'); // la palette se referme une fois la couleur choisie
   });
   tb.addEventListener('input', ev => { const i = ev.target; if (i.matches('[data-fc-x]')) run('foreColor', i.value); if (i.matches('[data-hc-x]')) run('hiliteColor', i.value); });
   const sz = tb.querySelector('[data-size]'); sz.onchange = () => { if (sz.value) run('fontSize', sz.value); sz.value = ''; };
@@ -229,7 +236,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   /* Total de la ligne : montant brut barré si remise, mention « option » si non comptée */
   const totHtml = b => (isOpt(b) ? '<small class="muted optlbl">option<span class="lg">, non comptée</span></small> ' : '') + (remOf(b) ? `<s class="muted">${eur(grossHt(b))}</s> ` : '') + eur(lineHt(b));
   const inner = b => {
-    if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<input data-k="desig" ${b.cat ? '' : 'list="gp-prods" '}autocomplete="off" value="${e(b.desig)}" placeholder="${b.cat ? e('Rechercher : ' + b.cat + '…') : 'Désignation'}"></div>
+    if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<div class="dz" data-k="desig" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Désignation" spellcheck="true" data-ph="${b.cat ? e('Rechercher : ' + b.cat + '…') : 'Désignation'}">${desigHtml(b)}</div></div>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${b.qty}" placeholder="Qté">
       <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT">
@@ -250,19 +257,28 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   const LABEL = { line: 'Ligne', section: 'Section', text: 'Texte', pagebreak: 'Page', sectionend: 'Fin de section' };
   /* Mise en forme du texte : une barre sur une ligne, dépliable / repliable dans chaque bloc texte (bouton « Aa ») */
   const tbOpen = new Set();
+  const richOf = row => $('.rte', row) || $('.dz', row); // zone mise en forme du bloc : texte libre, ou désignation d'une ligne
+  /* Désignation d'une ligne : `desig` = texte brut (recherche, facture électronique, contrôles) ; `dhtml` = mise en forme, seulement s'il y en a */
+  const dtext = el => (el.textContent || '').trim();
+  const setDesig = (b, el) => {
+    const html = sanitize(el.innerHTML).replace(/^(?:<br\s*\/?>)+|(?:<br\s*\/?>)+$/gi, '');
+    b.desig = plain(html);
+    if (!el.textContent) { if (el.innerHTML) el.innerHTML = ''; delete b.dhtml; } // plus rien : retire le <br> résiduel, le texte d'aide revient
+    else if (hasFmt(html)) b.dhtml = html; else delete b.dhtml;
+  };
   const openTb = (row, focus) => {
     const bb = $('.bb', row); if (!bb || $('.rtb', bb)) return;
-    bb.insertAdjacentHTML('afterbegin', toolbarHtml());
-    bindToolbar(row, () => $('.rte', row), t => { const blk = d.blocks[idx(row.dataset.id)]; if (blk) { blk.html = sanitize(t.innerHTML); change(); } });
+    bb.insertAdjacentHTML('afterbegin', toolbarHtml(row.classList.contains('blk-line')));
+    bindToolbar(row, () => richOf(row), t => { const blk = d.blocks[idx(row.dataset.id)]; if (!blk) return; if (blk.type === 'line') setDesig(blk, t); else blk.html = sanitize(t.innerHTML); change(); });
     $('[data-tb]', row)?.classList.add('on');
-    if (focus) $('.rte', row)?.focus();
+    if (focus) richOf(row)?.focus();
   };
   const closeTb = row => { $('.rtb', row)?.remove(); $('[data-tb]', row)?.classList.remove('on'); };
   let sg = null; // liste de suggestions ouverte dans une ligne classée par catégorie
   const draw = () => {
     sg = null; let open = false;
     host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}${b.type === 'line' && isOpt(b) ? ' optl' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${b.type === 'line' && b.cat ? `${catIcon(b.cat)} ${e(b.cat)}` : LABEL[b.type]}</span><span class="sp"></span>
-      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tb title="Mise en forme du texte (gras, couleur, taille…)" aria-label="Mise en forme du texte">Aa</button><button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
+      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'line' || b.type === 'text' ? `<button type="button" class="btn sm" data-tb title="${b.type === 'line' ? 'Mise en forme de la désignation (gras, couleur, taille, liste, saut de ligne…)' : 'Mise en forme du texte (gras, couleur, taille…)'}" aria-label="Mise en forme du texte">Aa</button>` : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
     tbOpen.forEach(id => { const r = host.querySelector(`.blk[data-id="${id}"]`); if (r) openTb(r); else tbOpen.delete(id); });
     updSub(); const snapped = snapAll(); paintMeta(); loadMeta(); if (snapped) change();
@@ -277,9 +293,9 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     if (k === 'opt') { if (ev.target.checked) b.opt = true; else delete b.opt; row.classList.toggle('optl', isOpt(b)); }
     else if (k === 'rem') { if (num(ev.target.value) > 0) b.rem = ev.target.value; else delete b.rem; }
     else if (k === 'pa' || k === 'ref') { if (String(ev.target.value).trim() === '') delete b[k]; else b[k] = ev.target.value; }
+    else if (k === 'desig') setDesig(b, ev.target);
     else b[k] = ev.target.value;
     if (k === 'tva') { if (b.tva === '') delete b.tva; ev.target.classList.toggle('inh', !hasOwnRate(b)); }
-    if (k === 'desig' && (ev.inputType === 'insertReplacementText' || ev.inputType === undefined)) autofill(b, row); // choix dans la liste des produits
     if (b.type === 'line') $('[data-t]', row).innerHTML = totHtml(b);
     if (b.type === 'section') { const inp = $('[data-k=title]', row); inp.setAttribute('style', secStyle(b)); }
     change(); if (b.type === 'line') paintMeta();
@@ -297,7 +313,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
         if (!p) { alert('Ce produit n\'existe plus dans le catalogue.'); b.pid = ''; draw(); change(); return; }
         productModal(p, locs, ctc, prods, {}, saved => {
           if (!saved) { b.pid = ''; draw(); change(); return; }
-          if (confirm('Reprendre sur cette ligne le nom, l\'unité et le prix de vente de la fiche produit ?')) { b.desig = saved.name; b.unit = saved.unit || b.unit; b.pu = saved.sell || 0; }
+          if (confirm('Reprendre sur cette ligne le nom, l\'unité et le prix de vente de la fiche produit ?')) { b.desig = saved.name; delete b.dhtml; b.unit = saved.unit || b.unit; b.pu = saved.sell || 0; }
           draw(); change(); toast('Produit enregistré');
         });
       });
@@ -329,9 +345,12 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     const all = ps.filter(p => p.kind !== 'internal' && p.name).sort((a, b) => a.name.localeCompare(b.name, 'fr')), sale = all.slice(0, 1500);
     catalog = all; if (sg) sgDraw(true);
     sale.forEach(p => byName.set(p.name.trim().toLowerCase(), p));
-    if (box.isConnected && sale.length) box.insertAdjacentHTML('beforeend', `<datalist id="gp-prods">${sale.map(p => `<option value="${e(p.name)}" label="${e(eur(p.sell || 0))}${p.unit ? ' / ' + e(p.unit) : ''}"></option>`).join('')}</datalist>`);
   }).catch(() => {});
-  host.addEventListener('change', ev => { if (ev.target.matches('[data-k=desig]')) { const row = ev.target.closest('.blk'), b = row && d.blocks[idx(row.dataset.id)]; if (b) autofill(b, row); } });
+  /* Désignation tapée à la main = nom exact d'un produit vendu : la ligne reprend sa fiche (seulement si le texte a changé) */
+  host.addEventListener('focusout', ev => {
+    const t = ev.target; if (!t.matches?.('[data-k=desig]') || t._v0 === t.textContent) return; t._v0 = t.textContent;
+    const row = t.closest('.blk'), b = row && d.blocks[idx(row.dataset.id)]; if (b && b.type === 'line') autofill(b, row);
+  });
   /* Recherche dans la ligne : produits de la catégorie choisie (« + Produit »), premières lettres d'abord */
   let catalog = null; // produits vendus, triés (chargés ci-dessous)
   const norm = t => String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -347,32 +366,40 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
       .sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name, 'fr')).slice(0, 40).map(x => x[1]);
   };
   const sgClose = () => { if (sg) { sg.el.remove(); sg = null; } };
+  const sgItem = (p, i) => `<button type="button" class="sgi${i === sg.on ? ' on' : ''}" data-pid="${p.id}"><span class="n">${e(p.name)}</span><small>${e(p.ref || '')}</small><b>${eur(p.sell || 0)}${p.unit ? ' / ' + e(p.unit) : ''}</b></button>`;
   const sgDraw = reset => {
     if (!sg) return;
     const row = sg.row, b = d.blocks[idx(row.dataset.id)], inp = $('[data-k=desig]', row);
     if (!b || !inp) return sgClose();
+    const txt = dtext(inp);
+    if (sg.free) { // ligne libre : propositions du catalogue pendant la frappe seulement, rien n'est présélectionné (Entrée passe au champ suivant)
+      sg.items = catalog && txt ? sgFind(null, txt, true) : [];
+      if (reset) sg.on = -1;
+      sg.el.innerHTML = sg.items.length ? `<div class="sgh"><span>Catalogue</span></div>` + sg.items.map(sgItem).join('') : '';
+      return;
+    }
     const catNo = (catalog || []).filter(p => p.category === b.cat).length, all = sg.all || (!!catalog && !catNo);
-    sg.items = catalog ? sgFind(b.cat, inp.value, all) : [];
-    if (reset) sg.on = inp.value.trim() && sg.items.length ? 0 : -1;
+    sg.items = catalog ? sgFind(b.cat, txt, all) : [];
+    if (reset) sg.on = txt && sg.items.length ? 0 : -1;
     const head = `<div class="sgh"><span>${all ? (catNo ? 'Tout le catalogue' : `Aucun produit classé « ${e(b.cat)} » : tout le catalogue`) : `${catIcon(b.cat)} ${e(b.cat)} · ${catNo}`}</span>${catNo ? `<button type="button" data-sgall>${all ? 'Cette catégorie' : 'Tout le catalogue'}</button>` : ''}</div>`;
     const list = !catalog ? '<div class="sgn">Chargement…</div>' : sg.items.length
-      ? sg.items.map((p, i) => `<button type="button" class="sgi${i === sg.on ? ' on' : ''}" data-pid="${p.id}"><span class="n">${e(p.name)}</span><small>${e(p.ref || '')}</small><b>${eur(p.sell || 0)}${p.unit ? ' / ' + e(p.unit) : ''}</b></button>`).join('')
+      ? sg.items.map(sgItem).join('')
       : `<div class="sgn">Aucun résultat${all ? '' : ' dans cette catégorie'}. Saisissez la désignation à la main${all || !catNo ? '' : ', ou cherchez dans tout le catalogue'}.</div>`;
     sg.el.innerHTML = head + list;
   };
   const sgOpen = row => {
-    const b = row && d.blocks[idx(row.dataset.id)]; if (!b || b.type !== 'line' || !b.cat) return;
+    const b = row && d.blocks[idx(row.dataset.id)]; if (!b || b.type !== 'line') return;
     if (sg && sg.row === row) return sgDraw();
     sgClose();
     const el = document.createElement('div'); el.className = 'ac sg'; $('.d', row).appendChild(el);
-    sg = { row, el, all: false, items: [], on: -1 };
+    sg = { row, el, all: false, free: !b.cat, items: [], on: -1 };
     sgDraw(true);
   };
   /* Choix d'un produit dans la liste : reprend désignation, unité, prix, référence et prix d'achat de la fiche */
   const sgPick = pid => {
     if (!sg) return; const row = sg.row, b = d.blocks[idx(row.dataset.id)], p = (catalog || []).find(x => x.id === pid); if (!b || !p) return;
-    const fresh = b.pid !== p.id, setv = (k, v) => { const el = $(`[data-k=${k}]`, row); if (el) el.value = v; };
-    b.pid = p.id; byId.set(p.id, p); b.desig = p.name; setv('desig', p.name);
+    const fresh = b.pid !== p.id, setv = (k, v) => { const el = $(`[data-k=${k}]`, row); if (el) { if (el.classList.contains('dz')) el.textContent = v; else el.value = v; } };
+    b.pid = p.id; byId.set(p.id, p); b.desig = p.name; delete b.dhtml; setv('desig', p.name);
     if (fresh || !num(b.pu)) { b.pu = p.sell || 0; setv('pu', b.pu); }
     if (fresh) {
       if (p.unit) { b.unit = p.unit; setv('unit', p.unit); }
@@ -384,7 +411,10 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   };
   host.addEventListener('focusin', ev => {
     const t = ev.target;
-    if (t.matches?.('[data-k=desig]')) { const row = t.closest('.blk'); if (!t.value.trim()) sgOpen(row); else if (!(sg && sg.row === row)) sgClose(); }
+    if (t.matches?.('[data-k=desig]')) {
+      t._v0 = t.textContent; const row = t.closest('.blk'), b = d.blocks[idx(row.dataset.id)]; // à l'arrivée : liste des produits de la catégorie (ligne classée et vide) ; ligne libre : seulement en tapant
+      if (b && b.cat && !dtext(t)) sgOpen(row); else if (!(sg && sg.row === row)) sgClose();
+    }
     else if (!t.closest?.('.sg')) sgClose();
   });
   host.addEventListener('focusout', () => setTimeout(() => { if (sg && !host.contains(document.activeElement)) sgClose(); }, 150));
@@ -406,19 +436,46 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     else if (ev.key === 'Escape') { ev.stopPropagation(); sgClose(); }
   });
   const fine = () => typeof matchMedia === 'function' && matchMedia('(pointer:fine)').matches;
-  const focusField = (id, k) => { const el = host.querySelector(`.blk[data-id="${id}"] [data-k=${k}]`); if (el) { el.focus(); if (el.select && fine()) el.select(); } };
+  const focusField = (id, k) => {
+    const el = host.querySelector(`.blk[data-id="${id}"] [data-k=${k}]`); if (!el) return;
+    el.focus();
+    if (el.classList.contains('dz')) { // champ mis en forme : tout sélectionné au clavier (comme un champ simple), sinon curseur à la fin
+      try { const r = document.createRange(), sel = window.getSelection(); r.selectNodeContents(el); if (!fine()) r.collapse(false); sel.removeAllRanges(); sel.addRange(r); } catch (_) {}
+    } else if (el.select && fine()) el.select();
+  };
   host.addEventListener('focusin', ev => { if (ev.target.matches?.('.ln input[type=number]') && fine()) ev.target.select(); });
-  /* Entrée : champ suivant ; à la fin de la ligne, ligne suivante (ou nouvelle ligne). Ctrl+Entrée : nouvelle ligne juste après. */
-  host.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter' || ev.isComposing || ev.shiftKey || ev.altKey) return;
-    const inp = ev.target; if (!inp.matches?.('.ln input:not([type=checkbox])')) return;
-    const row = inp.closest('.blk'); if (!row) return; ev.preventDefault();
-    const i = idx(row.dataset.id), b = d.blocks[i], k = inp.dataset.k, nk = { desig: 'qty', qty: 'pu' }[k], mod = ev.ctrlKey || ev.metaKey;
+  /* Entrée : champ suivant ; à la fin de la ligne, ligne suivante (ou nouvelle ligne). Ctrl+Entrée : nouvelle ligne juste après.
+     Dans la désignation : Maj + Entrée = saut de ligne ; Entrée dans une liste à puces garde son effet habituel. */
+  const inList = () => { try { const n = window.getSelection().anchorNode; return !!(n && (n.nodeType === 1 ? n : n.parentElement)?.closest('li')); } catch (_) { return false; } };
+  const enterNext = (inp, mod) => {
+    const row = inp.closest('.blk'); if (!row) return;
+    const i = idx(row.dataset.id), b = d.blocks[i], k = inp.dataset.k, nk = { desig: 'qty', qty: 'pu' }[k];
     if (nk && !mod) return focusField(row.dataset.id, nk);
     const nb = d.blocks[i + 1];
     if (nb && nb.type === 'line' && !mod) return focusField(nb.id, 'desig');
     const nl = add({ type: 'line', pid: '', desig: '', qty: 1, unit: 'u', pu: 0, ...(hasOwnRate(b) ? { tva: b.tva } : {}) }, i + 1);
     focusField(nl.id, 'desig');
+  };
+  host.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter' || ev.isComposing || ev.altKey) return;
+    const inp = ev.target, dz = inp.matches?.('.dz');
+    if (ev.shiftKey) { if (dz) { ev.preventDefault(); document.execCommand?.('insertLineBreak'); } return; }
+    if (!inp.matches?.('.ln input:not([type=checkbox]), .ln .dz') || (dz && inList())) return;
+    ev.preventDefault(); enterNext(inp, ev.ctrlKey || ev.metaKey);
+  });
+  /* Claviers tactiles qui n'envoient pas la touche Entrée : même comportement */
+  host.addEventListener('beforeinput', ev => {
+    const t = ev.target; if (ev.inputType !== 'insertParagraph' || !t.matches?.('.dz') || inList()) return;
+    ev.preventDefault();
+    if (sg && sg.on >= 0 && sg.items[sg.on]) return sgPick(sg.items[sg.on].id);
+    enterNext(t, false);
+  });
+  /* Collage dans la désignation : texte brut (pas de mise en page venue de Word ou d'un site) */
+  host.addEventListener('paste', ev => {
+    const t = ev.target; if (!t.matches?.('.dz')) return;
+    ev.preventDefault();
+    const txt = ((ev.clipboardData || window.clipboardData)?.getData('text/plain') || '').replace(/\r/g, '');
+    txt.split('\n').forEach((part, i) => { if (i) document.execCommand?.('insertLineBreak'); if (part) document.execCommand?.('insertText', false, part); });
   });
   /* Glisser-déposer (poignée) */
   let dragId = null;
