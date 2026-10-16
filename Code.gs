@@ -18,7 +18,7 @@ function sheetId_() {
 
 const SECRET = 'CHANGEZ-MOI-PHRASE-SECRETE-LONGUE';
 
-const VERSION = 'maj54 – 16/10/2026'; // affichée par le test ci-dessous : permet de vérifier que le déploiement est à jour
+const VERSION = 'maj55 – 16/10/2026'; // affichée par le test ci-dessous : permet de vérifier que le déploiement est à jour
 function doGet() {
   return out_({ ok: true, app: 'GestPro', version: VERSION }); // simple test dans le navigateur
 }

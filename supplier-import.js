@@ -112,6 +112,8 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   let DT = r.docType || null;
   const dtLabel = () => DT?.label || 'Facture';
   const notInvoice = () => ['devis', 'commande', 'avoir'].includes(DT?.key);
+  const isBL = () => DT?.key === 'livraison';
+  const BLINFO = 'Bon de livraison : les lignes sans prix prennent le dernier prix connu du catalogue (sinon saisissez-le). Comme une réception de colis, l\'entrée en stock est comptée dans vos achats : à l\'arrivée de la facture, mettez à jour le catalogue sans refaire l\'entrée en stock.';
   const WARN = { devis: 'Un devis n\'est pas un achat réalisé', commande: 'Un bon de commande n\'est pas un achat réalisé', avoir: 'Un avoir diminue vos achats' };
   const warnTxt = () => notInvoice() ? `${WARN[DT.key]} : n'affectez pas ses lignes à un chantier ni au stock (elles seraient comptées comme des achats). Vous pouvez en revanche mettre à jour le catalogue.` : '';
   const typeOpts = () => `${DOC_TYPES.map(t => `<option value="${t.key}" ${DT?.key === t.key ? 'selected' : ''}>${e(t.label)}</option>`).join('')}${DT && !DOC_TYPES.some(t => t.key === DT.key) ? `<option value="${e(DT.key)}" selected>${e(DT.label)}</option>` : ''}<option value="" ${DT ? '' : 'selected'}>Autre document</option>`;
@@ -130,30 +132,36 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     return hl.length === 1 ? dests.find(d => d.id === hl[0].id).label : '';
   };
   const dlist = `<datalist id="spdl">${dests.map(d => `<option value="${e(d.label)}">`).join('')}</datalist>`;
-  const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it), dest: doc || notInvoice() ? '' : guess(it) }));
+  const known = ex => (ex && num(ex.buy) > 0 ? num(ex.buy) : 0);
+  const rows = r.items.map((it, i) => {
+    const ex = findP(it), fill = isBL() && !(it.price > 0) ? known(ex) : 0;
+    return { ...it, i, ex, price: fill || it.price, pc: !!fill, on: isBL() ? true : it.price > 0, dest: doc || notInvoice() ? '' : guess(it) };
+  });
+  /* pastille d'état d'une ligne : produit existant / nouveau / lot, et pour un bon de livraison l'origine du prix */
+  const chipOf = (x, price, pc) => x.ex ? `<span class="chip ok">existant${pc && price > 0 ? ' · prix du catalogue' : ''}</span>` : price > 0 ? '<span class="chip warn">nouveau</span>' : isBL() ? '<span class="chip warn">prix à saisir</span>' : '<span class="chip">lot</span>';
   const nbOn = () => $$('[data-on]:checked', out).length;
   const feeTot = r.fees.reduce((a, x) => a + x.amount, 0);
   out.innerHTML = `
     <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b><span id="sphead">${inv.number ? ` · ${e(dtLabel().toLowerCase())} ${e(inv.number)}` : ''}</span>${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
       <span class="muted">${[S.address, [S.zip, S.city].filter(Boolean).join(' '), S.phone, S.email, S.siret && 'SIRET ' + S.siret].filter(Boolean).map(e).join(' · ')}</span></div>
-    <p class="muted" style="margin:4px 0"><label>Type de document : <select id="sptype" style="width:auto">${typeOpts()}</select></label></p><p class="bad" id="spwarn" style="margin:4px 0" ${notInvoice() ? '' : 'hidden'}>${e(warnTxt())}</p>
+    <p class="muted" style="margin:4px 0"><label>Type de document : <select id="sptype" style="width:auto">${typeOpts()}</select></label></p><p class="bad" id="spwarn" style="margin:4px 0" ${notInvoice() ? '' : 'hidden'}>${e(warnTxt())}</p><p class="muted" id="spbl" style="margin:4px 0" ${isBL() && !doc ? '' : 'hidden'}>${e(BLINFO)}</p>
     ${ctx ? `<p class="muted" style="margin:4px 0">${ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » appliquée. ` : r.mode === 'manuel' ? 'Lignes lues d\'après les zones que vous avez entourées. ' : ''}<button type="button" class="btn sm" id="spman">✋ Lire à la main</button></p>` : ''}
     <p class="${r.sumOk === false ? 'bad' : 'muted'}">${r.items.length} ligne(s) lue(s) — total ${eur(r.sum)} HT${r.sumOk === true ? ' ✔ identique au total de la facture' : r.sumOk === false ? ` ⚠ la facture indique ${eur(r.totals.ht0)} : vérifiez les lignes` : ' (total de la facture non trouvé : vérifiez)'}${r.mode === 'texte' ? ' · lecture approximative, contrôlez chaque ligne' : ''}.
     ${r.fees.length ? `<br>Frais de la facture (jamais ajoutés au catalogue) : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
-    ${rows.some(x => x.price === 0) ? '<br>Les lignes à 0 € (composants d\'un lot déjà facturé) sont décochées.' : ''}</p>
+    ${isBL() ? (rows.some(x => !(x.price > 0)) ? '<br>Lignes sans prix connu : saisissez le prix d\'achat (ou laissez 0 : l\'entrée en stock se fera sans valeur).' : '') : rows.some(x => x.price === 0) ? '<br>Les lignes à 0 € (composants d\'un lot déjà facturé) sont décochées.' : ''}</p>
     <div style="overflow:auto;max-height:42vh"><table class="tbl" style="width:100%;font-size:13px"><thead><tr><th><input type="checkbox" id="spall" checked></th><th>Réf.</th><th>Désignation</th><th>Qté</th><th>Unité</th><th>PU achat HT</th>${doc ? '' : '<th>Chantier / emplacement</th>'}<th></th></tr></thead><tbody>
-    ${rows.map(x => `<tr data-i="${x.i}" ${x.on ? '' : 'style="opacity:.55"'}><td><input type="checkbox" data-on ${x.on ? 'checked' : ''}></td>
+    ${rows.map(x => `<tr data-i="${x.i}" ${x.pc ? 'data-pc="1"' : ''} ${x.on ? '' : 'style="opacity:.55"'}><td><input type="checkbox" data-on ${x.on ? 'checked' : ''}></td>
       <td><input data-k="ref" value="${e(x.ref)}" style="width:84px"></td><td><input data-k="name" value="${e(x.name)}" style="min-width:210px;width:100%"></td>
       <td><input data-k="qty" type="number" step="any" value="${x.qty}" style="width:64px"></td>
       <td><select data-k="unit">${UNITS.map(u => `<option ${u === x.unitMapped ? 'selected' : ''}>${u}</option>`).join('')}</select></td>
       <td><input data-k="price" type="number" step="0.01" value="${x.price}" style="width:80px"></td>
       ${doc ? '' : `<td><input data-k="dest" list="spdl" value="${e(x.dest)}" placeholder="chantier ou emplacement…" autocomplete="off" style="width:190px">${x.cmd ? `<small class="muted" style="display:block">cmd : ${e(x.cmd)}</small>` : ''}</td>`}
-      <td>${x.ex ? '<span class="chip ok">existant</span>' : x.price === 0 ? '<span class="chip">lot</span>' : '<span class="chip warn">nouveau</span>'}</td></tr>`).join('')}
+      <td data-chip>${chipOf(x, x.price, x.pc)}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="cols" style="margin-top:10px">
       <label class="f full"><span><input type="checkbox" id="spcat" ${doc ? '' : 'checked'}> ${doc ? 'Aussi créer / mettre à jour ces produits dans le catalogue' : 'Mettre à jour le catalogue (créer les nouveaux produits, actualiser le prix d\'achat des existants)'}</span></label>
       ${F(doc ? 'Marge sur le prix d\'achat (%) → prix de vente de la ligne (produit existant : son prix de vente)' : 'Marge sur les nouveaux produits (%) → prix de vente', 'spm', 30, { type: 'number', step: '1' })}
-      ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk"> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
+      ${doc ? '' : `<label class="f"><span><input type="checkbox" id="spstk" ${isBL() ? 'checked' : ''}> Enregistrer l'entrée en stock</span><select id="splc">${locs.map(l => `<option value="${l.id}">${e(locLabel(l))}</option>`).join('')}</select></label>`}
       ${doc ? '' : `<label class="f full"><span>Destination des lignes : tapez pour chercher un chantier (charge comptée dans sa rentabilité) ou un emplacement de stock. Vide = suit l'option « entrée en stock » ci-dessous. Proposé d'après le « N° commande » de la facture quand il correspond ; « Appliquer » le met sur toutes les lignes cochées.</span><span style="display:flex;gap:6px"><input id="spsite" list="spdl" placeholder="chantier ou emplacement…" autocomplete="off" style="flex:1"><button type="button" class="btn" id="spapply">Appliquer</button></span>${dlist}</label>
       ${r.fees.length ? `<label class="f full"><span><input type="checkbox" id="spfees" checked> Répartir les frais (${eur(feeTot)} : port…) sur les chantiers, au prorata des lignes</span></label>` : ''}`}
       ${!doc && fl.available() && file ? '<label class="f full"><span><input type="checkbox" id="spkeep" checked> Conserver le PDF dans le stockage Drive / OneDrive (GestPro/Achats fournisseurs, et dans le chantier si affecté)</span></label>' : ''}
@@ -166,6 +174,15 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       DT = ev.target.value ? (docType(ev.target.value) || DT) : null;
       $('#sphead', out).textContent = inv.number ? ` · ${dtLabel().toLowerCase()} ${inv.number}` : '';
       const w = $('#spwarn', out); w.textContent = warnTxt(); w.hidden = !notInvoice();
+      const bi = $('#spbl', out); if (bi) bi.hidden = !isBL() || doc;
+      const stk0 = $('#spstk', out); if (stk0) stk0.checked = isBL();
+      $$('tr[data-i]', out).forEach(tr => {
+        const x = rows[+tr.dataset.i], pin = $('[data-k=price]', tr);
+        if (isBL() && !(num(pin.value) > 0) && known(x.ex) > 0) { pin.value = known(x.ex); tr.dataset.pc = '1'; }
+        if (isBL()) { const c = $('[data-on]', tr); c.checked = true; tr.style.opacity = ''; }
+        $('[data-chip]', tr).innerHTML = chipOf(x, num(pin.value), !!tr.dataset.pc);
+      });
+      upd();
       return;
     }
     if (ev.target.id === 'spall') { $$('[data-on]', out).forEach(c => { c.checked = ev.target.checked; c.closest('tr').style.opacity = c.checked ? '' : '.55'; }); }
@@ -174,6 +191,12 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   };
   const man = $('#spman', out);
   if (man) man.onclick = () => ctx.env.raw && (ctx.env.type = DT) !== undefined && startManual(ctx.env, ctx.used, ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » : modifiez les zones puis continuez.` : '');
+  out.addEventListener('input', ev => {
+    if (!ev.target.matches('[data-k=price]')) return;
+    const tr = ev.target.closest('tr'), x = rows[+tr.dataset.i];
+    if (known(x.ex) !== num(ev.target.value)) delete tr.dataset.pc; else if (known(x.ex) > 0 && isBL()) tr.dataset.pc = '1';
+    $('[data-chip]', tr).innerHTML = chipOf(x, num(ev.target.value), !!tr.dataset.pc);
+  });
   const ap = $('#spapply', out);
   if (ap) ap.onclick = () => $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=dest]', tr).value = $('#spsite', out).value; });
   upd();
@@ -213,7 +236,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         if (!live.includes(p)) live.push(saved);
         x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
-        if (toStock && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
+        if (toStock && x.qty > 0 && (x.price > 0 || isBL())) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
       }
     }
     /* Chantiers : les achats affectés deviennent des charges du chantier (comptées dans la rentabilité) */
