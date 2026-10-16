@@ -179,7 +179,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     <div class="abarbox"><div class="abar" role="toolbar" aria-label="Ajouter au document">
       <div class="abwrap"><button type="button" class="ab pri" id="addp" aria-haspopup="true" aria-expanded="false" aria-label="Produit" title="Ajouter un produit du catalogue : choisissez d'abord la catégorie"><i>📦</i><span>Produit</span><i class="car">▾</i></button>
         <div class="pmenu" id="pmenu" role="menu" hidden>${CATS.map(([c, ic]) => `<button type="button" role="menuitem" data-cat="${e(c)}"><i>${ic}</i>${e(c)}</button>`).join('')}<hr><button type="button" role="menuitem" data-cat="*"><i>🔎</i>Tout le catalogue / scanner…</button></div></div>
-      ${AB('addl', '✏️', 'Ligne libre', 'Ligne libre : saisir une prestation à la main')}${AB('addpdf', '📄', 'PDF', 'Reprendre des lignes depuis une facture fournisseur (PDF)')}<span class="asep"></span>
+      ${AB('addl', '✏️', 'Ligne libre', 'Ligne libre : saisir une prestation à la main')}${AB('addpdf', '📄', 'PDF', 'Reprendre des lignes depuis un document fournisseur en PDF (facture, devis, bon de livraison…)')}<span class="asep"></span>
       ${AB('adds', '📑', 'Section', 'Section : regroupe des lignes sous un titre')}${AB('adde', '⏹', 'Fin de section', 'Termine la section en cours : les lignes suivantes n\'en font plus partie')}<span class="asep"></span>
       ${AB('addt', '📝', 'Texte', 'Texte libre : commentaire, précision, mention…')}${AB('addm', '📋', 'Modèles', 'Modèles de texte…')}${AB('addb', '⏭', 'Saut de page', 'Saut de page : la suite s\'imprime sur une nouvelle page')}</div></div>`;
   const host = $('#blks', box);

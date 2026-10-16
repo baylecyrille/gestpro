@@ -1,23 +1,23 @@
-// Lecture « à la main » d'une facture fournisseur PDF : on affiche la page, l'utilisateur entoure les zones
-// (fournisseur, n° de facture, date, tableau des lignes), vérifie l'affectation des colonnes, puis passe à l'écran de contrôle habituel.
-// Le PDF reste sur l'appareil. Seules les POSITIONS des zones peuvent être retenues (jamais le contenu de la facture).
+// Lecture « à la main » d'un document fournisseur PDF (facture, bon de livraison, bon de commande, devis…) : on affiche la page, l'utilisateur entoure les zones
+// (fournisseur, n° du document, date, tableau des lignes), vérifie l'affectation des colonnes, puis passe à l'écran de contrôle habituel.
+// Le PDF reste sur l'appareil. Seules les POSITIONS des zones peuvent être retenues (jamais le contenu du document).
 import { e, eur, $, $$ } from './util.js';
 import * as L from './supplier-layout.js';
 
 const CHIPS = [
-  ['sup.block', 'Fournisseur (nom + adresse)'], ['inv.number', 'N° de facture'], ['inv.date', 'Date'], ['inv.due', 'Échéance'], ['tbl', 'Tableau des lignes']
+  ['sup.block', 'Fournisseur (nom + adresse)'], ['inv.number', 'N° du document'], ['inv.date', 'Date'], ['inv.due', 'Échéance'], ['tbl', 'Tableau des lignes']
 ];
 const MORE = [['sup.name', 'Nom'], ['sup.address', 'Adresse'], ['sup.zipcity', 'CP + ville'], ['sup.phone', 'Téléphone'], ['sup.email', 'E-mail'], ['sup.siret', 'SIRET'], ['sup.tva', 'N° TVA']];
 const LABEL = Object.fromEntries([...CHIPS, ...MORE, ...L.COLS.map(c => ['col.' + c, 'Colonne ' + L.COL_LABEL[c].toLowerCase()])]);
 /* quelles valeurs saisies à la main une nouvelle zone remplace-t-elle ? */
 const ZKEYS = { 'sup.block': ['name', 'address', 'zip', 'city', 'phone', 'email', 'siret', 'tva'], 'sup.name': ['name'], 'sup.address': ['address'], 'sup.zipcity': ['zip', 'city'], 'sup.phone': ['phone'], 'sup.email': ['email'], 'sup.siret': ['siret'], 'sup.tva': ['tva'], 'inv.number': ['number'], 'inv.date': ['date'], 'inv.due': ['due'] };
 const SUP = [['name', 'Nom'], ['address', 'Adresse'], ['zip', 'CP'], ['city', 'Ville'], ['phone', 'Téléphone'], ['email', 'E-mail'], ['siret', 'SIRET'], ['tva', 'N° TVA']];
-const INV = [['number', 'N° de facture'], ['date', 'Date (jj/mm/aaaa)'], ['due', 'Échéance']];
+const INV = [['number', 'N° du document'], ['date', 'Date (jj/mm/aaaa)'], ['due', 'Échéance']];
 const ZOOMS = [1, 1.5, 2, 3];
 
 export function openManual(out, raw, o = {}) {
   const preset = o.preset || null;
-  const st = { pg: 0, zi: 0, act: '', zones: preset ? { ...preset.zones } : {}, tbl: null, bands: [], values: {}, paint: 0 };
+  const st = { type: o.type || preset?.type || null, pg: 0, zi: 0, act: '', zones: preset ? { ...preset.zones } : {}, tbl: null, bands: [], values: {}, paint: 0 };
   if (preset?.table) {
     const T = preset.table, edges = [T.x0 > 0 ? T.x0 + 0.03 : 0, ...T.cuts, T.x1 < 1 ? T.x1 - 0.03 : 1];
     st.bands = T.fields.map((f, k) => ({ a: edges[k], b: edges[k + 1], field: f, n: 0, head: '', ex: '' }));
@@ -28,6 +28,7 @@ export function openManual(out, raw, o = {}) {
 
   out.innerHTML = `<div class="mn">
     ${o.note ? `<p class="${o.noteBad ? 'bad' : 'muted'}">${o.note}</p>` : ''}
+    <div class="mn-type"><label class="f"><span>Type de document</span><select id="mntype"><option value="">— à choisir —</option>${L.DOC_TYPES.map(t => `<option value="${t.key}">${e(t.label)}</option>`).join('')}<option value="__x">Autre…</option></select></label><label class="f" id="mntypexw" hidden><span>Nom du type</span><input id="mntypex" maxlength="40" placeholder="ex. Relevé de compte" autocomplete="off"></label></div>
     <div class="mn-top"><p class="muted" id="mnhelp"></p>
     <div class="mn-chips" id="mnchips"></div></div>
     <details class="mn-more"><summary>Zones précises du fournisseur (facultatif)</summary><div class="mn-chips" id="mnchips2"></div></details>
@@ -36,12 +37,19 @@ export function openManual(out, raw, o = {}) {
     <div class="mn-wrap" id="mnwrap"><div class="mn-page" id="mnpage"><canvas id="mncv"></canvas><div class="mn-ov" id="mnov"></div></div></div>
     <div id="mnbands"></div>
     <h4 class="mn-h">Fournisseur</h4><div class="mn-fields" id="mnsup">${SUP.map(([k, l]) => `<label class="f"><span>${l}</span><input data-v="${k}" autocomplete="off"></label>`).join('')}</div>
-    <h4 class="mn-h">Facture</h4><div class="mn-fields" id="mninv">${INV.map(([k, l]) => `<label class="f"><span>${l}</span><input data-v="${k}" autocomplete="off"></label>`).join('')}</div>
+    <h4 class="mn-h">Document</h4><div class="mn-fields" id="mninv">${INV.map(([k, l]) => `<label class="f"><span>${l}</span><input data-v="${k}" autocomplete="off"></label>`).join('')}</div>
     <div id="mnprev"></div>
     <label class="f full"><span><input type="checkbox" id="mnmem" checked> <span id="mnmemt"></span></span></label>
     <div class="row"><button type="button" class="btn primary" id="mnok" disabled>Continuer vers le contrôle ›</button><button type="button" class="btn ghost" id="mnclr">Effacer les zones</button>${preset && o.forgetLayout ? '<button type="button" class="btn ghost" id="mnforget">Oublier la mise en page mémorisée</button>' : ''}</div></div>`;
 
   const wrap = $('#mnwrap', out), cv = $('#mncv', out), ov = $('#mnov', out);
+  const tsel = $('#mntype', out), tx = $('#mntypex', out), txw = $('#mntypexw', out);
+  const known = k => L.DOC_TYPES.some(t => t.key === k);
+  const syncType = () => {
+    if (st.type && !known(st.type.key)) { tsel.value = '__x'; tx.value = st.type.label; } else tsel.value = st.type?.key || '';
+    txw.hidden = tsel.value !== '__x';
+  };
+  syncType();
   const chipHtml = list => list.map(([id, l]) => `<button type="button" class="mn-chip" data-act="${id}">${e(l)}</button>`).join('');
   $('#mnchips', out).innerHTML = chipHtml(CHIPS);
   $('#mnchips2', out).innerHTML = chipHtml(MORE);
@@ -86,7 +94,7 @@ export function openManual(out, raw, o = {}) {
     ov.classList.toggle('act', !!st.act);
     $('#mnhelp', out).innerHTML = st.act
       ? `<b>Entourez « ${e(LABEL[st.act])} »</b> sur le document : glissez un rectangle, ou touchez un mot. <button type="button" class="btn sm" id="mncancel">Annuler</button>`
-      : (st.tbl ? 'Choisissez un autre champ à entourer, ou vérifiez ci-dessous l\'affectation des colonnes puis les lignes lues.' : '① Entourez le <b>tableau des lignes</b> (de la 1re ligne de produit à la dernière) · ② entourez le <b>fournisseur</b>, le <b>n° de facture</b> et la <b>date</b>. Faites défiler ou agrandissez (＋) la page <u>avant</u> de choisir un champ.');
+      : (st.tbl ? 'Choisissez un autre champ à entourer, ou vérifiez ci-dessous l\'affectation des colonnes puis les lignes lues.' : '① Vérifiez le <b>type de document</b> · ② entourez le <b>tableau des lignes</b> (de la 1re ligne de produit à la dernière) · ③ entourez le <b>fournisseur</b>, le <b>n° du document</b> et la <b>date</b>. Faites défiler ou agrandissez (＋) la page <u>avant</u> de choisir un champ.');
     const c = $('#mncancel', out); if (c) c.onclick = () => { st.act = ''; refresh(); };
   }
   function renderBands() {
@@ -109,8 +117,10 @@ export function openManual(out, raw, o = {}) {
       ? `<h4 class="mn-h">Lignes lues : ${it.length} — total ${eur(res.sum)} HT</h4><div class="mn-prev"><table class="tbl" style="width:100%;font-size:12.5px"><thead><tr><th>Réf.</th><th>Désignation</th><th>Qté</th><th>PU HT</th><th>Montant</th></tr></thead><tbody>${it.slice(0, 8).map(x => `<tr><td>${e(x.ref)}</td><td>${e(x.name)}</td><td>${x.qty}</td><td>${x.price}</td><td>${x.amount}</td></tr>`).join('')}${it.length > 8 ? `<tr><td colspan="5" class="muted">… et ${it.length - 8} autre(s) ligne(s)</td></tr>` : ''}</tbody></table></div>`
       : `<p class="bad">Aucune ligne lue pour l'instant : vérifiez que les colonnes <b>Désignation</b> et au moins une colonne de chiffres (<b>Quantité</b>, <b>Prix</b> ou <b>Montant</b>) sont bien affectées.</p>`;
     const nm = (res.supplier.name || '').trim(), mem = $('#mnmem', out);
-    mem.disabled = !nm || !st.tbl;
-    $('#mnmemt', out).innerHTML = nm ? `Retenir cette mise en page pour « ${e(nm)} » : les prochaines factures de ce fournisseur seront lues automatiquement (seules les positions des zones sont gardées)` : 'Renseignez le nom du fournisseur pour retenir la mise en page';
+    mem.disabled = !nm || !st.tbl || !st.type;
+    $('#mnmemt', out).innerHTML = !nm ? 'Renseignez le nom du fournisseur pour retenir la mise en page'
+      : !st.type ? 'Choisissez le type de document (en haut) pour retenir la mise en page'
+      : `Retenir cette mise en page pour « ${e(nm)} » — ${e(st.type.label)} : les prochains documents de ce type seront lus automatiquement (seules les positions des zones sont gardées)`;
     $('#mnok', out).disabled = !it.length;
   }
   function refresh() { const res = result(); renderChips(); renderBands(); renderFields(res); renderPrev(res); drawZones(); }
@@ -169,10 +179,12 @@ export function openManual(out, raw, o = {}) {
     const mg = ev.target.closest('[data-mg]'); if (mg) { st.bands = L.mergeNext(st.bands, +mg.dataset.mg); refresh(); }
   });
   out.querySelector('.mn').addEventListener('change', ev => {
+    if (ev.target === tsel) { st.type = tsel.value === '__x' ? L.customType(tx.value) : L.docType(tsel.value); txw.hidden = tsel.value !== '__x'; if (!txw.hidden) tx.focus(); refresh(); return; }
     const s = ev.target.closest('[data-bk]');
     if (s) { const k = +s.dataset.bk, f = s.value; if (f) st.bands.forEach((b, j) => { if (j !== k && b.field === f) b.field = ''; }); st.bands[k].field = f; refresh(); }
   });
   out.querySelector('.mn').addEventListener('input', ev => {
+    if (ev.target === tx) { st.type = L.customType(tx.value); renderPrev(result()); return; }
     const i = ev.target.closest('[data-v]'); if (!i) return;
     st.values[i.dataset.v] = i.value; const res = result(); renderPrev(res);
   });
@@ -181,7 +193,8 @@ export function openManual(out, raw, o = {}) {
   if (fg) fg.onclick = async () => { await o.forgetLayout(preset); fg.remove(); $('#mnhelp', out).insertAdjacentHTML('beforeend', ' <span class="muted">Mise en page oubliée.</span>'); };
   $('#mnok', out).onclick = async () => {
     const res = result(); if (!res.items.length) return;
-    if ($('#mnmem', out).checked && !$('#mnmem', out).disabled && o.saveLayout) { try { await o.saveLayout(L.makeLayout(spec(), res.supplier.name)); } catch { /* mémoire facultative */ } }
+    if ($('#mnmem', out).checked && !$('#mnmem', out).disabled && o.saveLayout) { try { await o.saveLayout(L.makeLayout(spec(), res.supplier.name, st.type)); } catch { /* mémoire facultative */ } }
+    res.docType = st.type;
     o.onDone(res);
   };
 

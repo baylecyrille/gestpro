@@ -1,8 +1,8 @@
-// Import d'une facture fournisseur PDF : lecture 100 % locale (pdf.js embarqué), contrôle par l'utilisateur, puis catalogue / stock / fournisseur.
+// Import d'un document fournisseur PDF (facture, bon de livraison, bon de commande, devis…) : lecture 100 % locale (pdf.js embarqué), contrôle par l'utilisateur, puis catalogue / stock / fournisseur.
 import * as db from './db.js';
 import { e, eur, num, today, cname, F, modal, closeModal, toast, refresh, $, $$ } from './util.js';
 import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
-import { matchLayout, buildResult } from './supplier-layout.js';
+import { matchLayout, buildResult, detectDocType, DOC_TYPES, docType } from './supplier-layout.js';
 import { openManual } from './supplier-manual.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
 import * as fl from './files.js';
@@ -64,9 +64,9 @@ export async function upsertSupplier(S, inv) {
 
 export async function supplierImportModal(opts = {}) {
   const [products, locs, sites, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('sites'), db.all('contacts')]);
-  const body = `<p class="muted">Choisissez la facture d'un fournisseur au format PDF. Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
-    <label class="f"><span>Facture fournisseur (PDF)</span><input type="file" id="spf" accept="application/pdf,.pdf"></label><div id="spres"></div>`;
-  modal('Facture fournisseur (PDF)', body, async (o, f) => (f._go ? f._go() : false), {
+  const body = `<p class="muted">Choisissez un document de fournisseur au format PDF (facture, bon de livraison, bon de commande, devis…). Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
+    <label class="f"><span>Document fournisseur (PDF)</span><input type="file" id="spf" accept="application/pdf,.pdf"></label><div id="spres"></div>`;
+  modal('Document fournisseur (PDF)', body, async (o, f) => (f._go ? f._go() : false), {
     wide: true, submitLabel: 'Importer la sélection',
     onOpen: f => {
       f.querySelector('footer .btn.primary').hidden = true;
@@ -75,19 +75,20 @@ export async function supplierImportModal(opts = {}) {
         const out = $('#spres', f); out.innerHTML = '<p class="muted">Lecture du PDF…</p>';
         let raw;
         try { raw = await loadPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
+        raw.docType = detectDocType(raw.pages, raw.sizes);
         const env = { f, out, products, locs, opts, sites, contacts, file, raw };
         /* 1) mise en page mémorisée pour ce fournisseur, 2) lecture automatique, 3) sinon lecture « à la main » */
         let r = null, used = null, note = '';
         try {
-          const L = matchLayout(raw.pages, raw.sizes, await savedLayouts());
+          const L = matchLayout(raw.pages, raw.sizes, await savedLayouts(), raw.docType);
           if (L) {
             const rr = buildResult(raw.pages, raw.sizes, { zones: L.zones, table: L.table, name: L.name });
-            if (rr.items.length) { r = rr; used = L; } else note = `La mise en page mémorisée pour « ${e(L.name)} » ne donne aucune ligne sur cette facture : entourez à nouveau les zones.`;
+            if (rr.items.length) { r = rr; used = L; r.docType = L.type || raw.docType; } else note = `La mise en page mémorisée pour « ${e(L.name)}${L.type ? ' — ' + e(L.type.label) : ''} » ne donne aucune ligne sur ce document : entourez à nouveau les zones.`;
           }
         } catch { /* mémoire illisible : on continue */ }
-        if (!r) { const a = parseSupplierInvoice(raw.pages); if (a.items.length) r = a; }
+        if (!r) { const a = parseSupplierInvoice(raw.pages); if (a.items.length) { r = a; r.docType = raw.docType; } }
         if (r) renderReview(f, out, r, products, locs, opts, sites, contacts, file, { env, used });
-        else startManual(env, null, note || 'Les lignes de produit n\'ont pas été reconnues automatiquement dans ce PDF. Indiquez où elles se trouvent : entourez les zones sur le document.', !!note);
+        else startManual(env, null, note || `Les lignes de produit n'ont pas été reconnues automatiquement dans ce PDF${raw.docType ? ' (' + raw.docType.label.toLowerCase() + ')' : ''}. Indiquez où elles se trouvent : entourez les zones sur le document.`, !!note);
       };
     }
   });
@@ -98,7 +99,7 @@ function startManual(env, preset, note, noteBad = false) {
   const { f, out, products, locs, opts, sites, contacts, file, raw } = env;
   f.querySelector('footer .btn.primary').hidden = true;
   openManual(out, raw, {
-    preset, note, noteBad, forgetLayout: preset ? forgetLayout : null, saveLayout,
+    preset, note, noteBad, type: env.type !== undefined ? env.type : raw.docType, forgetLayout: preset ? forgetLayout : null, saveLayout,
     onDone: res => renderReview(f, out, res, products, locs, opts, sites, contacts, file, { env, used: null })
   });
 }
@@ -107,6 +108,13 @@ const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '
 function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = [], file = null, ctx = null) {
   const doc = !!opts.onLines;
   const S = r.supplier, inv = r.invoice;
+  /* type du document (facture, bon de livraison, devis…) : sert aux libellés et aux avertissements */
+  let DT = r.docType || null;
+  const dtLabel = () => DT?.label || 'Facture';
+  const notInvoice = () => ['devis', 'commande', 'avoir'].includes(DT?.key);
+  const WARN = { devis: 'Un devis n\'est pas un achat réalisé', commande: 'Un bon de commande n\'est pas un achat réalisé', avoir: 'Un avoir diminue vos achats' };
+  const warnTxt = () => notInvoice() ? `${WARN[DT.key]} : n'affectez pas ses lignes à un chantier ni au stock (elles seraient comptées comme des achats). Vous pouvez en revanche mettre à jour le catalogue.` : '';
+  const typeOpts = () => `${DOC_TYPES.map(t => `<option value="${t.key}" ${DT?.key === t.key ? 'selected' : ''}>${e(t.label)}</option>`).join('')}${DT && !DOC_TYPES.some(t => t.key === DT.key) ? `<option value="${e(DT.key)}" selected>${e(DT.label)}</option>` : ''}<option value="" ${DT ? '' : 'selected'}>Autre document</option>`;
   const findP = it => products.find(p => it.ref && p.ref && p.ref.toLowerCase() === it.ref.toLowerCase()) || products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const siteLbl = s => `${s.name}${C[s.clientId] ? ' — ' + cname(C[s.clientId]) : ''}`;
@@ -122,12 +130,13 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     return hl.length === 1 ? dests.find(d => d.id === hl[0].id).label : '';
   };
   const dlist = `<datalist id="spdl">${dests.map(d => `<option value="${e(d.label)}">`).join('')}</datalist>`;
-  const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it), dest: doc ? '' : guess(it) }));
+  const rows = r.items.map((it, i) => ({ ...it, i, on: it.price > 0, ex: findP(it), dest: doc || notInvoice() ? '' : guess(it) }));
   const nbOn = () => $$('[data-on]:checked', out).length;
   const feeTot = r.fees.reduce((a, x) => a + x.amount, 0);
   out.innerHTML = `
-    <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b>${inv.number ? ` · facture ${e(inv.number)}` : ''}${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
+    <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b><span id="sphead">${inv.number ? ` · ${e(dtLabel().toLowerCase())} ${e(inv.number)}` : ''}</span>${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
       <span class="muted">${[S.address, [S.zip, S.city].filter(Boolean).join(' '), S.phone, S.email, S.siret && 'SIRET ' + S.siret].filter(Boolean).map(e).join(' · ')}</span></div>
+    <p class="muted" style="margin:4px 0"><label>Type de document : <select id="sptype" style="width:auto">${typeOpts()}</select></label></p><p class="bad" id="spwarn" style="margin:4px 0" ${notInvoice() ? '' : 'hidden'}>${e(warnTxt())}</p>
     ${ctx ? `<p class="muted" style="margin:4px 0">${ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » appliquée. ` : r.mode === 'manuel' ? 'Lignes lues d\'après les zones que vous avez entourées. ' : ''}<button type="button" class="btn sm" id="spman">✋ Lire à la main</button></p>` : ''}
     <p class="${r.sumOk === false ? 'bad' : 'muted'}">${r.items.length} ligne(s) lue(s) — total ${eur(r.sum)} HT${r.sumOk === true ? ' ✔ identique au total de la facture' : r.sumOk === false ? ` ⚠ la facture indique ${eur(r.totals.ht0)} : vérifiez les lignes` : ' (total de la facture non trouvé : vérifiez)'}${r.mode === 'texte' ? ' · lecture approximative, contrôlez chaque ligne' : ''}.
     ${r.fees.length ? `<br>Frais de la facture (jamais ajoutés au catalogue) : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
@@ -153,13 +162,18 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
   const upd = () => { $('#spcnt', out).textContent = `${nbOn()} ligne(s) sélectionnée(s).`; btn.disabled = !nbOn() && !$('#spsup', out).checked; };
   out.onchange = ev => {
-
+    if (ev.target.id === 'sptype') {
+      DT = ev.target.value ? (docType(ev.target.value) || DT) : null;
+      $('#sphead', out).textContent = inv.number ? ` · ${dtLabel().toLowerCase()} ${inv.number}` : '';
+      const w = $('#spwarn', out); w.textContent = warnTxt(); w.hidden = !notInvoice();
+      return;
+    }
     if (ev.target.id === 'spall') { $$('[data-on]', out).forEach(c => { c.checked = ev.target.checked; c.closest('tr').style.opacity = c.checked ? '' : '.55'; }); }
     if (ev.target.matches('[data-on]')) ev.target.closest('tr').style.opacity = ev.target.checked ? '' : '.55';
     upd();
   };
   const man = $('#spman', out);
-  if (man) man.onclick = () => ctx.env.raw && startManual(ctx.env, ctx.used, ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » : modifiez les zones puis continuez.` : '');
+  if (man) man.onclick = () => ctx.env.raw && (ctx.env.type = DT) !== undefined && startManual(ctx.env, ctx.used, ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » : modifiez les zones puis continuez.` : '');
   const ap = $('#spapply', out);
   if (ap) ap.onclick = () => $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=dest]', tr).value = $('#spsite', out).value; });
   upd();
@@ -199,7 +213,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         if (!live.includes(p)) live.push(saved);
         x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
-        if (toStock && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `Facture ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
+        if (toStock && x.qty > 0 && x.price > 0) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
       }
     }
     /* Chantiers : les achats affectés deviennent des charges du chantier (comptées dans la rentabilité) */
@@ -209,7 +223,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     const totAll = sel.reduce((a, x) => a + x.qty * x.price, 0);
     for (const [sid, xs] of Object.entries(bySite)) {
       const st = await db.get('sites', sid); if (!st) continue;
-      const date = inv.iso(inv.date) || today(), note = `Facture ${inv.number || ''} ${S.name || ''}`.trim();
+      const date = inv.iso(inv.date) || today(), note = `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim();
       const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }));
       const feeTotal = r.fees.reduce((a, y) => a + y.amount, 0);
       if (!doc && $('#spfees', out)?.checked && feeTotal && totAll > 0) {
@@ -222,7 +236,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     let kept = '';
     if (!doc && $('#spkeep', out)?.checked && file) {
       try {
-        const yr = (inv.iso(inv.date) || today()).slice(0, 4), nm = `${fl.safe(S.name || 'Fournisseur')}_${fl.safe(inv.number || 'facture')}.pdf`;
+        const yr = (inv.iso(inv.date) || today()).slice(0, 4), nm = `${fl.safe(S.name || 'Fournisseur')}_${DT && DT.key !== 'facture' ? fl.safe(DT.label) + '_' : ''}${fl.safe(inv.number || (DT?.key && DT.key !== 'facture' ? 'document' : 'facture'))}.pdf`;
         const att = await fl.upload(file, { path: ['GestPro', 'Achats fournisseurs', yr], kind: 'achats', name: nm });
         const targets = [];
         if (supplier) targets.push(['contacts', supplier]);

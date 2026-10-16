@@ -1,4 +1,4 @@
-// Lecture « à la main » d'une facture fournisseur : fonctions pures (testables hors navigateur).
+// Lecture « à la main » d'un document fournisseur (facture, bon de livraison, bon de commande, devis…) : fonctions pures (testables hors navigateur).
 // Entrée : pages = [[{x, y, w, h, s}, …], …] (texte positionné par pdf.js, y vers le bas = ligne de base) et sizes = [{w, h}, …] (taille des pages en points).
 // Une zone est un rectangle RELATIF {p, x0, y0, x1, y1} (valeurs de 0 à 1) : elle reste valable pour une autre facture du même fournisseur.
 import { mapUnit } from './supplier-parse.js';
@@ -9,6 +9,37 @@ const r4 = v => Math.round(v * 10000) / 10000;
 export const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 export const layoutKey = name => norm(name).replace(/ /g, '-').slice(0, 40);
 export const isoDate = d => (d ? d.split('/').reverse().join('-') : '');
+
+/* ---------- types de document ---------- */
+export const DOC_TYPES = [
+  { key: 'facture', label: 'Facture', re: /\b(?:facture|invoice)\b/ },
+  { key: 'avoir', label: 'Avoir', re: /\bavoir\b|note de credit/ },
+  { key: 'devis', label: 'Devis', re: /\bdevis\b|offre de prix|proposition commerciale/ },
+  { key: 'commande', label: 'Bon de commande', re: /bon de commande|confirmation de commande|accuse de reception de commande|commande fournisseur/ },
+  { key: 'livraison', label: 'Bon de livraison', re: /bon de livraison|bordereau de livraison|bon de reception|avis d expedition/ }
+];
+const TYPE_ORDER = ['avoir', 'livraison', 'commande', 'devis', 'facture']; // à taille égale, le premier gagne
+export const docType = key => { const t = DOC_TYPES.find(x => x.key === key); return t ? { key: t.key, label: t.label } : null; };
+/* Type de document d'après son titre : on cherche les mots-clés dans le haut de la 1re page, et c'est le plus GRAND texte qui l'emporte
+   (une facture peut citer « bon de livraison n° … » en petit sans devenir un bon de livraison). Renvoie {key,label} ou null. */
+export function detectDocType(pages, sizes) {
+  const H = sizes?.[0]?.h || 842;
+  let best = null;
+  for (const i of pages?.[0] || []) {
+    const t = norm(i.s); if (!t || i.y / H > 0.5) continue;
+    for (const d of DOC_TYPES) {
+      if (!d.re.test(t)) continue;
+      const h = i.h || 8, pr = TYPE_ORDER.indexOf(d.key);
+      if (!best || h > best.h + 0.5 || (Math.abs(h - best.h) <= 0.5 && pr < best.pr)) best = { key: d.key, h, pr };
+    }
+  }
+  return best ? docType(best.key) : null;
+}
+/* Type saisi par l'utilisateur : une valeur de la liste, ou un nom libre (« Relevé », « Reprise »…) */
+export function customType(label) {
+  const l = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  return l ? { key: 'x-' + layoutKey(l).slice(0, 24), label: l } : null;
+}
 
 const cx = i => i.x + (i.w || 0) / 2;
 const cy = i => i.y - (i.h || 8) / 2; // y = ligne de base : le texte est au-dessus
@@ -227,25 +258,33 @@ export function buildResult(pages, sizes, spec, values = {}) {
 }
 
 /* ---------- mémoire par fournisseur ---------- */
-export function makeLayout(spec, name) {
+export function makeLayout(spec, name, type) {
   const Z = spec.zones || {};
   const rect = Z['sup.name'] || Z['sup.block'] || null;
+  const ty = type?.key ? { key: String(type.key), label: String(type.label || type.key) } : null;
   return {
-    v: 1, name: String(name || '').trim(), key: layoutKey(name),
+    v: 2, name: String(name || '').trim(), key: layoutKey(name) + (ty ? '~' + ty.key : ''), type: ty,
     fp: { text: norm(name), rect: rect ? { p: rect.p, x0: r4(rect.x0), y0: r4(rect.y0), x1: r4(rect.x1), y1: r4(rect.y1) } : null },
     zones: Object.fromEntries(Object.entries(Z).map(([k, z]) => [k, { p: z.p, x0: r4(z.x0), y0: r4(z.y0), x1: r4(z.x1), y1: r4(z.y1) }])),
     table: spec.table || null
   };
 }
-/* Quelle mise en page mémorisée correspond à ce PDF ? (le nom du fournisseur doit se retrouver dans la zone mémorisée, sinon dans le haut de la 1re page) */
-export function matchLayout(pages, sizes, layouts) {
-  let best = null;
+/* Quelle mise en page mémorisée correspond à ce PDF ? Il faut le même fournisseur (son nom se retrouve dans la zone mémorisée, sinon dans le haut
+   de la 1re page) ET le même type de document. Sans type reconnu dans le PDF, on ne choisit que s'il n'y a qu'une seule possibilité.
+   Les anciennes mises en page sans type servent de repli. */
+export function matchLayout(pages, sizes, layouts, type = null) {
   const top = norm(zoneText(pages, sizes, { p: 0, x0: 0, y0: 0, x1: 1, y1: 0.4 }, ' '));
+  const pool = [];
   for (const L of layouts) {
     const t = L?.fp?.text; if (!t || t.length < 3 || !L.table) continue;
     const inRect = L.fp.rect ? norm(zoneText(pages, sizes, L.fp.rect, ' ')).includes(t) : false;
     const sc = inRect ? 2 : top.includes(t) ? 1 : 0;
-    if (sc && (!best || sc > best.sc || (sc === best.sc && t.length > best.len))) best = { L, sc, len: t.length };
+    if (sc) pool.push({ L, sc, len: t.length });
   }
+  let pick = type?.key ? pool.filter(x => x.L.type?.key === type.key) : [];
+  if (!pick.length) pick = pool.filter(x => !x.L.type?.key);
+  if (!pick.length && !type?.key) { const typed = pool.filter(x => x.L.type?.key); if (typed.length === 1) pick = typed; }
+  let best = null;
+  for (const x of pick) if (!best || x.sc > best.sc || (x.sc === best.sc && x.len > best.len)) best = x;
   return best ? best.L : null;
 }

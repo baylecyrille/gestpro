@@ -594,6 +594,7 @@ nav#nav a,nav#nav button{max-width:160px}
 .duo .item .t{white-space:nowrap}
 
 /* Lecture « à la main » d'une facture fournisseur (PDF affiché, zones entourées) */
+.mn-type{display:flex;flex-wrap:wrap;gap:0 12px;align-items:flex-end;margin:6px 0 2px}.mn-type .f{margin-bottom:4px;min-width:170px}
 .mn-top{position:sticky;top:-14px;z-index:6;background:var(--card);margin:0 -14px;padding:10px 14px 2px;border-bottom:1px solid var(--bd)}
 .mn-top p{margin:0 0 2px;font-size:13px}
 .mn-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
