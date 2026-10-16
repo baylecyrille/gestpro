@@ -187,6 +187,7 @@ export const TOPICS = {
         <p>La sélection est vidée dès que vous changez la recherche ou le filtre : vous ne classez jamais un produit que vous ne voyez pas.</p>`),
       S('Importer des produits ou une facture fournisseur', `<p><b>Importer</b> lit un fichier .csv ou .xlsx, vous laisse faire correspondre les colonnes et fusionne les désignations identiques en gardant le dernier prix.</p>
         <p><b>📄 Facture fournisseur (PDF)</b> lit les lignes d'une facture PDF, sur l'appareil, sans l'envoyer sur Internet. Pour chaque ligne, choisissez la destination (un chantier, la ligne compte alors comme charge, ou un emplacement de stock).</p>
+        <p><b>✋ Lire à la main</b> : si les lignes ne sont pas reconnues (ou si la lecture est fausse), le PDF s'affiche et vous entourez vous-même les zones : le <b>tableau des lignes</b>, le <b>fournisseur</b> (nom et adresse), le <b>n° de facture</b>, la <b>date</b>. Glissez un rectangle ou touchez un mot, puis vérifiez l'affectation des colonnes (désignation, référence, quantité, prix, montant) et les lignes lues. Cochez « Retenir cette mise en page » : les prochaines factures de ce fournisseur seront lues automatiquement. Seules les <b>positions</b> des zones sont gardées, jamais le contenu des factures.</p>
         <p class="warnnote">Vérifiez toujours le tableau de lecture avant de valider : la lecture d'un PDF peut se tromper sur une quantité ou un prix.</p>`)
     ]
   },
@@ -354,7 +355,7 @@ export const TOPICS = {
       S('Le scanner de codes-barres ne démarre pas', `<p>L'accès à la caméra est refusé, ou l'application est ouverte hors https. Autorisez la caméra dans le navigateur ; en attendant, saisissez le code à la main dans le bandeau du scanner.</p>`),
       S('L\'e-mail ne part pas', `<p>Le script Google n'est pas autorisé, ou la limite de 40 envois par jour est atteinte. Dans Réglages › E-mails, envoyez un e-mail de test ; sinon utilisez le partage du téléphone.</p>`),
       S('Deux documents ont le même numéro', `<p>Deux appareils ont émis un document au même instant, hors ligne. Corrigez le numéro de l'un des deux avant de l'envoyer ; l'application signale un numéro déjà utilisé à l'enregistrement.</p>`),
-      S('La lecture d\'une facture fournisseur est fausse', `<p>La mise en page du PDF est inhabituelle. Décochez les lignes à ne pas reprendre et corrigez les valeurs dans le tableau avant de valider.</p>`)
+      S('La lecture d\'une facture fournisseur est fausse', `<p>La mise en page du PDF est inhabituelle. Cliquez sur <b>✋ Lire à la main</b>, entourez le tableau des lignes et vérifiez les colonnes : la mise en page peut être retenue pour ce fournisseur (et oubliée depuis le même écran). Sinon, décochez les lignes à ne pas reprendre et corrigez les valeurs dans le tableau avant de valider.</p>`)
     ]
   }
 };

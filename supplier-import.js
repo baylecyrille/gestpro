@@ -2,6 +2,8 @@
 import * as db from './db.js';
 import { e, eur, num, today, cname, F, modal, closeModal, toast, refresh, $, $$ } from './util.js';
 import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
+import { matchLayout, buildResult } from './supplier-layout.js';
+import { openManual } from './supplier-manual.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
 import * as fl from './files.js';
 
@@ -19,16 +21,28 @@ function loadPdfJs() {
   return pdfReady;
 }
 
-export async function readPdf(file) {
+/* Texte positionné de toutes les pages (+ le document, pour afficher la page à l'écran). Rien n'est envoyé nulle part. */
+export async function loadPdf(file) {
   const lib = await loadPdfJs();
   const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const pages = [];
+  const pages = [], sizes = [];
   for (let n = 1; n <= doc.numPages; n++) {
-    const pg = await doc.getPage(n), h = pg.getViewport({ scale: 1 }).height, tc = await pg.getTextContent();
-    pages.push(tc.items.map(i => ({ x: i.transform[4], y: h - i.transform[5], w: i.width, s: i.str })));
+    const pg = await doc.getPage(n), vp = pg.getViewport({ scale: 1 }), h = vp.height, tc = await pg.getTextContent();
+    pages.push(tc.items.map(i => ({ x: i.transform[4], y: h - i.transform[5], w: i.width, h: i.height, s: i.str })));
+    sizes.push({ w: vp.width, h });
   }
+  return { doc, pages, sizes };
+}
+export async function readPdf(file) {
+  const { pages } = await loadPdf(file);
   return parseSupplierInvoice(pages);
 }
+
+/* Mises en page mémorisées par fournisseur (positions des zones uniquement : jamais le contenu des factures) */
+const LAY = 'suplay:';
+export const savedLayouts = async () => (await db.all('settings')).filter(x => String(x.id).startsWith(LAY) && x.value).map(x => x.value);
+const saveLayout = l => (l?.key ? db.put('settings', { id: LAY + l.key, value: l }) : null);
+const forgetLayout = l => (l?.key ? db.del('settings', LAY + l.key) : null);
 
 const digits = s => String(s || '').replace(/\D/g, '');
 
@@ -59,17 +73,38 @@ export async function supplierImportModal(opts = {}) {
       $('#spf', f).onchange = async ev => {
         const file = ev.target.files[0]; if (!file) return;
         const out = $('#spres', f); out.innerHTML = '<p class="muted">Lecture du PDF…</p>';
-        let r;
-        try { r = await readPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
-        if (!r.items.length) { out.innerHTML = '<p class="bad">Aucune ligne de produit reconnue dans ce PDF (PDF scanné en image ou mise en page inhabituelle). Rien n\'a été importé.</p>'; return; }
-        renderReview(f, out, r, products, locs, opts, sites, contacts, file);
+        let raw;
+        try { raw = await loadPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
+        const env = { f, out, products, locs, opts, sites, contacts, file, raw };
+        /* 1) mise en page mémorisée pour ce fournisseur, 2) lecture automatique, 3) sinon lecture « à la main » */
+        let r = null, used = null, note = '';
+        try {
+          const L = matchLayout(raw.pages, raw.sizes, await savedLayouts());
+          if (L) {
+            const rr = buildResult(raw.pages, raw.sizes, { zones: L.zones, table: L.table, name: L.name });
+            if (rr.items.length) { r = rr; used = L; } else note = `La mise en page mémorisée pour « ${e(L.name)} » ne donne aucune ligne sur cette facture : entourez à nouveau les zones.`;
+          }
+        } catch { /* mémoire illisible : on continue */ }
+        if (!r) { const a = parseSupplierInvoice(raw.pages); if (a.items.length) r = a; }
+        if (r) renderReview(f, out, r, products, locs, opts, sites, contacts, file, { env, used });
+        else startManual(env, null, note || 'Les lignes de produit n\'ont pas été reconnues automatiquement dans ce PDF. Indiquez où elles se trouvent : entourez les zones sur le document.', !!note);
       };
     }
   });
 }
 
+/* Lecture « à la main » : le PDF s'affiche, l'utilisateur entoure les zones, puis on revient à l'écran de contrôle habituel */
+function startManual(env, preset, note, noteBad = false) {
+  const { f, out, products, locs, opts, sites, contacts, file, raw } = env;
+  f.querySelector('footer .btn.primary').hidden = true;
+  openManual(out, raw, {
+    preset, note, noteBad, forgetLayout: preset ? forgetLayout : null, saveLayout,
+    onDone: res => renderReview(f, out, res, products, locs, opts, sites, contacts, file, { env, used: null })
+  });
+}
+
 const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = [], file = null) {
+function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts = [], file = null, ctx = null) {
   const doc = !!opts.onLines;
   const S = r.supplier, inv = r.invoice;
   const findP = it => products.find(p => it.ref && p.ref && p.ref.toLowerCase() === it.ref.toLowerCase()) || products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
@@ -93,6 +128,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   out.innerHTML = `
     <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b>${inv.number ? ` · facture ${e(inv.number)}` : ''}${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
       <span class="muted">${[S.address, [S.zip, S.city].filter(Boolean).join(' '), S.phone, S.email, S.siret && 'SIRET ' + S.siret].filter(Boolean).map(e).join(' · ')}</span></div>
+    ${ctx ? `<p class="muted" style="margin:4px 0">${ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » appliquée. ` : r.mode === 'manuel' ? 'Lignes lues d\'après les zones que vous avez entourées. ' : ''}<button type="button" class="btn sm" id="spman">✋ Lire à la main</button></p>` : ''}
     <p class="${r.sumOk === false ? 'bad' : 'muted'}">${r.items.length} ligne(s) lue(s) — total ${eur(r.sum)} HT${r.sumOk === true ? ' ✔ identique au total de la facture' : r.sumOk === false ? ` ⚠ la facture indique ${eur(r.totals.ht0)} : vérifiez les lignes` : ' (total de la facture non trouvé : vérifiez)'}${r.mode === 'texte' ? ' · lecture approximative, contrôlez chaque ligne' : ''}.
     ${r.fees.length ? `<br>Frais de la facture (jamais ajoutés au catalogue) : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
     ${rows.some(x => x.price === 0) ? '<br>Les lignes à 0 € (composants d\'un lot déjà facturé) sont décochées.' : ''}</p>
@@ -122,6 +158,8 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     if (ev.target.matches('[data-on]')) ev.target.closest('tr').style.opacity = ev.target.checked ? '' : '.55';
     upd();
   };
+  const man = $('#spman', out);
+  if (man) man.onclick = () => ctx.env.raw && startManual(ctx.env, ctx.used, ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » : modifiez les zones puis continuez.` : '');
   const ap = $('#spapply', out);
   if (ap) ap.onclick = () => $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=dest]', tr).value = $('#spsite', out).value; });
   upd();

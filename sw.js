@@ -1,7 +1,7 @@
-const CACHE = 'gestpro-v75';
+const CACHE = 'gestpro-v76';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
-  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './blocks.js', './importer.js', './layout.js', './lock.js', './files.js', './efact.js', './vat.js', './doccheck.js', './docmail.js', './docpdf.js', './facturx-pdf.js', './supplier-import.js', './supplier-parse.js', './facebook.js', './help.js',
+  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './blocks.js', './importer.js', './layout.js', './lock.js', './files.js', './efact.js', './vat.js', './doccheck.js', './docmail.js', './docpdf.js', './facturx-pdf.js', './supplier-import.js', './supplier-parse.js', './supplier-layout.js', './supplier-manual.js', './facebook.js', './help.js',
   './logo.png', './icon-192.png', './icon-512.png'
 ];
 

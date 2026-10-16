@@ -21,13 +21,22 @@ const MS_AUTH = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/';
 const MS_GRAPH = 'https://graph.microsoft.com/v1.0';
 const OD_PREFIX = 'od:'; // les identifiants de fichiers OneDrive sont préfixés : ils ne se confondent pas avec ceux de Google Drive
 
+// Explique les erreurs Microsoft les plus fréquentes lors de l'inscription de l'application
+function msHint_(d) {
+  d = String(d || '');
+  if (/AADSTS700016/.test(d)) return ' → L\'application Microsoft n\'accepte pas les comptes personnels : sur le portail (entra.microsoft.com), ouvrez l\'application GestPro › Authentification › Types de comptes pris en charge, choisissez « Comptes dans un annuaire d\'organisation et comptes Microsoft personnels » (ou « Comptes Microsoft personnels uniquement »), Enregistrer, puis relancez.';
+  if (/AADSTS7000218|client_assertion|client_secret/.test(d)) return ' → Sur le portail Microsoft, ouvrez l\'application GestPro › Authentification › Paramètres › « Autoriser les flux clients publics » : Oui › Enregistrer, puis relancez.';
+  if (/AADSTS70011|invalid_scope/.test(d)) return ' → Sur le portail Microsoft, ajoutez les autorisations déléguées Files.ReadWrite.AppFolder et offline_access (Autorisations d\'API › Microsoft Graph), puis relancez.';
+  return '';
+}
+
 function msId_() { const v = String(MS_CLIENT_ID || '').trim(); return /^COLLEZ/.test(v) ? '' : v; }
 
 // ---- Connexion (une seule fois, depuis l'éditeur) ----
 function onedriveConnecter() {
   if (!msId_()) throw new Error('Collez d\'abord l\'ID d\'application (MS_CLIENT_ID) en haut du fichier OneDrive.');
   const r = msPost_('devicecode', { client_id: msId_(), scope: MS_SCOPE });
-  if (!r.device_code) throw new Error('Microsoft a refusé la demande : ' + (r.error_description || r.error || 'réponse vide'));
+  if (!r.device_code) throw new Error('Microsoft a refusé la demande : ' + (r.error_description || r.error || 'réponse vide') + msHint_(r.error_description));
   PropertiesService.getScriptProperties().setProperty('MS_DEVICE', r.device_code);
   const txt = 'ÉTAPE 1 – Dans un navigateur, ouvrez ' + r.verification_uri + ' , saisissez le code  ' + r.user_code + '  et connectez-vous avec votre compte Microsoft (celui de Microsoft 365 Famille), puis acceptez l\'accès demandé (vous avez ' + Math.round((r.expires_in || 900) / 60) + ' minutes).\n' +
     'ÉTAPE 2 – Revenez ici, choisissez la fonction « onedriveTerminer » et cliquez ▶ Exécuter.';
@@ -42,7 +51,7 @@ function onedriveTerminer() {
   if (!r.refresh_token) {
     const txt = r.error === 'authorization_pending'
       ? 'La connexion Microsoft n\'est pas encore terminée : saisissez le code sur la page Microsoft, acceptez, puis relancez « onedriveTerminer ».'
-      : 'Connexion refusée par Microsoft (' + (r.error_description || r.error || 'réponse vide') + '). Relancez « onedriveConnecter ».';
+      : 'Connexion refusée par Microsoft (' + (r.error_description || r.error || 'réponse vide') + ')' + msHint_(r.error_description) + ' Relancez « onedriveConnecter ».';
     Logger.log(txt);
     return txt;
   }
