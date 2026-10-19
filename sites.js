@@ -4,6 +4,7 @@ import { e, eur, num, round2, dateFr, cname, today, F, addressAutocomplete, filt
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal } from './team.js';
 import { siteMargin } from './finance.js';
+import { doneBySite } from './hours.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
 import * as fl from './files.js';
@@ -205,6 +206,11 @@ export async function renderSite(el, id) {
     await db.put('sites', site); toast(closed ? 'Chantier rouvert' : 'Chantier terminé'); refresh();
   };
   $('#del', el).onclick = async () => {
+    /* Un chantier qui a déjà des documents, des achats, du matériel sorti ou des heures ne se supprime pas : on perdrait la trace des coûts et des factures (audit A5) */
+    const hasHours = times.some(x => x.kind === 'site' && x.siteId === site.id) || Object.values(doneBySite(site.id, tasks, times)).some(h => h > 0);
+    const used = [mine.length && `${mine.length} document${mine.length > 1 ? 's' : ''} (devis, factures, avoirs)`, (site.charges || []).length && `${site.charges.length} charge${site.charges.length > 1 ? 's' : ''} ou achat${site.charges.length > 1 ? 's' : ''}`,
+      moves.some(m => m.siteId === site.id) && 'du matériel sorti du stock', hasHours && 'des heures saisies'].filter(Boolean);
+    if (used.length) { alert(`Ce chantier ne peut pas être supprimé : il comporte ${used.join(', ')}.\n\nTerminez-le (« ✓ Terminer le chantier ») ou passez-le en « Perdu » via « Modifier » : il sort des chantiers en cours sans rien perdre.`); return; }
     if (!confirm('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien) ; le planning de ce chantier est supprimé.')) return;
     for (const d of mine) { d.siteId = ''; await db.put('documents', d); }
     for (const t of tasks.filter(x => x.siteId === site.id)) await db.del('tasks', t.id);

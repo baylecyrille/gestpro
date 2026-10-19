@@ -1,9 +1,9 @@
 // Devis & factures : liste, éditeur, règlements/acomptes, transformation devis → facture, impression PDF.
 import * as db from './db.js';
-import { getS, logoSrc } from './defaults.js';
+import { getS, logoSrc, seqOf, yearTok, lastNumber } from './defaults.js';
 import * as efact from './efact.js';
 import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt, docMargin, refOn } from './vat.js';
-import { checkDoc } from './doccheck.js';
+import { checkDoc, checkMentions } from './doccheck.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
@@ -20,6 +20,8 @@ const QS = { draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused:
 const IS = { draft: 'Brouillon', pending: 'À payer', sent: 'Envoyée', partial: 'Réglée partiellement', paid: 'Réglée', overdue: 'En retard / impayée', dispute: 'En litige / suspendue', cancelled: 'Annulée' };
 /* Facture à prendre en compte dans les chiffres (ni brouillon ni annulée) */
 export const counts = d => d.status !== 'draft' && d.status !== 'cancelled';
+/* Devis dont la date de validité est dépassée sans réponse du client (brouillon ou envoyé) */
+export const quoteExpired = (d, ref = today()) => d.type === 'quote' && ['draft', 'sent'].includes(d.status) && !!d.validUntil && d.validUntil < ref;
 /* État réel d'une facture : règlements + date limite (en retard = échéance dépassée et reste à payer) */
 export function invState(doc, payments) {
   normStatus(doc);
@@ -149,21 +151,20 @@ async function bumpSite(d) {
   if (st && st.status === 'new') { st.status = 'signed'; await db.put('sites', st); }
 }
 
+/* Numéro suivant d'une série. Le préfixe peut contenir {AAAA} : le compteur repart alors à 1 au changement d'année (voir defaults.js). */
 async function nextNumber(type) {
   if (sheets.configured() && navigator.onLine) await sheets.sync().catch(() => {}); // récupère les compteurs des autres appareils
   const S = await getS();
-  const [pre, key] = type === 'quote' ? [S.quotePrefix, 'quoteNext'] : type === 'credit' ? [S.creditPrefix || 'AV-2026-', 'creditNext'] : [S.invPrefix, 'invNext'];
-  if (type === 'credit' && !S.creditNext) S.creditNext = 1;
-  const n = pre + String(S[key]).padStart(S.pad, '0');
-  S[key] = Number(S[key]) + 1;
+  const q = seqOf(S, type, +today().slice(0, 4));
+  S[q.key] = q.n + 1; if (yearTok(q.pre)) S[q.yk] = q.yr;
   await db.saveSettings(S);
-  return n;
+  return q.number;
 }
 
 export async function newDoc(type, extra = {}) {
   const S = await getS();
   const due = type === 'invoice' ? addDays(today(), num(S.payDays ?? 30)) : '';
-  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: '', dueDate: due, siteId: '', ...extra };
+  return { type, number: '', date: today(), clientId: '', siteRef: '', siteAddr: '', intro: S.intro, note: S.note, tva: S.tva, terms: S.terms, lines: [], status: 'draft', validUntil: type === 'quote' ? addDays(today(), num(S.validity ?? 30)) : '', dueDate: due, siteId: '', ...extra };
 }
 
 /* ---------- Liste ---------- */
@@ -198,7 +199,7 @@ export async function renderDocs(el, tab = 'quote') {
       const t = totals(d);
       let badge;
       if (d.type === 'invoice' || d.type === 'credit') badge = invBadge(d, payments);
-      else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>`;
+      else badge = `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${QS[d.status] || ''}</span>${quoteExpired(d) ? `<span class="chip warn" title="Date de validité dépassée : ${dateFr(d.validUntil)}">Expiré</span>` : ''}`;
       return `<a class="item${lock.lockCls(LK, d.id)}" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(sans numéro)')} · ${e(cname(C[d.clientId]) || 'Sans client')}</div>
         <div class="s">${dateFr(d.date)}${d.deposit ? ' · <b>Acompte</b>' : ''}${depsOf(d).length ? ' · après acomptes' : ''}${d.siteRef ? ' · ' + e(d.siteRef) : ''}</div></div><div class="r"><b>${d.type === 'credit' ? '− ' : ''}${eur(t.ttc)}</b><div>${lock.lockTag(LK, d.id)}${badge}</div></div></a>`;
     }).join('') || `<div class="empty">${nh ? 'Aucun devis en cours.' : `Aucun ${tab === 'quote' ? 'devis' : tab === 'credit' ? 'avoir' : 'facture'} pour le moment.`}</div>`;
@@ -344,7 +345,7 @@ export async function renderDoc(el, id, arg) {
       <div id="depbox">${depBoxHtml()}</div>
       <div class="totals" id="totbox">${totalsHtml(t)}</div><div id="redhint">${redHintHtml()}</div></div>
     ${isC ? '' : F('Conditions de règlement', 'terms', cur.terms, { type: 'textarea', rows: 5 })}
-    ${!isNew ? (isC ? creditUseHtml(t) : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
+    ${!isNew ? (isC ? creditUseHtml(t) : isQ && cur.status === 'invoiced' && !payments.length && invoicesOfQuote().length ? invoicedPayHtml() : canPay ? paymentsHtml(t, payments) : '') : `<p class="muted">Enregistrez le document pour gérer ${isC ? 'son utilisation' : 'les règlements'}.</p>`}
     ${!isNew && isQ ? depositsCardHtml() : ''}
     ${!isNew ? '<div id="dfiles"></div>' : ''}
     ${!isNew ? actionsHtml() : ''}${stickyHtml(t)}</div>
@@ -362,10 +363,14 @@ export async function renderDoc(el, id, arg) {
       <div class="row"><span class="muted">Encaisser :</span><button class="btn primary" data-m="especes">💶 Espèces</button><button class="btn primary" data-m="cheque">🧾 Chèque</button><button class="btn primary" data-m="cb">💳 Carte bleue</button><button class="btn" id="addpay">Autre…</button></div>
       <div class="row"><button class="btn" data-pct="30">Acompte 30 %</button><button class="btn" data-pct="40">40 %</button><button class="btn" id="rest">Solde</button></div></div>`;
   };
+  /* Factures finales issues du devis courant */
+  const invoicesOfQuote = () => allDocs.filter(d => d.type === 'invoice' && !d.deposit && (d.id === cur.invoiceId || d.fromQuote === cur.id)).sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
+  const invLinks = () => invoicesOfQuote().map(d => `<a href="#/doc/${d.id}">${e(d.number || '(brouillon)')}</a>`).join(', ');
+  /* Devis facturé : les règlements s'enregistrent sur la facture, plus sur le devis */
+  const invoicedPayHtml = () => `<div class="card" id="payredir"><h3 style="margin-top:0">Règlements &amp; acomptes</h3><p style="margin:0">Ce devis est facturé : enregistrez les règlements sur la facture ${invLinks()}.</p></div>`;
   /* Devis facturé : rappel que la facture ne suit plus les modifications du devis */
   const invoicedBannerHtml = () => {
-    const invs = allDocs.filter(d => d.type === 'invoice' && !d.deposit && (d.id === cur.invoiceId || d.fromQuote === cur.id)).sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
-    const links = invs.map(d => `<a href="#/doc/${d.id}">${e(d.number || '(brouillon)')}</a>`).join(', ');
+    const links = invLinks();
     return `<div class="invbanner" id="invbanner"><b>Ce devis est facturé</b>${links ? ` (facture n° ${links})` : ''} : vos modifications ne changeront pas la facture. Pour repartir de ses lignes, utilisez « Dupliquer ».</div>`;
   };
   /* Devis : factures d'acompte déjà émises et reste à facturer */
@@ -387,6 +392,21 @@ export async function renderDoc(el, id, arg) {
       <div class="row"><button class="btn primary" id="deduct">Déduire d'une facture</button><button class="btn primary" id="refund">Rembourser le client</button></div></div>`;
   };
   const creditsOfInv = allDocs.filter(d => d.type === 'credit' && d.fromInvoice === cur.id);
+  /* Suppression : seuls un devis et un brouillon (jamais émis : sans numéro, ou resté au statut « Brouillon ») se suppriment ; une facture émise s'annule par un avoir (numérotation continue, voir l'audit A1).
+     Un avoir émis ne se supprime que s'il est le tout dernier de sa série, sans remboursement ni envoi : son numéro est alors réutilisé. */
+  const creditedTtc = isC ? 0 : round2(creditsOfInv.filter(c => c.status !== 'draft').reduce((a, c) => a + totals(c).ttc, 0));
+  const fullyCredited = !isQ && !isC && !!cur.number && totals(cur).ttc > 0.005 && creditedTtc >= totals(cur).ttc - 0.005;
+  const freeDelete = isQ || !cur.number || cur.status === 'draft';
+  const creditLast = isC && !!cur.number && cur.number === lastNumber(S, 'credit', +today().slice(0, 4)) && !allPay.some(p => p.creditId === cur.id && p.kind === 'remboursement') && !(cur.mails || []).length;
+  const canDelete = freeDelete || creditLast;
+  const deleteHtml = () => {
+    if (canDelete) return '<button class="btn danger" id="delete">Supprimer</button>';
+    if (isC) return '';
+    if (fullyCredited) return '<span class="chip">Annulée par un avoir</span>';
+    if (cur.status === 'cancelled') return '<span class="chip">Annulée</span>';
+    return creditedTtc > 0.005 ? '' : '<button class="btn danger" id="cancelinv" title="Crée aussitôt un avoir total qui annule cette facture et rouvre son devis">Annuler par un avoir</button>';
+  };
+  const lockedNote = () => canDelete ? '' : `<p class="muted" style="margin-bottom:0">${isC ? 'Un avoir émis ne se supprime plus (numérotation continue).' : 'Une facture émise ne se supprime pas (numérotation continue) : elle s\'annule par un avoir.'}</p>`;
   const actionsHtml = () => `<div class="card"><div class="row">
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}${cur.deposit && cur.fromQuote && DN[cur.fromQuote] ? `<a class="btn" href="#/doc/${cur.fromQuote}">Voir le devis</a>` : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
@@ -394,7 +414,7 @@ export async function renderDoc(el, id, arg) {
       ${!isC && cur.number ? '<button class="btn" id="dupbtn" title="Crée un nouveau brouillon à partir de ce document">⧉ Dupliquer</button>' : ''}
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
-      <button class="btn danger" id="delete">Supprimer</button></div>${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
+      ${deleteHtml()}</div>${lockedNote()}${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
   /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, acomptes déjà facturés, options à part */
   /* Marge du document (information interne, jamais imprimée) */
@@ -469,6 +489,16 @@ export async function renderDoc(el, id, arg) {
     cur.tva = num(cur.tva);
   };
 
+  /* Devis accepté sans chantier : propose de le créer (client, adresse et devis déjà remplis) */
+  const status0 = cur.status;
+  const offerSite = () => {
+    if (!isQ || cur.siteId || !cur.clientId) return;
+    const cl = curClient(), pre = { clientId: cur.clientId, name: cur.siteRef || cname(cl) || '', address: cur.siteAddr || [cl.address, [cl.zip, cl.city].filter(Boolean).join(' ')].filter(Boolean).join('\n'), quoteId: cur.id };
+    modal('Créer le chantier ?', `<p style="margin-top:0">Le devis <b>${e(cur.number)}</b> est accepté mais n'est rattaché à aucun chantier.</p><p style="margin-bottom:0">Créer le chantier maintenant ? Le client, l'adresse et ce devis seront déjà remplis ; vous pourrez ajuster le nom et les dates.</p>`,
+      () => { setTimeout(() => import('./sites.js').then(m => m.newSiteModal(pre, () => { toast('Chantier créé et rattaché au devis'); refresh(); })), 0); },
+      { submitLabel: 'Créer le chantier' });
+  };
+
   const save = async () => {
     readHeader();
     const res = runChecks(), errs = res.filter(r => r.level === 'err');
@@ -486,6 +516,7 @@ export async function renderDoc(el, id, arg) {
     if (!isQ && !isC) await syncInvStatus(cur.id);
     await bumpSite(cur);
     if (isNew) { toast('Enregistré'); location.hash = '#/doc/' + cur.id; } else { toast('Enregistré'); refresh(); }
+    if (isQ && cur.status === 'accepted' && status0 !== 'accepted') offerSite();
     return true;
   };
 
@@ -711,10 +742,17 @@ export async function renderDoc(el, id, arg) {
     $('#save', el).onclick = save;
     updAux();
     if (isNew) return;
-    $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); printDoc(cur); };
+    /* Mentions légales manquantes : prévenir une fois par document, avant impression ou envoi */
+    const mentionsOk = async () => {
+      const miss = checkMentions(S, { client: curClient() }).filter(r => !(cur.ack || []).includes(r.code));
+      if (!miss.length) return true;
+      if (!confirm('Mentions légales manquantes sur ce document :\n\n' + miss.map(r => '• ' + r.msg).join('\n') + '\n\nContinuer quand même ?')) return false;
+      cur.ack = [...new Set([...(cur.ack || []), ...miss.map(r => r.code)])]; return true;
+    };
+    $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); if (!(await mentionsOk())) return; await db.put('documents', cur); printDoc(cur); };
     $('#dupbtn', el)?.addEventListener('click', async () => { readHeader(); pruneBlocks(cur); await db.put('documents', cur); go('#/doc/new/copy:' + cur.id); });
     $('#mailbtn', el)?.addEventListener('click', async () => {
-      readHeader(); pruneBlocks(cur); await db.put('documents', cur);
+      readHeader(); pruneBlocks(cur); if (!(await mentionsOk())) return; await db.put('documents', cur);
       (await import('./docmail.js')).mailModal({ doc: cur, S, client: curClient(), payments, DN, onSent: () => refresh() });
     });
     $('#efact', el)?.addEventListener('click', async () => {
@@ -741,12 +779,40 @@ export async function renderDoc(el, id, arg) {
         }
       });
     });
-    $('#delete', el).onclick = async () => {
-      const ded = allDocs.filter(d => d.id !== cur.id && depsOf(d).some(x => x.id === cur.id));
-      if (!confirm('Supprimer ce document et ses règlements ?' + (ded.length ? `\n\nAttention : cette facture d'acompte est déduite de la facture ${ded.map(d => d.number || '(brouillon)').join(', ')} : mettez à jour ses acomptes ensuite.` : ''))) return;
-      if (isC) { for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); } }
-      else for (const p of payments) await db.del('payments', p.id);
+    const delBtn = $('#delete', el);
+    if (delBtn) delBtn.onclick = async () => {
+      if (!canDelete) return toast(isC ? 'Un avoir émis ne se supprime plus' : 'Une facture émise ne se supprime pas : annulez-la par un avoir'); // garde-fou (le bouton n'existe pas dans ce cas)
+      const msg = creditLast
+        ? `Supprimer l'avoir ${cur.number} ? Son numéro sera réutilisé, et ses déductions sur des factures seront annulées.`
+        : 'Supprimer ce document et ses règlements ?';
+      if (!confirm(msg)) return;
+      if (isC) {
+        for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); }
+        if (creditLast) { // le numéro redevient libre ; un avoir d'annulation remet la facture et le devis dans leur état d'avant
+          const S2 = await getS(), q = seqOf(S2, 'credit', +today().slice(0, 4));
+          if (cur.number === lastNumber(S2, 'credit', +today().slice(0, 4))) { S2[q.key] = q.n - 1; if (yearTok(q.pre)) S2[q.yk] = q.yr; await db.saveSettings(S2); }
+          const rq = cur.reopens && await db.get('documents', cur.reopens.quote);
+          if (rq && rq.status === 'accepted' && !rq.invoiceId) { rq.status = 'invoiced'; rq.invoiceId = cur.reopens.invoice; await db.put('documents', rq); }
+        }
+      } else for (const p of payments) await db.del('payments', p.id);
       await db.del('documents', cur.id); go('#/docs/' + cur.type);
+    };
+    /* Annuler une facture émise : avoir total créé en un clic, déduit de la facture, qui rouvre le devis d'origine */
+    const cancelBtn = $('#cancelinv', el);
+    if (cancelBtn) cancelBtn.onclick = async () => {
+      const t0 = totals(cur), paid0 = paidOf(payments, cur.id), q0 = cur.fromQuote && !cur.deposit ? DN[cur.fromQuote] : null;
+      const reopen = q0 && q0.status === 'invoiced' && !allDocs.some(d => d.id !== cur.id && d.type === 'invoice' && !d.deposit && d.fromQuote === q0.id && counts(d));
+      if (!confirm(`Annuler la facture ${cur.number} (${eur(t0.ttc)} TTC) par un avoir total ?\n\nUn avoir est créé et numéroté tout de suite : c'est définitif.${reopen ? `\nLe devis ${q0.number} repasse en « Accepté » et pourra être refacturé.` : ''}${paid0 > 0.005 ? `\n${eur(paid0)} déjà encaissé : cette somme reste à rembourser au client ou à déduire de la prochaine facture.` : ''}${cur.stockOut ? '\nLa sortie de stock déjà faite pour cette facture n\'est pas annulée.' : ''}`)) return;
+      cancelBtn.disabled = true;
+      const cr = await newDoc('credit', { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', intro: 'Avoir sur facture ' + cur.number, note: 'Annulation de la facture ' + cur.number, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number,
+        lines: JSON.parse(JSON.stringify(cur.lines)), ...(cur.blocks ? { blocks: copyBlocks(cur.blocks) } : {}), ...(cur.disc ? { disc: { ...cur.disc } } : {}), ...(depsOf(cur).length ? { deps: JSON.parse(JSON.stringify(cur.deps)) } : {}), ...(cur.opts ? { opts: { ...cur.opts } } : {}) });
+      ensureBlocks(cr);
+      if (reopen) cr.reopens = { quote: q0.id, invoice: cur.id };
+      cr.number = await nextNumber('credit'); await db.put('documents', cr);
+      const rest = Math.max(0, round2(t0.ttc - paid0)), ded = Math.min(totals(cr).ttc, rest); // la part non encaissée de la facture est soldée par l'avoir
+      if (ded > 0.005) { await db.put('payments', { docId: cur.id, creditId: cr.id, amount: ded, date: today(), method: 'avoir', kind: 'avoir', note: 'Avoir ' + cr.number }); await syncInvStatus(cur.id); }
+      if (reopen) { const q = await db.get('documents', q0.id); q.status = 'accepted'; delete q.invoiceId; await db.put('documents', q); }
+      toast(`Facture annulée : avoir ${cr.number} créé`); go('#/doc/' + cr.id);
     };
     const payModal = (p, amount = '', method = 'virement') => {
       const isNewP = !p; p = p || { docId: cur.id, date: today(), method, kind: amount !== '' && round2(amount) >= round2(totals(cur).ttc - paidOf(payments, cur.id)) - 0.005 ? 'solde' : 'acompte' };
@@ -763,7 +829,7 @@ export async function renderDoc(el, id, arg) {
     const left = Math.max(0, round2(t.ttc - paid));
     if (isC) return bindCredit(t);
     $('#tocredit', el)?.addEventListener('click', () => creditModal());
-    if (canPay) {
+    if (canPay && $('#addpay', el)) {
       $('#addpay', el).onclick = () => payModal();
       $$('[data-m]', el).forEach(b => b.onclick = () => payModal(null, left || '', b.dataset.m));
       $$('[data-pct]', el).forEach(b => b.onclick = () => payModal(null, round2(t.ttc * +b.dataset.pct / 100)));
@@ -772,7 +838,7 @@ export async function renderDoc(el, id, arg) {
     }
     if (isQ) {
       $('#todep', el)?.addEventListener('click', depositModal);
-      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); });
+      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); });
       if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
@@ -806,6 +872,14 @@ export const ZONE_TOKENS = '{numero} {date} {ville} {validite} {siteRef} {siteAd
 /* Mention remplaçant l'attestation de TVA réduite (loi de finances 2025) : le client certifie les conditions sur le devis ou la facture. */
 export const TVA_RED_TXT = `**Attestation du client – TVA à taux réduit ({taux})**
 Le client atteste que les travaux portent sur un local à usage d'habitation achevé depuis plus de deux ans, qu'ils ne concourent pas à la production d'un immeuble neuf (pas de construction nouvelle, de surélévation ni d'agrandissement de plus de 10 % de la surface de plancher), et que les travaux et équipements facturés à ce taux remplissent les conditions d'application du taux réduit de TVA. À défaut, le client est redevable du complément de TVA.`;
+const oneLine = t => String(t || '').replace(/\s*\n\s*/g, ', ').trim();
+/* Mentions légales imprimées en pied de page : n° de TVA, RCS / RM, médiateur de la consommation (seulement ce qui est renseigné dans Réglages) */
+export function legalText(S) {
+  const rcs = String(S.rcs || '').trim(), rm = String(S.rm || '').trim(), tva = String(S.tvaNum || '').trim();
+  const l1 = [tva ? 'N° TVA intracommunautaire : ' + tva : '', rcs ? (/r\.?\s?c\.?\s?s/i.test(rcs) ? rcs : 'RCS ' + rcs) : '', rm ? (/\br\.?\s?m\b/i.test(rm) ? rm : 'RM ' + rm) : ''].filter(Boolean).join(' – ');
+  const l2 = String(S.mediator || '').trim() ? 'Médiateur de la consommation : ' + oneLine(S.mediator) : '';
+  return [l1, l2].filter(Boolean).join('\n');
+}
 export function zoneDefs(doc, S, c = {}, base = false) {
   const isQ = doc.type === 'quote', isC = doc.type === 'credit', ty = isQ ? 'q' : isC ? 'c' : 'i';
   const addr = [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
@@ -843,6 +917,8 @@ export function zoneDefs(doc, S, c = {}, base = false) {
     ['payLbl', 'Titre du bloc règlement', '**Règlement**', 1, 'qi'],
     ['sigLeft', 'Signature (gauche)', isQ ? '**Bon pour accord – date et signature du client**' : '**Signature Entrepreneur**', 2, 'qic'],
     ['bank', 'Coordonnées bancaires (droite)', S.iban && !isC ? '**__Vous pouvez régler cette facture par virement__**\n**{company}**\n**IBAN** : {iban}\n**Code BIC** : {bic}' : '', 4, 'qi'],
+    ['delay', 'Délai d\'exécution (devis)', S.delay ? '**Délai d\'exécution :** ' + oneLine(S.delay) : '', 1, 'q'],
+    ['legal', 'Mentions légales (pied de page)', legalText(S), 2, 'qic'],
   ];
   const so = (!base && S.zones && S.zones[ty]) || {}; // réglages généraux (Réglages > Mise en page des documents)
   const dep = t => (doc.deposit && !/acompte/i.test(t) ? t.replace(/facture/i, m => m + ' d\'acompte') : t); // facture d'acompte : le titre le dit

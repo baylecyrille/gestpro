@@ -2,6 +2,7 @@
 import { num, round2, today } from './util.js';
 import { doneBySite } from './hours.js';
 import { totals } from './docs.js';
+import { buyRate } from './vat.js';
 import { addDays } from './team.js';
 
 export const PERIODS = [['d30', '30 derniers jours'], ['m3', '3 derniers mois'], ['y1', '1 an (12 derniers mois)'], ['custom', 'Date à date…'], ['month', 'Ce mois'], ['quarter', 'Ce trimestre'], ['year', 'Cette année'], ['lastyear', 'Année dernière']];
@@ -24,7 +25,7 @@ const sign = d => (d.type === 'credit' ? -1 : 1);
 /* Valeur d'achat d'une réception de stock (HT, TVA) */
 export function purchaseOf(mv, P) {
   const ht = round2(num(mv.qty) * num(mv.unit));
-  const rate = mv.tva ?? P[mv.productId]?.tva ?? 20; // taux de la facture fournisseur si connu, sinon celui du produit
+  const rate = mv.tva ?? buyRate(P[mv.productId]); // taux de la facture fournisseur si connu, sinon la TVA d'achat de la fiche produit (20 % par défaut)
   return { ht, tva: round2(ht * num(rate) / 100) };
 }
 

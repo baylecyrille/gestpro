@@ -225,7 +225,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         let p = live.find(q => x.ref && q.ref && q.ref.toLowerCase() === x.ref.toLowerCase()) || live.find(q => q.name.toLowerCase() === x.name.toLowerCase());
         const isNew = !p;
         if (!p) {
-          p = { stock: {}, tva: 10, kind: 'sale', name: x.name, ref: x.ref, unit: x.unit, buy: x.price, sell: Math.round(x.price * (1 + mg / 100) * 100) / 100 };
+          p = { stock: {}, tva: 10, tvaBuy: x.tva >= 0 ? x.tva : 20, kind: 'sale', name: x.name, ref: x.ref, unit: x.unit, buy: x.price, sell: Math.round(x.price * (1 + mg / 100) * 100) / 100 };
           if (supplier) p.supplierId = supplier.id;
         } else if (cat) {
           if (x.price > 0) p.buy = x.price;

@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import { e, eur, num, dateFr, today, F, filterBar, bindFilters, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, compressImage, $, $$ } from './util.js';
 import { markPhotosDirty } from './sheets.js';
+import { buyRate } from './vat.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -119,7 +120,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
 
 export function productModal(p, locs, contacts, products, preset = {}, onDone = null) {
   const isNew = !p;
-  p = p || { stock: {}, tva: 10, unit: 'u', ...preset };
+  p = p || { stock: {}, tva: 10, tvaBuy: 20, unit: 'u', ...preset };
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   const suppliers = [['', '—'], ...contacts.filter(c => c.kind === 'supplier').map(c => [c.id, c.name])];
   const stockHtml = isNew
@@ -135,7 +136,8 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: UNITS.map(u => [u, u]) })}
     ${F('Prix d\'achat HT', 'buy', p.buy ?? '', { type: 'number', step: '0.01' })}
     ${F('Prix de vente HT', 'sell', p.sell ?? '', { type: 'number', step: '0.01' })}
-    ${F('TVA', 'tva', p.tva ?? 10, { type: 'select', options: TVAS })}
+    ${F('TVA de vente', 'tva', p.tva ?? 10, { type: 'select', options: TVAS })}
+    ${F('TVA d\'achat (déductible)', 'tvaBuy', buyRate(p), { type: 'select', options: TVAS })}
     ${F('Seuil d\'alerte stock', 'min', p.min ?? '', { type: 'number', step: 'any' })}
     ${F('Fournisseur', 'supplierId', p.supplierId || '', { type: 'select', options: suppliers, cls: 'full' })}
     ${F('Note', 'note', p.note, { type: 'textarea', rows: 2, cls: 'full' })}
@@ -148,7 +150,7 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
   modal(isNew ? 'Nouveau produit' : 'Produit', body, async o => {
     const dup = o.barcode && products.find(x => x.barcode === o.barcode && x.id !== p.id);
     if (dup) throw new Error(`Ce code-barres est déjà utilisé par « ${dup.name} ».`);
-    Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, kind: o.kind || 'sale', unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), min: num(o.min), supplierId: o.supplierId, note: o.note });
+    Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, kind: o.kind || 'sale', unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), tvaBuy: num(o.tvaBuy ?? 20), min: num(o.min), supplierId: o.supplierId, note: o.note });
     const saved = await db.put('products', p);
     if (newPhoto !== undefined) {
       const v = Date.now();
@@ -238,7 +240,7 @@ export async function moveModal(products, locs, preset = {}) {
     if (o.type === 'transfer' && o.from === o.to) throw new Error('Emplacements identiques');
     if ((o.type === 'out' || o.type === 'transfer') && (p.stock?.[o.from] || 0) < qty) throw new Error(`Stock insuffisant à cet emplacement (${p.stock?.[o.from] || 0}).`);
     const mv = { type: o.type, qty, from: o.from, to: o.to, note: o.note };
-    if (o.type === 'in') Object.assign(mv, { purchase: true, unit: o.unit === '' ? num(p.buy) : num(o.unit) }); // réception = achat
+    if (o.type === 'in') Object.assign(mv, { purchase: true, unit: o.unit === '' ? num(p.buy) : num(o.unit), tva: buyRate(p) }); // réception = achat, avec la TVA d'achat de la fiche
     if (o.type === 'out') Object.assign(mv, { unit: num(p.buy), siteId: o.siteId || '' });
     await recordMove(p, mv);
     toast('Mouvement enregistré'); refresh();
@@ -482,7 +484,7 @@ export function importModal(products) {
           const list = build(); const locs = await db.all('locations'); let add = 0, upd2 = 0;
           for (const o of list) {
             const ex = products.find(p => p.name.toLowerCase() === o.name.toLowerCase());
-            const p = ex || { stock: {}, tva: 10, unit: 'u' };
+            const p = ex || { stock: {}, tva: 10, tvaBuy: 20, unit: 'u' };
             Object.assign(p, { name: o.name }, o.ref && { ref: o.ref }, o.barcode && { barcode: o.barcode }, o.unit && { unit: o.unit }, o.category && { category: o.category }, o.sell && { sell: o.sell }, o.buy && { buy: o.buy });
             const saved = await db.put('products', p);
             if (o.qty > 0 && !ex) await recordMove(saved, { type: 'in', to: locs[0].id, qty: o.qty, note: 'Import' });
@@ -540,7 +542,7 @@ export async function receptionModal(products, locs) {
       if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
       for (const l of ok) {
         const p = products.find(x => x.id === l.pid);
-        await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, unit: l.price === '' || l.price === undefined ? num(p.buy) : num(l.price) });
+        await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, tva: buyRate(p), unit: l.price === '' || l.price === undefined ? num(p.buy) : num(l.price) });
       }
       toast(`${ok.length} produit(s) reçu(s)`); refresh();
     }, { wide: true, submitLabel: 'Valider la réception', onOpen: f => lineEditor(f, products, lines, { price: true }) });

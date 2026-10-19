@@ -5,6 +5,8 @@ const num = v => parseFloat(String(v ?? '').replace(/\s/g, '').replace(',', '.')
 export const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
 
 export const RATES = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
+/* TVA d'achat d'une fiche produit (déductible sur les achats) : celle de la fiche, sinon 20 % — à ne pas confondre avec sa TVA de vente (p.tva) */
+export const buyRate = p => (p && p.tvaBuy !== undefined && p.tvaBuy !== null && p.tvaBuy !== '' ? num(p.tvaBuy) : 20);
 export const hasOwnRate = l => !!l && l.tva !== undefined && l.tva !== null && l.tva !== '';
 /* Taux d'une ligne : le sien, sinon celui du document */
 export const rateOf = (l, def) => (hasOwnRate(l) ? num(l.tva) : num(def));

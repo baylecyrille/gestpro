@@ -67,3 +67,14 @@ export function checkDoc(doc, { client = {}, others = [], today = new Date().toI
 
   return R;
 }
+
+/* Mentions légales de l'entreprise absentes des Réglages, avant impression ou envoi : [{ code, msg }].
+   S = réglages, client = fiche du client (un client sans société ni SIRET est un particulier : le médiateur de la consommation est alors obligatoire). */
+export function checkMentions(S = {}, { client = {} } = {}) {
+  const R = [], has = v => !!String(v ?? '').trim();
+  if (!has(S.tvaNum)) R.push({ code: 'm_tva', msg: 'N° de TVA intracommunautaire non renseigné (Réglages › Entreprise).' });
+  if (!has(S.rcs) && !has(S.rm)) R.push({ code: 'm_rcs', msg: 'Ni le RCS ni le répertoire des métiers (RM) ne sont renseignés (Réglages › Entreprise).' });
+  const particulier = !has(client.company) && !has(client.siret);
+  if (particulier && !has(S.mediator)) R.push({ code: 'm_med', msg: 'Médiateur de la consommation non renseigné : mention obligatoire pour un client particulier (Réglages › Entreprise).' });
+  return R;
+}

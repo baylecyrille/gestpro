@@ -16,28 +16,38 @@ export const BLOCKS = {
   client: ['Bloc client', 'h', 'qic'], chantier: ['Réf. chantier', 'h', 'qic'], title: ['Titre du document', 'h', 'qic'], intro: ['Intitulé', 'h', 'qic'],
   dateLine: ['Ville / date', 'h', 'qic'], note: ['Remarque', 'h', 'qi'],
   methods: ['Moyens de paiement', 'f', 'q'], pay: ['Conditions de règlement', 'f', 'qi'], creditTxt: ['Mention de l\'avoir', 'f', 'c'],
-  sigLeft: ['Signature', 'f', 'qic'], bank: ['Coordonnées bancaires', 'f', 'qi']
+  sigLeft: ['Signature', 'f', 'qic'], bank: ['Coordonnées bancaires', 'f', 'qi'],
+  delay: ['Délai d\'exécution', 'f', 'q'], legal: ['Mentions légales (TVA, RCS, médiateur)', 'f', 'qic']
 };
 /* Clé de texte (zones) modifiable d'un bloc ; les autres blocs (logo, intitulé, remarque) viennent du document */
-const ZK = { coName: 'coName', coInfo: 'coInfo', certs: 'certs', client: 'client', chantier: 'chantier', title: 'title', dateLine: 'dateLine', methods: 'methods', pay: 'payLbl', creditTxt: 'creditTxt', sigLeft: 'sigLeft', bank: 'bank' };
+const ZK = { coName: 'coName', coInfo: 'coInfo', certs: 'certs', client: 'client', chantier: 'chantier', title: 'title', dateLine: 'dateLine', methods: 'methods', pay: 'payLbl', creditTxt: 'creditTxt', sigLeft: 'sigLeft', bank: 'bank', delay: 'delay', legal: 'legal' };
 export const TBL_ZONES = [['thRef', 'Colonne Réf. (si activée)'], ['thDes', 'Colonne 1'], ['thQty', 'Colonne 2'], ['thUnit', 'Colonne 3'], ['thPu', 'Colonne 4'], ['thHt', 'Dernière colonne (prix HT)'], ['thTva', 'Colonne TVA (si plusieurs taux)'], ['lblGross', 'Libellé « total HT avant remise »'], ['lblDisc', 'Libellé « remise »'], ['lblHt', 'Libellé total HT'], ['lblTva', 'Libellé TVA'], ['lblTtc', 'Libellé total TTC'], ['lblOpt', 'Libellé « options non comprises »'], ['lblPaid', 'Libellé « déjà réglé »'], ['lblLeft', 'Libellé « reste à payer »']];
 const TBL_LY = [['fs', 'Taille du texte (px)', 9, 18, 0.5, 12.5], ['pad', 'Hauteur des lignes (px)', 1, 16, 1, 5], ['cQty', 'Largeur Qté (%)', 4, 30, 1, ''], ['cUnit', 'Largeur Unité (%)', 4, 30, 1, ''], ['cPu', 'Largeur Prix unit. (%)', 6, 30, 1, ''], ['cHt', 'Largeur Prix H.T (%)', 6, 30, 1, '']];
 
 const I = (k, x, y, w, h, z) => ({ id: k, k, z, x, y, w, h });
+const LEGAL = y => ({ ...I('legal', 0, y, 186, 12, 'f'), st: { fs: 10, al: 'center' } }); // mentions légales : petite police, centrées, en bas de page
 export function defaultTpl(type) {
   const c = type === 'credit', q = type === 'quote';
   const head = [I('logo', 0, 0, 52, 24, 'h'), I('coName', 0, 26, 90, 12, 'h'), I('coInfo', 0, 39, 90, 38, 'h'), I('certs', 96, 0, 90, 12, 'h'), I('client', 96, 14, 90, 24, 'h'), I('chantier', 96, 44, 90, 22, 'h'),
     I('title', 0, 79, 186, 9, 'h'), I('intro', 0, 90, 112, 9, 'h'), I('dateLine', 114, 90, 72, 9, 'h')];
   if (!c) head.push(I('note', 0, 100, 186, 10, 'h'));
-  const foot = c ? [I('creditTxt', 0, 0, 186, 14, 'f'), I('sigLeft', 0, 18, 90, 22, 'f')]
-    : [...(q ? [I('methods', 0, 0, 186, 9, 'f')] : []), I('pay', 0, q ? 10 : 0, 186, 28, 'f'), I('sigLeft', 0, q ? 42 : 32, 90, 22, 'f'), I('bank', 96, q ? 42 : 32, 90, 20, 'f')];
-  return { v: 2, headH: 112, footH: c ? 42 : q ? 66 : 56, items: [...head, ...foot] };
+  const foot = c ? [I('creditTxt', 0, 0, 186, 14, 'f'), I('sigLeft', 0, 18, 90, 22, 'f'), LEGAL(44)]
+    : q ? [I('methods', 0, 0, 186, 9, 'f'), I('pay', 0, 10, 186, 28, 'f'), I('delay', 0, 39, 186, 6, 'f'), I('sigLeft', 0, 48, 90, 22, 'f'), I('bank', 96, 48, 90, 20, 'f'), LEGAL(72)]
+    : [I('pay', 0, 0, 186, 28, 'f'), I('sigLeft', 0, 32, 90, 22, 'f'), I('bank', 96, 32, 90, 20, 'f'), LEGAL(58)];
+  return { v: 3, headH: 112, footH: c ? 56 : q ? 86 : 72, items: [...head, ...foot] };
 }
 export function normTpl(t, type) {
   const d = defaultTpl(type);
   if (!t || !Array.isArray(t.items)) return d;
   const items = t.items.filter(it => it && it.k && (it.z === 'h' || it.z === 'f')).map(it => ({ ...it, id: it.id || it.k, x: n0(it.x), y: n0(it.y), w: Math.max(3, n0(it.w) || 20), h: Math.max(3, n0(it.h) || 8) }));
-  return { v: 2, headH: n0(t.headH) || d.headH, footH: n0(t.footH) || d.footH, items };
+  let footH = n0(t.footH) || d.footH;
+  if ((t.v || 2) < 3) { // modèles enregistrés avant la v3 : ajoute, sous leur pied de page, le délai d'exécution (devis) et les mentions légales
+    let y = footH;
+    if (type === 'quote' && !items.some(i => i.k === 'delay')) { items.push(I('delay', 0, y, 186, 6, 'f')); y += 7; }
+    if (!items.some(i => i.k === 'legal')) { items.push(LEGAL(y)); y += 13; }
+    footH = y;
+  }
+  return { v: 3, headH: n0(t.headH) || d.headH, footH, items };
 }
 export async function loadTplStore() { return (await db.get('settings', 'tpl'))?.value || {}; }
 export async function saveTplStore(v) { await db.put('settings', { id: 'tpl', value: v }); }

@@ -125,7 +125,7 @@ export const TOPICS = {
         ['− Main-d\'œuvre', 'Heures saisies par les salariés × coût horaire de chaque membre'],
         ['= Marge', 'Montant et pourcentage du facturé']])}
         <p>Pour que la marge soit juste : rattachez chaque devis et facture au bon chantier, sortez le matériel en indiquant le chantier, saisissez les heures réalisées et le coût horaire de chaque membre.</p>`),
-      S('Supprimer un chantier', `<p>La suppression est définitive et demande confirmation. Les devis et factures sont conservés mais perdent leur lien avec le chantier, et son planning est supprimé. En cas de doute, passez plutôt le chantier en « Perdu » ou « Terminé ».</p>`)
+      S('Supprimer un chantier', `<p>La suppression est définitive et demande confirmation. Un chantier qui a déjà des devis, factures ou avoirs, des charges ou achats, du matériel sorti du stock ou des heures saisies ne peut pas être supprimé : terminez-le (« ✓ Terminer le chantier ») ou passez-le en « Perdu ». Seul un chantier vide, avec au plus un planning, se supprime ; son planning est alors supprimé.</p>`)
     ]
   },
 
@@ -182,6 +182,7 @@ export const TOPICS = {
         '<b>Catégorie</b> : Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance ou Ouvrage. Elle sert au menu « Produit » des devis et factures (pour classer d\'un coup tous les produits existants, voir « Classer les produits existants »)',
         '<b>Type d\'article</b> : « Vendu aux clients », ou « Usage interne » (encre, papier, consommables) : un article interne n\'est jamais proposé dans les devis',
         '<b>Prix d\'achat HT</b> : sert aux achats, à la TVA déductible et à la marge. <b>Prix de vente HT</b> : repris dans les devis',
+        '<b>TVA de vente</b> : reprise sur la ligne du devis quand elle diffère du taux du document (la colonne TVA de l\'éditeur doit être affichée). <b>TVA d\'achat</b> (20 % par défaut) : celle que vous déduisez sur vos achats ; elle sert aux réceptions de stock et aux calculs « Achats &amp; TVA » quand la facture fournisseur n\'indique pas son propre taux',
         '<b>Seuil d\'alerte stock</b> : en dessous, le produit apparaît dans « À réapprovisionner » sur l\'accueil',
         '<b>Quantité initiale et emplacement</b> : à la création seulement ; enregistre un premier mouvement « Stock initial »',
         'Un code-barres ne peut servir qu\'à un seul produit'])}
@@ -246,7 +247,7 @@ export const TOPICS = {
     title: 'Éditeur de devis / facture / avoir', icon: '✍', ok: canDocs,
     intro: `Le devis, la facture et l'avoir se saisissent dans le même éditeur, avec les mêmes lignes.`,
     sections: [
-      S('Remplir un devis', `<p><b>En-tête</b> (replié en une ligne de résumé) : client, chantier (le « + » en crée un), date, validité, adresse du chantier, intitulé, remarque, statut et TVA par défaut. Le numéro se donne tout seul à l'enregistrement.</p>
+      S('Remplir un devis', `<p><b>En-tête</b> (replié en une ligne de résumé) : client, chantier (le « + » en crée un), date, validité, adresse du chantier, intitulé, remarque, statut et TVA par défaut. Le numéro se donne tout seul à l'enregistrement. La date de validité est remplie à la création (date + délai de validité des Réglages, 30 jours) ; un devis envoyé dont la validité est dépassée porte la pastille « Expiré » dans la liste et est compté dans l'accueil.</p>
         <p><b>Lignes</b> :</p>${ul([
         '<b>📦 Produit ▾</b> : choisissez d\'abord une catégorie (Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance, Ouvrage). Une ligne s\'ouvre : tapez les premières lettres de la désignation, la liste ne montre que les produits de cette catégorie. Entrée ou un toucher reprend le prix, l\'unité et la référence de la fiche. « Tout le catalogue » élargit la recherche ; « Tout le catalogue / scanner… » ouvre le sélecteur complet avec le scan',
         '<b>✏️ Ligne libre</b> : une prestation saisie à la main',
@@ -272,14 +273,14 @@ export const TOPICS = {
       S('Statuts d\'un devis', table(['Statut', 'Signification'], [
         ['Brouillon', 'En préparation'],
         ['Envoyé', 'Remis au client ; automatique à l\'envoi par e-mail. Compté dans « Devis en attente » pendant 90 jours'],
-        ['Accepté', 'Le client a dit oui (« Marquer accepté ») : le chantier lié passe de Nouveau à Signé'],
+        ['Accepté', 'Le client a dit oui (« Marquer accepté ») : le chantier lié passe de Nouveau à Signé. Sans chantier, l\'application propose de le créer (client, adresse et devis déjà remplis)'],
         ['Refusé', 'Le client a dit non'],
         ['Facturé', 'Le devis a été transformé en facture']])),
       S('Du devis à la facture', `${ul([
         '<b>Transformer en facture</b> : crée la facture (numérotée), reprend lignes et TVA (sauf lignes en option), rattache les règlements déjà saisis et passe le devis en « Facturé ». Modifier ensuite le devis ne change pas la facture ; pour repartir de ses lignes, utilisez « ⧉ Dupliquer ».',
         '<b>Facture d\'acompte</b> : facture une partie du devis, en %, en montant TTC ou HT, avec un aperçu en direct. Le total des acomptes ne peut pas dépasser le devis.',
         '<b>Marquer accepté</b> : change le statut sans rien facturer.'])}
-        <p>Le bloc <b>Règlements &amp; acomptes</b> d'un devis enregistre ce que le client a déjà versé ou un acompte de 30 % ou 40 %. Quand la facture finale est créée, les acomptes valables sont déduits taux par taux ; si un acompte change ensuite, l'éditeur propose « Mettre à jour les acomptes ».</p>`),
+        <p>Le bloc <b>Règlements &amp; acomptes</b> d'un devis enregistre ce que le client a déjà versé ou un acompte de 30 % ou 40 %. Quand la facture finale est créée, les acomptes valables sont déduits taux par taux ; si un acompte change ensuite, l'éditeur propose « Mettre à jour les acomptes ». Une fois le devis facturé, ce bloc renvoie vers la facture : les règlements s'enregistrent désormais sur la facture.</p>`),
       S('Factures et règlements', `<p>Une facture a en plus une date limite de règlement et des conditions de règlement.</p>${table(['Statut', 'Signification'], [
         ['Brouillon', 'Non émise'],
         ['À payer / Envoyée', 'Émise, en attente ; « Envoyée » après un envoi par e-mail'],
@@ -288,6 +289,7 @@ export const TOPICS = {
         ['En litige / suspendue', 'À choisir à la main'],
         ['Annulée', 'Sans effet ; une facture d\'acompte annulée par un avoir total n\'est plus déduite']])}
         <p>Pour encaisser, utilisez <b>Règlements &amp; acomptes</b> : un bouton par mode (espèces, chèque, carte bleue), « Autre… » pour un virement ou un montant libre, « Solde » pour le reste dû. Pour un chèque, notez le numéro et la banque. <b>Déduire du stock</b> sort les produits de la facture ; « Stock déjà déduit » évite le doublon.</p>`),
+      S('Annuler une facture émise', `<p>Une facture émise (numérotée) ne se supprime plus : la numérotation doit rester continue. Pour l'annuler, touchez <b>Annuler par un avoir</b> sur la facture : un avoir total est créé et numéroté aussitôt, il solde ce qui reste à payer, et le devis d'origine repasse en « Accepté » pour pouvoir être refacturé. Les sommes déjà encaissées restent à rembourser au client (« Rembourser le client » sur l'avoir) ou à déduire de la prochaine facture. Seul un brouillon (sans numéro, ou resté au statut « Brouillon ») se supprime ; une facture passée en « Annulée » à la main reste conservée. Un avoir se supprime seulement s'il est le dernier de sa série, sans remboursement ni envoi par e-mail : son numéro est alors réutilisé.</p>`),
       S('Les avoirs', `<p>Un avoir corrige une facture émise. Sur la facture, touchez <b>Créer un avoir</b> : <b>Avoir total</b> (toutes les lignes reprises) ou <b>Avoir partiel</b> (une ligne « Remise / geste commercial » dont vous saisissez le montant), avec le motif. Il est créé et numéroté tout de suite, au statut « Émis ». Sur sa fiche :</p>${ul([
         '<b>Déduire d\'une facture</b> : diminue le reste à payer d\'une facture du même client',
         '<b>Rembourser le client</b> : enregistrez montant, date et mode de remboursement'])}
@@ -296,7 +298,7 @@ export const TOPICS = {
         '<b>✉ Envoyer par e-mail</b> (document numéroté) : joint le PDF ou le Factur-X, depuis votre compte Google. Limite de 40 envois par jour. Texte par défaut dans Réglages › E-mails',
         '<b>🧾 Facture électronique</b> : vérifie les mentions obligatoires (SIREN du client, nature de l\'opération, TVA sur les débits, adresse de livraison) puis exporte un Factur-X ou le XML seul. Le dépôt sur la plateforme agréée n\'est pas automatique',
         '<b>⧉ Dupliquer</b> : nouveau brouillon sans numéro, sans règlements et sans lien avec l\'original',
-        '<b>Supprimer</b> : efface le document et ses règlements ; pour une facture émise, préférez « Annulée » ou un avoir'])),
+        '<b>Supprimer</b> : efface un devis ou un brouillon et ses règlements ; une facture émise s\'annule par un avoir (voir « Annuler une facture émise »)'])),
       S('TVA à taux réduit (5,5 % et 10 %)', `<p>Quand un document contient des travaux à taux réduit, l'éditeur affiche un encadré : l'attestation papier n'existe plus, le client certifie les conditions par une mention imprimée sur le devis (« Bon pour accord ») et la facture. Son texte se modifie dans « Mise en page – zones ». Conservez devis, factures et photos des travaux 5 ans, et faites valider le texte par votre cabinet comptable.</p>`)
     ]
   },
@@ -322,8 +324,9 @@ export const TOPICS = {
     intro: `Réglages est réservé à l'administrateur. Contrôlez en priorité l'IBAN, le BIC et le SIRET : ils figurent sur toutes les factures.`,
     sections: [
       S('Les cartes', table(['Carte', 'Rôle'], [
-        ['Entreprise', 'Raison sociale, adresse, SIRET, TVA, assurance, IBAN, BIC, logo : imprimés sur les documents'],
-        ['Ventes', 'Préfixes et prochains numéros, délai de règlement, textes par défaut, nature d\'opération, clôture automatique des chantiers'],
+        ['Entreprise', 'Raison sociale, adresse, SIRET, assurance, IBAN, BIC, logo : imprimés sur les documents'],
+        ['Mentions légales', 'N° de TVA intracommunautaire, RCS, répertoire des métiers, médiateur de la consommation, délai d\'exécution des devis : imprimés en pied de page (seulement ce qui est renseigné). Un avertissement s\'affiche avant d\'imprimer ou d\'envoyer un document s\'il en manque une'],
+        ['Ventes', 'Préfixes et prochains numéros (avec <code>{AAAA}</code> l\'année se met toute seule et la numérotation repart à 1 chaque 1er janvier), délai de règlement, textes par défaut, nature d\'opération, clôture automatique des chantiers'],
         ['E-mails', 'Objet et message par défaut, avec un bouton d\'essai'],
         ['Couleurs et mise en page', 'Couleurs des lignes, mise en page commune des documents'],
         ['Accès des membres', 'État de la protection par code PIN, avec bouton pour la désactiver'],
@@ -398,7 +401,7 @@ export async function currentTopic(hash = location.hash) {
 async function docType(id) { try { return (await db.get('documents', id))?.type || ''; } catch { return ''; } }
 
 /* Section ouverte au départ selon le type de document */
-const DOC_OPEN = { quote: 0, invoice: 5, credit: 6 };
+const DOC_OPEN = { quote: 0, invoice: 5, credit: 7 };
 
 /* ---------- Fenêtre d'aide ---------- */
 export function helpModal(id = 'start', o = {}) {

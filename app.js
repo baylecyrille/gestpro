@@ -1,9 +1,9 @@
 // Point d'entrée : routeur, tableau de bord, contacts (clients / fournisseurs), réglages, sauvegarde.
 import * as db from './db.js';
-import { DEFAULTS, getS, logoSrc } from './defaults.js';
+import { DEFAULTS, getS, logoSrc, seqOf, yearTok, normNumbering } from './defaults.js';
 import { e, eur, num, dateFr, today, F, modal, toast, tabs, refresh, downloadFile, readFileText, compressImage, scan, savedCamera, resetCamera, cname, addressAutocomplete, filterBar, bindFilters, CIVS, splitCiv, bindColors, colorField, $, $$ } from './util.js';
 import { renderStock, ensureDefaultLocation, total } from './stock.js';
-import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, counts } from './docs.js';
+import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, counts, quoteExpired } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
 import { renderPlanning, covers, habState } from './team.js';
@@ -124,6 +124,7 @@ async function renderDashboard(el) {
   const unpaidPerSum = unpaidPer.reduce((a, x) => a + x.left, 0);
   const recent = new Date(Date.parse(today()) - 90 * 864e5).toISOString().slice(0, 10); // « en attente » = envoyés depuis moins de 90 jours
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent' && (d.date || '') >= recent);
+  const nExpired = quotesPending.filter(d => quoteExpired(d)).length; // date de validité dépassée
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const SI = Object.fromEntries(sites.map(x => [x.id, x]));
@@ -207,7 +208,7 @@ async function renderDashboard(el) {
     ${lateHtml}
     ${startCard}
     <h3>En un coup d'œil</h3><div class="grid">
-      <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC · 90 derniers jours</small></a>
+      <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC · 90 derniers jours${nExpired ? ` · dont ${nExpired} expiré${nExpired > 1 ? 's' : ''}` : ''}</small></a>
       <a class="kpi" href="#/sites"><small>Chantiers ouverts</small><b>${sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).length}</b></a>
       <a class="kpi ${low.length ? 'warn' : ''}" href="#/stock/products"><small>Stock bas / épuisé</small><b>${low.length}</b><small>valeur stock ${eur(stockValue)}</small></a>
       <a class="kpi ${toPost.length ? 'warn' : ''}" href="#/facebook/calendar"><small>Publications à faire</small><b>${toPost.length}</b></a></div>`;
@@ -223,7 +224,7 @@ let installEvt;
 window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); installEvt = ev; });
 
 async function renderSettings(el) {
-  const S = await getS();
+  const S = await getS(), nowY = +today().slice(0, 4);
   el.innerHTML = `<h2>Réglages</h2><form id="sf" class="card"><div class="cols">
     <h3 class="full">Entreprise (en-tête des documents)</h3>
     ${F('Nom de l\'application', 'appName', S.appName, { cls: 'full' })}
@@ -234,15 +235,21 @@ async function renderSettings(el) {
     ${F('Forme juridique / capital', 'legal', S.legal)}${F('SIRET', 'siret', S.siret)}
     ${F('N° RGE', 'rge', S.rge)}${F('Assurance (n° contrat)', 'insurance', S.insurance)}
     ${F('IBAN', 'iban', S.iban)}${F('BIC', 'bic', S.bic)}
-    ${F('N° TVA intracommunautaire (sinon calculé d\'après le SIRET)', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
+    ${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
     <label class="f full"><span><input type="checkbox" name="vatDebits" ${S.vatDebits ? 'checked' : ''}> Option pour le paiement de la TVA sur les débits (mention imprimée sur les factures)</span></label>
+    <h3 class="full">Mentions légales (imprimées en pied de page des documents)</h3>
+    ${F('N° TVA intracommunautaire', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('RCS', 'rcs', S.rcs, { ph: 'ex : 511 277 287 R.C.S. Limoges' })}
+    ${F('Répertoire des métiers (RM)', 'rm', S.rm, { ph: 'si l\'entreprise y est inscrite' })}${F('Délai d\'exécution par défaut des devis', 'delay', S.delay, { ph: 'ex : 6 semaines après acceptation' })}
+    ${F('Médiateur de la consommation (nom, adresse, site)', 'mediator', S.mediator, { type: 'textarea', rows: 2, cls: 'full', ph: 'Mention obligatoire pour les clients particuliers' })}
+    <p class="muted full">Seules les mentions renseignées sont imprimées (le SIRET, la forme juridique, le capital, l'assurance et le RGE le sont déjà en en-tête). Un avertissement s'affiche avant l'impression ou l'envoi d'un document s'il en manque une.</p>
     <label class="f full"><span>Logo (PNG, JPG, WebP ou SVG – qualité conservée et partagé entre vos appareils ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
     <div class="full"><img id="logoprev" src="${logoSrc(S)}" alt="" style="max-height:70px;max-width:100%"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
     <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
     <h3 class="full">Ventes (devis, factures, avoirs)</h3>
-    ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', S.quoteNext, { type: 'number' })}
-    ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', S.invNext, { type: 'number' })}
-    ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', S.creditNext, { type: 'number' })}
+    ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', seqOf(S, 'quote', nowY).n, { type: 'number' })}
+    ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', seqOf(S, 'invoice', nowY).n, { type: 'number' })}
+    ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', seqOf(S, 'credit', nowY).n, { type: 'number' })}
+    <p class="muted full" id="seqprev">Prochains numéros : <b>${e(seqOf(S, 'quote', nowY).number)}</b> · <b>${e(seqOf(S, 'invoice', nowY).number)}</b> · <b>${e(seqOf(S, 'credit', nowY).number)}</b>. <code>{AAAA}</code> dans un préfixe met l'année en cours (<code>{AA}</code> : deux chiffres) ; la numérotation repart alors à 1 chaque 1er janvier, sans rien changer ici.</p>
     <label class="f full"><span><input type="checkbox" name="autoCloseSites" ${S.autoCloseSites !== false ? 'checked' : ''}> Terminer automatiquement un chantier quand tout est facturé et réglé</span></label>
     ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Taille des photos envoyées (Drive / OneDrive)', 'photoPx', S.photoPx || 2560, { type: 'select', options: [['1600', 'Standard (1600 px, léger)'], ['2560', 'Haute (2560 px, conseillé)'], ['3600', 'Très haute (3600 px)']] })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
@@ -375,7 +382,9 @@ async function renderSettings(el) {
     if ((logo || '') !== (S.logo || '')) { // le logo vit dans sa propre feuille (onglet Photos) : il est synchronisé à part, sans limite de cellule
       logoV = Date.now(); await db.put('photos', { id: 'logo', data: logo || '', v: logoV }); sheets.markPhotosDirty();
     }
-    await db.saveSettings({ ...S, ...o, logo, logoV }); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
+    const nowY2 = +today().slice(0, 4); // année passée : le compteur affiché (déjà remis à 1) appartient à l'année en cours
+    for (const [pk, yk] of [['quotePrefix', 'quoteYear'], ['invPrefix', 'invYear'], ['creditPrefix', 'creditYear']]) if (yearTok(o[pk]) && nowY2 > (S[yk] ?? nowY2)) o[yk] = nowY2;
+    await db.saveSettings(normNumbering({ ...S, ...o, logo, logoV })); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
@@ -491,8 +500,34 @@ async function migrateCiv() {
   localStorage.setItem('gp_civmig', '1');
 }
 
+/* Une seule fois (maj58) : reprend dans les réglages existants le n° de TVA et le RCS de l'entreprise (s'ils sont vides) et corrige « pénalités de 10 % par mois » en « par an »
+   (réglage par défaut et brouillons seulement : un document déjà émis ou envoyé n'est jamais modifié). Drapeau local, comme migrateCiv.
+   Avec Google Sheets, on n'écrit qu'après une synchronisation réussie : un appareil resté en retard ne doit pas écraser les réglages (compteurs de numéros…) ou brouillons plus récents d'un autre. */
+async function migrate58() {
+  try { if (localStorage.getItem('gp_mig58')) return; } catch { return; }
+  const rec = await db.get('settings', 'main');
+  if (!rec) { if (!sheets.configured()) localStorage.setItem('gp_mig58', '1'); return; } // réglages pas encore reçus : on attend
+  const OLD = /(pénalités de retard de 10\s?%) par mois/, fix = t => String(t || '').replace(OLD, '$1 par an'), empty = v => !String(v || '').trim();
+  const needs = async () => { const S = await getS(); return empty(S.tvaNum) || empty(S.rcs) || OLD.test(S.terms || '') || (await db.all('documents')).some(d => d.status === 'draft' && OLD.test(d.terms || '')); };
+  if (!(await needs())) { localStorage.setItem('gp_mig58', '1'); return; }
+  if (sheets.configured()) {
+    if (!navigator.onLine) return;
+    let r; try { r = await Promise.race([sheets.sync(), new Promise(res => setTimeout(() => res(null), 8000))]); } catch { return; }
+    if (!r || r.busy || r.skipped || r.error) return; // synchronisation pas faite : nouvel essai au prochain affichage
+  }
+  const S = await getS(), o = {};
+  if (empty(S.tvaNum)) o.tvaNum = DEFAULTS.tvaNum;
+  if (empty(S.rcs)) o.rcs = DEFAULTS.rcs;
+  if (OLD.test(S.terms || '')) o.terms = fix(S.terms);
+  if (Object.keys(o).length) await db.saveSettings({ ...S, ...o });
+  const upd = (await db.all('documents')).filter(d => d.status === 'draft' && OLD.test(d.terms || '')).map(d => ({ ...d, terms: fix(d.terms) }));
+  if (upd.length) await db.putMany('documents', upd);
+  localStorage.setItem('gp_mig58', '1');
+}
+
 async function route() {
   await migrateCiv().catch(() => {});
+  await migrate58().catch(() => {});
   const { active, user } = await auth.load();
   document.body.classList.toggle('locked', active && !user);
   if (active && !user) { $('#user').hidden = true; return showLogin(); }

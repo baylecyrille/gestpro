@@ -395,7 +395,9 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     sg = { row, el, all: false, free: !b.cat, items: [], on: -1 };
     sgDraw(true);
   };
-  /* Choix d'un produit dans la liste : reprend désignation, unité, prix, référence et prix d'achat de la fiche */
+  /* TVA de vente de la fiche produit à reprendre sur la ligne : seulement si elle diffère de celle du document et si la colonne TVA est affichée (aucun taux caché) */
+  const saleRate = p => V().tva !== false && p && p.tva !== undefined && p.tva !== null && p.tva !== '' && num(p.tva) !== num(d.tva);
+  /* Choix d'un produit dans la liste : reprend désignation, unité, prix, référence, prix d'achat et TVA de vente de la fiche */
   const sgPick = pid => {
     if (!sg) return; const row = sg.row, b = d.blocks[idx(row.dataset.id)], p = (catalog || []).find(x => x.id === pid); if (!b || !p) return;
     const fresh = b.pid !== p.id, setv = (k, v) => { const el = $(`[data-k=${k}]`, row); if (el) { if (el.classList.contains('dz')) el.textContent = v; else el.value = v; } };
@@ -405,6 +407,8 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
       if (p.unit) { b.unit = p.unit; setv('unit', p.unit); }
       if (String(p.ref ?? '').trim()) b.ref = p.ref; else delete b.ref; setv('ref', b.ref ?? '');
       if (num(p.buy) > 0) b.pa = p.buy; else delete b.pa; setv('pa', b.pa ?? '');
+      if (saleRate(p)) b.tva = String(p.tva); else delete b.tva; setv('tva', b.tva ?? ''); // TVA de vente de la fiche, seulement si elle diffère du taux du document et que la TVA par ligne est visible
+      $('[data-k=tva]', row)?.classList.toggle('inh', !hasOwnRate(b));
     }
     $('[data-t]', row).innerHTML = totHtml(b);
     sgClose(); change(); loadMeta(); paintMeta(); focusField(b.id, 'qty');
@@ -501,7 +505,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   pmenu.onclick = ev => {
     const it = ev.target.closest('[data-cat]'); if (!it) return; menuClose(); readHeader();
     const cat = it.dataset.cat;
-    if (cat === '*') return pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, ...(CAT_NAMES.includes(p.category) ? { cat: p.category } : {}), desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}) }); }, { sale: true });
+    if (cat === '*') return pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, ...(CAT_NAMES.includes(p.category) ? { cat: p.category } : {}), desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}), ...(saleRate(p) ? { tva: String(p.tva) } : {}) }); }, { sale: true });
     const nl = add({ type: 'line', cat, pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
     focusField(nl.id, 'desig');
   };
