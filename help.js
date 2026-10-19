@@ -122,7 +122,7 @@ export const TOPICS = {
         ['Facturé HT', 'Factures du chantier, nettes d\'avoirs ; sinon le marché signé HT (marge « prévisionnelle »)'],
         ['− Matières', 'Sorties de stock rattachées au chantier'],
         ['− Charges', 'Le total des charges saisies'],
-        ['− Main-d\'œuvre', 'Heures réalisées au planning × coût horaire de chaque membre'],
+        ['− Main-d\'œuvre', 'Heures saisies par les salariés × coût horaire de chaque membre'],
         ['= Marge', 'Montant et pourcentage du facturé']])}
         <p>Pour que la marge soit juste : rattachez chaque devis et facture au bon chantier, sortez le matériel en indiquant le chantier, saisissez les heures réalisées et le coût horaire de chaque membre.</p>`),
       S('Supprimer un chantier', `<p>La suppression est définitive et demande confirmation. Les devis et factures sont conservés mais perdent leur lien avec le chantier, et son planning est supprimé. En cas de doute, passez plutôt le chantier en « Perdu » ou « Terminé ».</p>`)
@@ -133,7 +133,8 @@ export const TOPICS = {
     title: 'Planning', icon: '📅', ok: () => auth.can('planning'),
     intro: `Le planning répond à : qui travaille sur quel chantier, quel jour, combien d'heures. Les heures réalisées alimentent la marge des chantiers.`,
     sections: [
-      S('Vue Semaine', `<p>Les membres sont en lignes, les jours en colonnes, avec le total d'heures prévues de la semaine. Chaque affectation est une pastille à la couleur du chantier, avec ses heures. « ‹ › » changent de semaine, « Aujourd'hui » revient à la semaine en cours. Touchez une pastille pour modifier l'affectation ou saisir les heures réalisées.</p>`),
+      S('Vue Semaine', `<p>Les membres sont en lignes, les jours en colonnes, avec, pour chacun, les heures saisies et les heures prévues de la semaine. Chaque affectation est une pastille à la couleur du chantier, avec ses heures prévues ; sous elle, la pastille verte « ⏱ 7 h » donne les heures réellement faites ce jour-là. « ‹ › » changent de semaine, « Aujourd'hui » revient à la semaine en cours. Touchez une pastille de chantier pour modifier l'affectation, la pastille ⏱ pour saisir ou corriger les heures du jour.</p>
+        <p>Un compagnon voit sa semaine sous forme de liste, un jour par ligne : « à saisir » signale un jour passé ou en cours pas encore rempli.</p>`),
       S('Vue Mois', `<p>Un calendrier du mois : pour chaque jour, les chantiers en cours et les initiales des membres. Touchez un jour pour ouvrir la semaine correspondante.</p>`),
       S('Affecter un membre à un chantier', `<p>Touchez <b>+ Affecter</b>, ou une case vide du planning (membre et jour déjà choisis).</p>${ul([
         'Choisissez le chantier (seuls les chantiers non terminés et non perdus sont proposés)',
@@ -141,8 +142,10 @@ export const TOPICS = {
         'Indiquez les dates Du / Au et les heures prévues par jour ; le week-end n\'est compté que si « Inclure samedi et dimanche » est coché',
         'Au besoin, une tâche et un intervenant extérieur (architecte, maître d\'œuvre)'])}
         <p>Au-delà de 8 heures un même jour (plusieurs chantiers cumulés), l'enregistrement a lieu mais un avertissement s'affiche et la case porte un ⚠.</p>`),
-      S('Saisir les heures réalisées', `<p>Une affectation contient les heures <b>prévues</b> par jour et, séparément, un total d'heures <b>réalisées</b>. C'est ce total qui compte pour la main-d'œuvre : tant qu'il est vide, le coût de main-d'œuvre est nul et la marge paraît trop belle.</p>
-        <p>Un compagnon saisit ses heures en touchant sa pastille (« Mes heures ») ; un gestionnaire les saisit dans l'affectation.</p>`),
+      S('Saisir les heures réalisées, jour par jour', `<p><b>Chaque salarié saisit lui-même ses heures</b> : sur son téléphone, onglet Planning, bouton « ⏱ Saisir mes heures d'aujourd'hui » ou touche du jour concerné. La fenêtre est préremplie avec le chantier et les heures prévus : il suffit d'enregistrer, ou de corriger.</p>
+        <p>Une journée peut avoir plusieurs lignes (« ＋ Ajouter une ligne ») : le chantier prévu, <b>un autre chantier</b> (au choix dans la liste), l'<b>atelier</b>, un <b>déplacement / approvisionnement</b> ou des <b>congés / absence</b>. Les heures d'un chantier comptent pour sa main-d'œuvre (heures × coût horaire du membre) ; l'atelier et le déplacement ne sont imputés à aucun chantier ; l'absence se compte à part.</p>
+        <p>Le salarié saisit et corrige ses jours, jusqu'à aujourd'hui (pas à l'avance). Le gestionnaire peut saisir ou corriger les heures de tous, avec la pastille ⏱ de la grille. Les saisies sont enregistrées dans l'onglet « Pointages » du classeur Google Sheets.</p>
+        <p>L'ancien champ « Heures réalisées (total) » de l'affectation reste disponible : il compte seulement tant qu'aucune heure n'a été saisie par jour pour ce membre sur ce chantier pendant les dates de l'affectation (jamais de doublon).</p>`),
       S('Ce que voit chaque profil', `<p>Un gestionnaire ou un administrateur voit tout le planning. Un compagnon ou un intervenant voit seulement « Mon planning » et les chantiers où il est affecté, sans les montants.</p>`)
     ]
   },
@@ -351,7 +354,7 @@ export const TOPICS = {
       S('Les données diffèrent d\'un appareil à l\'autre', `<p>Les appareils ne sont pas reliés au même classeur, ou la synchronisation est en attente. Dans <b>Réglages › Google Sheets</b>, vérifiez l'état et touchez « Synchroniser maintenant ». Utilisez la même adresse et la même clé partout.</p>`),
       S('Une section de la barre du bas manque', `<p>Votre profil d'accès ne la comprend pas. L'administrateur change le profil dans Planning › Équipe.</p>`),
       S('Code PIN oublié', `<p>Sur l'écran de connexion, « Code oublié ? » puis tapez REINITIALISER : tous les profils et codes sont supprimés, les fiches des membres sont conservées. Recréez ensuite un code administrateur.</p>`),
-      S('La marge d\'un chantier paraît trop belle', `<p>Causes habituelles : heures réalisées non saisies, coût horaire absent, matériel sorti sans chantier, facture non rattachée. Saisissez les heures dans le planning, renseignez le coût horaire des membres, indiquez le chantier à chaque sortie de stock.</p>`),
+      S('La marge d\'un chantier paraît trop belle', `<p>Causes habituelles : heures réalisées non saisies, coût horaire absent, matériel sorti sans chantier, facture non rattachée. Faites saisir les heures par les salariés dans le planning, renseignez le coût horaire des membres, indiquez le chantier à chaque sortie de stock.</p>`),
       S('Un devis a disparu de la liste, ou n\'est pas compté à l\'accueil', `<p>Les devis facturés sont masqués par défaut : touchez « Voir tout » sous la recherche, ou filtrez sur le statut Facturé. La tuile « Devis en attente » ne retient que les devis envoyés depuis moins de 90 jours : pour les autres, filtrez la liste sur le statut Envoyé.</p>`),
       S('Un chantier ne passe pas en « Terminé »', `<p>Tout le marché n'est pas facturé, ou une facture n'est pas entièrement réglée. Vérifiez les factures et règlements, ou touchez « ✓ Terminer le chantier ».</p>`),
       S('Le scanner de codes-barres ne démarre pas', `<p>L'accès à la caméra est refusé, ou l'application est ouverte hors https. Autorisez la caméra dans le navigateur ; en attendant, saisissez le code à la main dans le bandeau du scanner.</p>`),

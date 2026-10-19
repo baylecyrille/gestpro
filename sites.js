@@ -116,8 +116,8 @@ export async function renderSite(el, id) {
   const money = auth.can('sites.money'), canEdit = auth.can('sites.edit'), canAssign = auth.can('planning.edit');
   if (site && onlyMine() && !mySites(await db.all('tasks')).has(site.id)) { el.innerHTML = '<div class="empty">Ce chantier ne figure pas dans votre planning.</div>'; return; }
   if (!site) { el.innerHTML = '<div class="empty">Chantier introuvable.</div>'; return; }
-  const [docs, payments, tasks, members, moves] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members'), db.all('moves')]);
-  const mg = siteMargin(site.id, docs, moves, tasks, members, site);
+  const [docs, payments, tasks, members, moves, times] = await Promise.all([db.all('documents'), db.all('payments'), db.all('tasks'), db.all('members'), db.all('moves'), db.all('times')]);
+  const mg = siteMargin(site.id, docs, moves, tasks, members, site, times);
   const client = contacts.find(c => c.id === site.clientId), moe = contacts.find(c => c.id === site.moeId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
@@ -150,7 +150,7 @@ export async function renderSite(el, id) {
       <div class="kpi ${st.resteAPayer ? 'warn' : ''}"><small>Reste à payer</small><b>${eur(st.resteAPayer)}</b>${st.aRembourser ? `<small>à rembourser au client : ${eur(st.aRembourser)}</small>` : ''}</div>
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}` : ''}
-    ${siteTeamHtml(site.id, tasks, members, { edit: canAssign, money })}
+    ${siteTeamHtml(site.id, tasks, members, { edit: canAssign, money, times })}
     ${matHtml}
     ${money ? `<h3>Charges non facturées</h3><div class="card">${(site.charges || []).map((c, i) => `<div class="item" data-ch="${i}"><div class="main"><div class="t">${e(c.label)}</div><div class="s">${dateFr(c.date)} · ${num(c.qty)} ${e(c.unit || '')} × ${eur(num(c.cost))}${c.note ? ' · ' + e(c.note) : ''}</div></div><div class="r"><b>${eur(num(c.qty) * num(c.cost))}</b> <button class="btn sm danger" data-chrm="${i}">✕</button></div></div>`).join('') || '<p class="muted" style="margin-top:0">Aucune charge. Ajoutez ici les produits utilisés sur ce chantier mais non facturés au client : ils réduisent la marge.</p>'}${canEdit || auth.can('stock') ? '<button class="btn sm" id="addch">+ Produit / charge</button>' : ''}</div>
     <h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">

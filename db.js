@@ -2,8 +2,8 @@
 // et les suppressions laissent une « pierre tombale » `_d` afin que la synchronisation Google Sheets
 // puisse fusionner plusieurs appareils (le plus récent gagne).
 const DB_NAME = 'gestpro';
-const VER = 3;
-export const STORES = ['products', 'locations', 'contacts', 'documents', 'payments', 'moves', 'fbposts', 'fbstats', 'settings', 'photos', 'sites', 'members', 'tasks'];
+const VER = 4;
+export const STORES = ['products', 'locations', 'contacts', 'documents', 'payments', 'moves', 'fbposts', 'fbstats', 'settings', 'photos', 'sites', 'members', 'tasks', 'times'];
 let dbp;
 let changeCb = () => {};
 export const onChange = fn => { changeCb = fn; };
@@ -77,6 +77,7 @@ export async function exportAll() {
 export async function importAll(data) {
   if (!data || data.app !== 'gestpro') throw new Error('Fichier de sauvegarde GestPro invalide');
   for (const s of STORES) {
+    if (!(s in data)) continue; // sauvegarde antérieure à ce type de données : on ne touche pas aux données locales correspondantes
     const keep = new Set((data[s] || []).map(o => o.id));
     for (const o of await all(s)) if (!keep.has(o.id)) await del(s, o.id);
     if (Array.isArray(data[s]) && data[s].length) await putMany(s, data[s]);

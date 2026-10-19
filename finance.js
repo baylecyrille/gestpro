@@ -1,5 +1,6 @@
 // Calculs financiers : période, CA, achats, TVA, courbe mensuelle, rentabilité d'un chantier.
 import { num, round2, today } from './util.js';
+import { doneBySite } from './hours.js';
 import { totals } from './docs.js';
 import { addDays } from './team.js';
 
@@ -54,15 +55,16 @@ export function monthly(docs, moves, products, ref = today(), n = 12, sites = []
 }
 
 /* Rentabilité d'un chantier : facturé (ou marché si rien n'est encore facturé) − matières sorties du stock − main-d'œuvre */
-export function siteMargin(siteId, docs, moves, tasks, members, site) {
+export function siteMargin(siteId, docs, moves, tasks, members, site, times = []) {
   const M = Object.fromEntries(members.map(m => [m.id, m]));
   const mine = docs.filter(d => d.siteId === siteId && d.status !== 'draft' && d.status !== 'cancelled');
   const fact = round2(mine.filter(d => d.type === 'invoice' || d.type === 'credit').reduce((a, d) => a + sign(d) * totals(d).ht, 0));
   const marche = round2(mine.filter(d => d.type === 'quote' && (d.status === 'accepted' || d.status === 'invoiced')).reduce((a, d) => a + totals(d).ht, 0));
   const matieres = round2(moves.filter(m => m.siteId === siteId && m.type === 'out').reduce((a, m) => a + num(m.qty) * num(m.unit), 0));
   const charges = round2(((site && site.charges) || []).reduce((a, c) => a + num(c.qty) * num(c.cost), 0));
-  const hours = round2(tasks.filter(t => t.siteId === siteId).reduce((a, t) => a + num(t.done), 0));
-  const mo = round2(tasks.filter(t => t.siteId === siteId).reduce((a, t) => a + num(t.done) * num(M[t.memberId]?.rate), 0));
+  const done = doneBySite(siteId, tasks, times); // heures saisies par jour (tous chantiers confondus pour un même salarié) + anciens totaux
+  const hours = round2(Object.values(done).reduce((a, h) => a + h, 0));
+  const mo = round2(Object.entries(done).reduce((a, [id, h]) => a + h * num(M[id]?.rate), 0));
   const base = fact || marche, couts = round2(matieres + charges + mo), marge = round2(base - couts);
   return { fact, marche, base, previsionnel: !fact && !!marche, matieres, charges, mo, hours, couts, marge, pct: base ? Math.round(marge / base * 100) : null };
 }

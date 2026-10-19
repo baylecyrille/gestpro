@@ -109,7 +109,7 @@ async function renderContacts(el, tab = 'client') {
 
 /* ---------- Tableau de bord ---------- */
 async function renderDashboard(el) {
-  const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves')]);
+  const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves, times] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves'), db.all('times')]);
   let per = 'd30', pc = {}; try { per = localStorage.getItem('gp_period') || 'd30'; pc = { from: localStorage.getItem('gp_pfrom') || '', to: localStorage.getItem('gp_pto') || '' }; } catch { /* ignore */ }
   if (!PERIODS.some(p => p[0] === per)) per = 'd30';
   const range = periodRange(per, today(), pc);
@@ -160,7 +160,7 @@ async function renderDashboard(el) {
 
   // chantiers ouverts avec marge
   const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
-  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members, x); const st = siteStats(x.id, docs, payments);
+  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members, x, times); const st = siteStats(x.id, docs, payments);
     return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div>${gaugesHtml(siteGauges(x, st, auth.can('sites.money')))}</div>
       <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
 

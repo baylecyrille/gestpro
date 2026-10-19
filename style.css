@@ -625,3 +625,14 @@ nav#nav a,nav#nav button{max-width:160px}
 .mn-band{display:flex;flex-direction:column;gap:3px;min-width:120px;flex:1 1 120px;max-width:200px}
 .mn-prev{overflow:auto;max-height:28vh}
 @media(max-width:600px){.mn-wrap{max-height:48vh}.mn-fields{grid-template-columns:1fr 1fr}}
+
+/* Saisie des heures par jour (planning) */
+.tbadge{display:inline-block;margin-top:2px;border:1px dashed var(--bd);background:#fff;color:var(--mut);border-radius:999px;padding:2px 8px;font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+span.tbadge{cursor:default}
+.tbadge.on{border:1px solid var(--ok);color:var(--ok);background:#e0f4e8}
+.tl{display:grid;grid-template-columns:1fr 84px auto;gap:6px;margin-bottom:10px;padding:8px;border:1px solid var(--bd);border-radius:10px;align-items:center}
+.tl .tl-w{grid-column:1/-1}
+.tl select,.tl input{min-width:0;width:100%;box-sizing:border-box}
+.tl [hidden]{display:none}
+.tday.today{border-color:var(--p2);box-shadow:0 0 0 1px var(--p2) inset}
+.tday .chip{margin:0}
