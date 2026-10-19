@@ -44,7 +44,7 @@ export const TOPICS = {
     intro: `Pour que les chiffres de l'accueil et la marge d'un chantier soient justes, suivez cet enchaînement.`,
     sections: [
       S('Les 11 étapes', `<ol>
-        <li><b>Créer le client</b> dans <a href="#/contacts/client" data-go>Contacts</a> (et l'architecte, s'il y en a un).</li>
+        <li><b>Créer le client</b> dans <a href="#/contacts/client" data-go>Contacts</a> (et l'architecte, s'il y en a un). Raccourci : le bouton « Nouveau dossier » de l'accueil crée le client, le chantier et ouvre le devis d'un seul geste.</li>
         <li><b>Faire le devis</b> dans <a href="#/docs/quote" data-go>Ventes</a>, avec les produits du catalogue, puis l'enregistrer. Si le chantier n'existe pas, le bouton « + » de la zone Chantier le crée avec le client et l'adresse.</li>
         <li><b>Envoyer le devis par e-mail</b> : un devis en brouillon passe tout seul à « Envoyé ».</li>
         <li><b>Marquer le devis accepté</b> quand le client signe : le chantier passe en « Signé ».</li>
@@ -63,23 +63,32 @@ export const TOPICS = {
     title: 'Accueil', icon: '🏠', ok: () => auth.can('dashboard'),
     intro: `L'accueil résume l'activité et signale ce qui demande une action.`,
     sections: [
-      S('Les raccourcis du haut', `<p>Les boutons du haut ouvrent directement le scan de codes-barres, un nouveau devis, une nouvelle facture, un nouveau chantier et la partie Facebook.</p>`),
+      S('Les raccourcis du haut', `<p>Les boutons du haut ouvrent directement le scan de codes-barres, un <b>nouveau dossier</b>, un nouveau devis, une nouvelle facture, un nouveau chantier et la partie Facebook.</p>`),
+      S('Nouveau dossier', `<p>Le bouton <b>+ Nouveau dossier</b> enchaîne en une seule fenêtre ce qu'on fait pour chaque nouvelle affaire :</p>${ul([
+        '<b>1 · Client</b> : choisissez un client existant (la recherche filtre la liste), ou saisissez un nouveau client (nom, téléphone, e-mail, adresse). Si une fiche ressemble déjà à ce que vous tapez — même nom écrit autrement, même téléphone, même e-mail —, un bandeau la propose : « Choisir ce client » évite le doublon',
+        '<b>2 · Chantier</b> : nom (sinon « Chantier » + nom du client), adresse des travaux (reprise de celle du client), dates prévues. Le chantier est créé au statut « Nouveau »',
+        '<b>3 · Devis</b> : si la case est cochée, le devis s\'ouvre aussitôt en brouillon, déjà rattaché au client et au chantier ; sinon vous arrivez sur la fiche du chantier'])}
+        <p>Les boutons « + Devis » et « + Chantier » restent disponibles pour les cas où le client ou le chantier existent déjà.</p>`),
+      S('À faire aujourd\'hui', `<p>Le panneau placé en haut de l'accueil rassemble en <b>une seule liste</b> ce qui demande une action, du plus urgent au moins urgent :</p>${ul([
+        '<b>Facture en retard</b> : échéance dépassée ; le bouton <b>↻ Relancer</b> ouvre le message de relance (voir « Relancer les devis et les factures »)',
+        '<b>Habilitation expirée</b>, puis <b>Chantier en retard</b> (date de fin dépassée, chantier encore ouvert)',
+        '<b>Chantier à facturer</b> : travaux à 100 % et reste à facturer, ou marché signé sans aucune facture',
+        '<b>Devis à relancer</b> : envoyé sans réponse depuis plus de 10 jours',
+        '<b>Stock bas</b> : produits sous leur seuil, regroupés en une ligne',
+        '<b>Habilitation à renouveler</b> (bientôt expirée), <b>Chantier à terminer</b> (tout est facturé et encaissé) et <b>Chantier à planifier</b> (marché signé sans équipe affectée)'])}
+        <p>Les huit premières actions sont visibles, les autres se déplient. Toucher une ligne ouvre le document, le chantier ou le stock concerné. Quand il n'y a rien à faire, le panneau l'indique. Il remplace les anciennes listes « À relancer », « Chantiers en retard », « Habilitations à renouveler » et « À réapprovisionner ».</p>`),
       S('Chiffres de la période', `<p>Choisissez la période dans la liste (30 jours, 3 ou 12 derniers mois, mois, trimestre, année, année dernière, ou « Date à date »). Les trois grandes tuiles :</p>${ul([
         '<b>CA facturé HT</b> (net d\'avoirs) : le chiffre d\'affaires hors taxes des factures émises, avoirs déduits',
         '<b>Encaissé</b> : les règlements reçus sur la période',
         '<b>Reste à encaisser</b> : ce que les clients doivent encore, à ce jour, sur les factures émises pendant la période choisie (comme les autres chiffres). Le total toutes périodes est rappelé à côté de « Factures à encaisser ». Touchez la tuile pour ouvrir la liste des factures'])}
         <p>La carte <b>Achats &amp; TVA</b> donne les achats HT, la TVA collectée, déductible et due : ce sont des aides au calcul, à faire valider par votre cabinet comptable. La courbe compare, mois par mois, le CA HT (bleu) et les achats HT (orange).</p>`),
-      S('Ce qui demande votre attention', ul([
+      S('Ce qui s\'affiche d\'autre', ul([
         '<b>Chantiers en cours &amp; marge</b> : les 8 chantiers ouverts les plus récents ; « (prév.) » = marge prévisionnelle',
-        '<b>Chantiers en retard</b> : ouverts, date de fin dépassée',
         '<b>Planning des 7 prochains jours</b> : qui travaille où (affiché à côté des chantiers sur un grand écran, en dessous sur téléphone)',
-        '<b>Habilitations à renouveler</b> : expirées ou bientôt expirées',
         '<b>Factures à encaisser</b> : les plus anciennes d\'abord',
-        '<b>À relancer</b> : devis sans réponse et factures échues (voir « Relancer les devis et les factures »)',
         '<b>Numéro en double</b> : deux documents de même type portent le même numéro (voir plus bas)',
-        '<b>Sauvegarde automatique en retard</b> : la dernière copie date de plus de 10 jours ou a échoué',
-        '<b>À réapprovisionner</b> : produits sous leur seuil'])),
-      S('Relancer les devis et les factures', `<p>La liste <b>À relancer</b> apparaît quand il y a quelque chose à faire. Rien n'est envoyé tout seul : chaque ligne a un bouton <b>Relancer</b> qui ouvre un e-mail prêt à envoyer (PDF joint), que vous relisez et modifiez avant l'envoi.</p>${ul([
+        '<b>Sauvegarde automatique en retard</b> : la dernière copie date de plus de 10 jours ou a échoué'])),
+      S('Relancer les devis et les factures', `<p>Les lignes <b>Facture en retard</b> et <b>Devis à relancer</b> du panneau « À faire aujourd'hui » apparaissent quand il y a quelque chose à faire. Rien n'est envoyé tout seul : chaque ligne a un bouton <b>Relancer</b> qui ouvre un e-mail prêt à envoyer (PDF joint), que vous relisez et modifiez avant l'envoi.</p>${ul([
         '<b>Devis envoyé</b> et sans réponse : proposé 10 jours après l\'envoi, puis tous les 7 jours, trois relances au plus',
         '<b>Facture échue</b> et non soldée : proposée 3 jours après l\'échéance, puis tous les 7 jours. Le message rappelle le reste dû et le retard ; dès la 2<sup>e</sup> relance il ajoute les pénalités et l\'indemnité de 40 €. À partir de la 3<sup>e</sup> relance, l\'écran suggère d\'envisager une mise en demeure',
         'Les factures <b>en litige</b>, brouillons, annulées, réglées ou entièrement couvertes par un avoir ne sont jamais proposées',
@@ -128,6 +137,13 @@ export const TOPICS = {
     sections: [
       S('En-tête et boutons', `<p>Statut (liste déroulante), dates, client avec son téléphone, adresse, architecte, notes. Les boutons <b>🗺 Plan</b>, <b>🧭 Itinéraire</b>, <b>👁 Street View</b> et <b>📤 Envoyer</b> affichent la carte, lancent le guidage ou partagent l'adresse et l'itinéraire.</p>
         <p><b>✓ Terminer le chantier</b> prévient s'il reste une somme à encaisser et renseigne la date de fin du jour si elle était vide. <b>↺ Rouvrir le chantier</b> le remet « En cours » s'il a des factures, « Signé » sinon.</p>`),
+      S('Prochaine étape', `<p>Sous l'en-tête, pour les profils qui voient les montants, le bandeau <b>Prochaine étape</b> dit quoi faire ensuite, d'après les devis, factures, règlements et le planning du chantier, avec un bouton pour y aller :</p>${ul([
+        '<b>Aucun devis</b> → Créer le devis ; <b>devis en brouillon</b> → Terminer et envoyer ; <b>devis envoyé</b> → attente de la réponse, puis Relancer quand le délai est passé ; <b>devis refusé</b> → l\'adapter ou passer le chantier en « Perdu »',
+        '<b>Marché signé, rien facturé</b> → Facturer l\'acompte (ouvre directement la fenêtre d\'acompte du devis)',
+        '<b>Facture échue</b> → Relancer (en rouge) ; <b>facture à échoir</b> → à encaisser',
+        '<b>Travaux à 100 %</b> avec un reste à facturer → Facturer le solde',
+        '<b>Aucune équipe affectée</b> → Planifier ; <b>tout facturé et encaissé</b> → Terminer le chantier (bandeau vert)'])}
+        <p>La première étape est la plus utile ; les suivantes sont rappelées en dessous (« Ensuite : … »). Le bandeau disparaît quand le chantier est terminé ou perdu.</p>`),
       S('Photos, fichiers et liens', `<p>Les photos et documents sont rangés dans le dossier GestPro de votre Google Drive ou de votre OneDrive (selon la configuration du script). Les profils qui voient les montants peuvent aussi classer des devis, factures et factures d'achat. « Liens » garde des adresses utiles (plans, dossier partagé) avec un libellé.</p>`),
       S('Avancement et chiffres', `<p>Trois jauges : <b>Paiement</b> (encaissé sur le marché), <b>Travaux</b> (le curseur d'avancement, saisi à la main) et <b>Délai</b> (elle rougit quand la date de fin est dépassée).</p>
         <p>Quatre chiffres : marché signé TTC (devis acceptés ou facturés), facturé TTC avec le reste à facturer, encaissé, reste à payer.</p>
@@ -329,7 +345,14 @@ export const TOPICS = {
       S('Ajouter un ouvrage au devis', `<p>Dans <b>📦 Produit ▾</b>, choisissez la catégorie <b>Ouvrage</b> (ou « Tout le catalogue ») et touchez un ouvrage composé : une fenêtre demande la <b>quantité</b> (3 caissons) et la <b>présentation</b> :</p>${ul([
         '<b>Une seule ligne</b> : le client voit l\'ouvrage et son prix ; la composition reste interne. Le prix de revient est repris comme prix d\'achat de la ligne, donc la marge du devis est exacte',
         '<b>Détaillée</b> : une section avec une ligne par composant (matière, main-d\'œuvre en heures, quincaillerie…). Le prix de vente est réparti au prorata du coût de chaque composant et le <b>total reste exactement celui de l\'ouvrage</b>'])}
-        <p>Sur une ligne d\'ouvrage, le bouton <b>⤵ Détailler</b> la remplace plus tard par le détail (le prix modifié à la main, la remise et le taux de TVA de la ligne sont conservés). Vendre un ouvrage ne sort rien du stock.</p>`)
+        <p>Sur une ligne d\'ouvrage, le bouton <b>⤵ Détailler</b> la remplace plus tard par le détail (le prix modifié à la main, la remise et le taux de TVA de la ligne sont conservés). Vendre un ouvrage ne sort rien du stock.</p>`),
+      S('Signature du devis et rétractation', `<p>Dans l'en-tête d'un devis, la zone dépliable <b>Signature du devis</b> garde la <b>date de signature</b> (remplie avec la date du jour quand vous touchez « Marquer accepté » ou « Facture d'acompte » avec acceptation), le <b>lieu</b> et <b>où le devis a été signé</b> : dans vos locaux, chez le client / sur le chantier / hors de vos locaux, ou à distance.</p>
+        <p>Pour un <b>particulier</b> (client sans SIRET ni forme de société) qui signe <b>hors de vos locaux</b>, l'application affiche sous le titre du devis :</p>${ul([
+        'le <b>droit de rétractation de 14 jours</b> : date limite (prolongée au premier jour ouvrable suivant si elle tombe un samedi, un dimanche ou un jour férié) et jours restants',
+        'le délai de <b>7 jours avant tout paiement</b> : la date à partir de laquelle un acompte peut être demandé. Elle est rappelée dans la fenêtre « Facture d\'acompte », et un règlement daté avant ce jour demande une confirmation',
+        'pour un devis signé <b>à distance</b> : seulement le délai de rétractation'])}
+        <p>Les <b>travaux urgents d\'entretien ou de réparation demandés par le client</b> font exception : choisissez « Oui » dans la zone Signature pour supprimer ces rappels. Rien n'apparaît pour un client professionnel ni pour une signature dans vos locaux.</p>
+        <p class="warnnote">C'est une aide à la lecture des délais, à confirmer avec votre conseil. L'application ne joint pas de formulaire de rétractation au devis : si votre activité l'exige, ajoutez-le à vos conditions.</p>`)
     ]
   },
 
@@ -344,7 +367,10 @@ export const TOPICS = {
         '<b>Équipe</b> : les mêmes fiches que Planning › Équipe'])),
       S('La fiche', `<p>Civilité, nom ou raison sociale, contact, adresse (avec complétion automatique), code postal, ville, téléphone, e-mail, fonction, SIRET et note. Le <b>SIRET</b> d'un client professionnel alimente la facture électronique.</p>
         <p>Une fiche client montre aussi ses chantiers, devis, factures et avoirs, et permet de créer un chantier pour ce client.</p>`),
-      S('Soldes et filtres', `<p>Dans la liste des clients, une pastille rouge « dû … » indique ce qu'un client doit encore, et 📞 l'appelle. Les filtres trient par nom, ville, code postal, solde dû, nombre de documents ou ancienneté, et gardent seulement les clients avec un solde dû, un téléphone ou aucun document.</p>`),
+      S('Encours et filtres', `<p>Dans la liste des clients, chaque ligne montre le <b>dernier devis</b> (numéro, date, montant, état) et les <b>chantiers ouverts</b> (dont ceux en retard). À droite, une pastille « dû … » indique ce que le client doit encore (orange) et « en retard … » la part dont l'échéance est dépassée (rouge) ; 📞 l'appelle.</p>
+        <p>Les filtres trient par nom, ville, code postal, solde dû, nombre de documents ou ancienneté, et gardent seulement les clients <b>qui ont un impayé</b>, un téléphone ou aucun document. Avant de proposer un nouveau devis à un client, un coup d'œil à cette ligne évite les mauvaises surprises.</p>`),
+      S('Clients en double', `<p>À la création d'une fiche (Contacts, devis, chantier ou « Nouveau dossier »), l'application compare ce que vous tapez aux fiches de même nature : même <b>nom</b> (civilité et ordre ignorés), même <b>téléphone</b>, même <b>e-mail</b> ou même <b>SIRET</b>, ou un nom très proche (faute de frappe). Un bandeau propose alors <b>Ouvrir sa fiche</b> (ou <b>Utiliser cette fiche</b> depuis un devis ou un chantier).</p>
+        <p>Si le téléphone, l'e-mail, le SIRET ou le nom est identique et que vous enregistrez quand même, une confirmation est demandée. Un nom seulement proche n'est qu'une information.</p>`),
       S('Supprimer une fiche', `<p>Un contact qui a des devis ou factures ne peut pas être supprimé. Un client qui a des chantiers non plus : supprimez-les ou changez leur client d'abord.</p>`)
     ]
   },

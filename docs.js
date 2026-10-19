@@ -5,6 +5,7 @@ import * as efact from './efact.js';
 import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt, docMargin, refOn } from './vat.js';
 import { checkDoc, checkMentions } from './doccheck.js';
 import { remindersOf } from './reminders.js';
+import { retractInfo, earlyPayment, WHERE } from './retract.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
@@ -140,7 +141,7 @@ async function makeDeposit(q, sp, o = {}) {
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
   if (o.attach) for (const p of (await db.all('payments')).filter(x => x.docId === q.id)) { p.docId = inv.id; p.fromQuote = q.id; await db.put('payments', p); }
-  if (o.accept && !['accepted', 'invoiced'].includes(q.status)) { q.status = 'accepted'; await db.put('documents', q); }
+  if (o.accept && !['accepted', 'invoiced'].includes(q.status)) { q.status = 'accepted'; if (!q.signDate) q.signDate = today(); await db.put('documents', q); }
   await syncInvStatus(inv.id); await bumpSite(q);
   return inv;
 }
@@ -326,12 +327,13 @@ export async function renderDoc(el, id, arg) {
       ${!isNew ? '<button class="btn" id="print">Imprimer / PDF</button>' : ''}<button class="btn primary" id="save">Enregistrer</button></div>
     <div class="optpanel" id="optpanel" ${optOpen ? '' : 'hidden'}>${optPanelHtml()}</div>
     <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
-    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${isQ && cur.status === 'invoiced' ? invoicedBannerHtml() : ''}${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
+    <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${isQ && cur.status === 'invoiced' ? invoicedBannerHtml() : ''}<div id="retractbox">${retractBannerHtml()}</div>${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
     <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
       <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
       <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
       ${F('Date', 'date', cur.date, { type: 'date' })}
       ${F(isQ ? 'N° de devis' : isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : ''}
+      ${isQ ? `<details class="full" ${cur.signDate || cur.signWhere || cur.signPlace || cur.urgent ? 'open' : ''}><summary class="muted" style="cursor:pointer;margin:4px 0">Signature du devis : date, lieu, rétractation</summary><div class="cols">${F('Date de signature', 'signDate', cur.signDate || '', { type: 'date' })}${F('Lieu de signature (ville ou adresse)', 'signPlace', cur.signPlace || '')}${F('Où le devis a-t-il été signé ?', 'signWhere', cur.signWhere || '', { type: 'select', options: WHERE, cls: 'full' })}${F('Travaux urgents (entretien ou réparation demandés par le client)', 'urgent', cur.urgent || '', { type: 'select', options: [['', 'Non'], ['1', 'Oui : pas de délai de 7 jours avant paiement']], cls: 'full' })}</div></details>` : ''}
       ${F('Réf. chantier', 'siteRef', cur.siteRef, { cls: 'full' })}
       ${F('Adresse du chantier', 'siteAddr', cur.siteAddr, { type: 'textarea', rows: 2, cls: 'full' })}
       ${richField('Intitulé', 'intro', cur.intro)}
@@ -370,6 +372,18 @@ export async function renderDoc(el, id, arg) {
   /* Devis facturé : les règlements s'enregistrent sur la facture, plus sur le devis */
   const invoicedPayHtml = () => `<div class="card" id="payredir"><h3 style="margin-top:0">Règlements &amp; acomptes</h3><p style="margin:0">Ce devis est facturé : enregistrez les règlements sur la facture ${invLinks()}.</p></div>`;
   /* Devis facturé : rappel que la facture ne suit plus les modifications du devis */
+  /* M5 : contrat conclu hors de nos locaux avec un particulier → délai de rétractation (14 j) et délai avant tout paiement (7 j) */
+  const retractBannerHtml = () => {
+    if (!isQ) return '';
+    const i = retractInfo(cur, curClient());
+    if (!i) return '';
+    const head = i.kind === 'off' ? 'Contrat conclu hors de vos locaux avec un particulier' : 'Contrat conclu à distance avec un particulier';
+    if (i.unknown) return `<div class="invbanner retract"><b>⚖ ${head}.</b> Renseignez la date de signature (en-tête › Signature du devis) pour afficher les délais de rétractation${i.kind === 'off' ? ' et de paiement' : ''}.</div>`;
+    return `<div class="invbanner retract"><b>⚖ ${head}</b> · signé le ${dateFr(i.signed)}${cur.signPlace ? ' à ' + e(cur.signPlace) : ''}.<br>
+      Droit de rétractation de 14 jours : jusqu'au <b>${dateFr(i.retractUntil)}</b> inclus${i.retractOpen ? ` (encore ${i.daysLeft} j)` : ' — délai écoulé'}.
+      ${i.payFrom ? `<br>Aucun paiement ne peut être reçu avant le <b>${dateFr(i.payFrom)}</b> (7 jours après la signature)${i.payLocked ? ' : datez l\'acompte à partir de ce jour' : ' — délai écoulé'}.` : ''}
+      <br><small class="muted">Les travaux urgents d'entretien ou de réparation demandés par le client font exception (case « Travaux urgents »). Rappel d'aide, à confirmer avec votre conseil : aucun formulaire de rétractation n'est joint au devis par l'application.</small></div>`;
+  };
   const invoicedBannerHtml = () => {
     const links = invLinks();
     return `<div class="invbanner" id="invbanner"><b>Ce devis est facturé</b>${links ? ` (facture n° ${links})` : ''} : vos modifications ne changeront pas la facture. Pour repartir de ses lignes, utilisez « Dupliquer ».</div>`;
@@ -488,7 +502,7 @@ export async function renderDoc(el, id, arg) {
   };
 
   const readHeader = () => {
-    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed'].includes(i.name)) cur[i.name] = i.value; });
+    $$('[name]', el).forEach(i => { if (i.name in cur || ['clientId', 'validUntil', 'number', 'siteId', 'dueDate', 'opType', 'vatDebits', 'deliveryAddr', 'tvaRed', 'signDate', 'signWhere', 'signPlace', 'urgent'].includes(i.name)) cur[i.name] = i.value; });
     Object.assign(cur, readRich(el));
     readZones(); readDisc();
     cur.tva = num(cur.tva);
@@ -506,6 +520,7 @@ export async function renderDoc(el, id, arg) {
 
   const save = async () => {
     readHeader();
+    if (isQ && cur.status === 'accepted' && status0 !== 'accepted' && !cur.signDate) cur.signDate = today(); // devis passé en « Accepté » : signé aujourd'hui sauf indication contraire
     const res = runChecks(), errs = res.filter(r => r.level === 'err');
     if (errs.length) {
       toast(errs[0].msg); const h = $('#hdr', el); if (h && errs.some(r => r.code !== 'disc100')) { h.open = true; hdrOpen = true; }
@@ -534,8 +549,9 @@ export async function renderDoc(el, id, arg) {
     const qPaid = paidOf(allPay, cur.id), canAcc = !['accepted', 'invoiced'].includes(cur.status);
     const leftHt = round2(tq.ht - prev.reduce((a, d) => a + totals(d).ht, 0));
     const tooBig = (mode, v, sp) => sp.ttc > left + 0.02 || (mode === 'ttc' && v > left + 0.02) || (mode === 'ht' && v > leftHt + 0.02) || (mode === '%' && v > 100); // le montant demandé ne doit pas être rabattu en silence
+    const rinfo = retractInfo(cur, curClient());
     modal('Facture d\'acompte',
-      `<p class="muted" style="margin-top:0">Devis <b>${e(cur.number)}</b> : ${eur(tq.ttc)} TTC${prev.length ? ` · déjà facturé en acompte : ${eur(prevTtc)} (${prev.map(d => e(d.number)).join(', ')})` : ''} · reste à facturer en acompte : <b>${eur(left)}</b>.</p>
+      `${rinfo ? `<p class="invbanner retract" style="margin-top:0">⚖ ${rinfo.unknown ? 'Contrat conclu hors de vos locaux : la date de signature n\'est pas renseignée (en-tête du devis).' : rinfo.payFrom ? `Devis signé hors de vos locaux le ${dateFr(rinfo.signed)} : aucun paiement avant le <b>${dateFr(rinfo.payFrom)}</b> (7 jours). Demandez l\'acompte à partir de cette date.` : `Rétractation possible jusqu\'au <b>${dateFr(rinfo.retractUntil)}</b>.`}</p>` : ''}<p class="muted" style="margin-top:0">Devis <b>${e(cur.number)}</b> : ${eur(tq.ttc)} TTC${prev.length ? ` · déjà facturé en acompte : ${eur(prevTtc)} (${prev.map(d => e(d.number)).join(', ')})` : ''} · reste à facturer en acompte : <b>${eur(left)}</b>.</p>
       <div class="cols"><label class="f"><span>Type d'acompte</span><select name="mode"><option value="%">Pourcentage du devis</option><option value="ttc">Montant TTC (€)</option><option value="ht">Montant HT (€)</option></select></label>
       <label class="f"><span id="dvl">Pourcentage (%)</span><input name="value" type="number" step="any" min="0" inputmode="decimal" value="30" required></label>
       ${F('Date de la facture', 'date', today(), { type: 'date' })}${F('À régler avant le', 'dueDate', addDays(today(), num(S.payDays ?? 30)), { type: 'date' })}</div>
@@ -621,7 +637,7 @@ export async function renderDoc(el, id, arg) {
     bindRichFields(el);
     const hdr = $('#hdr', el);
     hdr.addEventListener('toggle', () => { hdrOpen = hdr.open; });
-    hdr.addEventListener('change', () => { readHeader(); $('#hdrsum', el).textContent = hdrSummary(); });
+    hdr.addEventListener('change', () => { readHeader(); $('#hdrsum', el).textContent = hdrSummary(); const rb = $('#retractbox', el); if (rb) rb.innerHTML = retractBannerHtml(); });
     $('.edmain', el).addEventListener('input', schedAux);
     $('#discrow', el).addEventListener('input', () => { readDisc(); refreshTotals(); });
     $('#depbox', el).addEventListener('click', ev => { // facture finale : remet les acomptes déduits en accord avec les factures d'acompte
@@ -830,7 +846,10 @@ export async function renderDoc(el, id, arg) {
         ${F('Mode', 'method', p.method, { type: 'select', options: REAL_METHODS })}${F('Nature', 'kind', p.kind, { type: 'select', options: [['acompte', 'Acompte'], ['solde', 'Règlement / solde']] })}
         <div class="full chq" ${p.method === 'cheque' ? '' : 'hidden'}><div class="cols">${F('N° du chèque', 'chequeNo', p.chequeNo, {})}${F('Banque', 'bank', p.bank, {})}</div></div>
         ${F('Note (ticket CB, remarque…)', 'note', p.note, { cls: 'full' })}</div>`,
-        async o => { if (o.method !== 'cheque') { o.chequeNo = ''; o.bank = ''; } Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
+        async o => {
+          if (isNewP) { const q0 = isQ ? cur : DN[cur.fromQuote], inf = q0 && retractInfo(q0, curClient()); // M5 : pas de paiement dans les 7 jours qui suivent une signature hors établissement
+            if (earlyPayment(inf, o.date) && !confirm(`Le devis ${q0.number} a été signé hors de vos locaux le ${dateFr(inf.signed)} : aucun paiement ne devrait être reçu avant le ${dateFr(inf.payFrom)} (délai de 7 jours).\n\nEnregistrer ce règlement quand même ?`)) return false; }
+          if (o.method !== 'cheque') { o.chequeNo = ''; o.bank = ''; } Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
         { del: isNewP ? null : async () => { await db.del('payments', p.id); await syncInvStatus(cur.id); refresh(); },
           onOpen: f => { const m = f.querySelector('[name=method]'), c = f.querySelector('.chq'); m.onchange = () => { c.hidden = m.value !== 'cheque'; }; } });
     };
@@ -847,7 +866,8 @@ export async function renderDoc(el, id, arg) {
     }
     if (isQ) {
       $('#todep', el)?.addEventListener('click', depositModal);
-      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); });
+      if (arg === 'deposit' && $('#todep', el)) { try { history.replaceState(null, '', '#/doc/' + cur.id); } catch { /* ignore */ } depositModal(); } // lien « Facturer l'acompte » de la fiche chantier
+      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; if (!cur.signDate) cur.signDate = today(); await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); });
       if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();

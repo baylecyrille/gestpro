@@ -9,6 +9,7 @@ import * as auth from './auth.js';
 import * as lock from './lock.js';
 import * as fl from './files.js';
 import { getS } from './defaults.js';
+import { nextSteps } from './nextstep.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -123,6 +124,16 @@ export async function renderSite(el, id) {
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
   const prods = await db.all('products');
+  /* M1 : prochaine étape du dossier, déduite des devis, factures, règlements et du planning (réservé à ceux qui voient les montants) */
+  const steps = money ? nextSteps(site, { docs, payments, tasks, S: await getS(), st }) : [];
+  const stepHtml = steps.length ? (() => {
+    const m = steps[0], more = steps.slice(1, 4).map(x => e(x.label));
+    const btn = m.rel ? `<button type="button" class="btn primary" data-rel="${e(m.rel)}">↻ ${e(m.label)}</button>`
+      : m.act === 'assign' && canAssign ? `<button type="button" class="btn primary" id="nsassign">${e(m.label)}</button>`
+      : m.act === 'finish' ? (canEdit ? `<button type="button" class="btn primary" id="nsfinish">✓ ${e(m.label)}</button>` : '')
+      : `<a class="btn primary" href="${e(m.href)}">${e(m.label)}</a>`;
+    return `<div class="card nextstep ${m.tone}" id="nextstep"><div class="nsl">Prochaine étape</div><div class="nsr"><b>${e(m.text)}</b>${btn}</div>${more.length ? `<div class="s muted" style="margin-top:4px">Ensuite : ${more.join(' · ')}</div>` : ''}</div>` ;
+  })() : '';
   const outs = {};
   for (const m of moves) if (m.siteId === site.id && m.type === 'out') outs[m.productId] = (outs[m.productId] || 0) + num(m.qty);
   const matRows = Object.entries(outs).map(([pid, q]) => { const p = prods.find(x => x.id === pid); return `<div class="item"><div class="main"><div class="t">${e(p?.name || 'Produit supprimé')}</div></div><div class="r"><b>${q} ${e(p?.unit || '')}</b></div></div>`; });
@@ -141,6 +152,7 @@ export async function renderSite(el, id) {
       ${site.address ? `<div class="row" style="margin:8px 0 0"><button class="btn" id="mapbtn" type="button">🗺 Plan</button><a class="btn primary" id="itin" target="_blank" rel="noopener" href="${e(mapsDir(site.address))}">🧭 Itinéraire</a><button class="btn" id="svbtn" type="button">👁 Street View</button><button class="btn" id="shbtn" type="button">📤 Envoyer</button></div><div id="mapbox" hidden></div>` : `<p class="muted" style="margin:8px 0 0">📍 Ajoutez l'adresse du chantier (bouton « Modifier ») pour afficher le plan et lancer l'itinéraire.</p>`}
       ${moe ? `<p style="margin:6px 0 0">🏛 <b>${e(moe.name)}</b>${moe.fonction ? ` <small class="muted">${e(moe.fonction)}</small>` : ''}${moe.company ? ` · ${e(moe.company)}` : ''}${moe.phone ? ` · <a href="tel:${e(moe.phone)}">${e(moe.phone)}</a>` : ''}${moe.email ? ` · <a href="mailto:${e(moe.email)}">${e(moe.email)}</a>` : ''}</p>` : ''}
       ${site.note ? `<p class="muted" style="white-space:pre-line">${e(site.note)}</p>` : ''}</div>
+    ${stepHtml}
     <div id="sfiles"></div>
     <h3>Liens</h3><div class="card" id="lnks">${(site.links || []).map((l, i) => `<div class="lnk"><span>🔗</span><a href="${e(l.url)}" target="_blank" rel="noopener noreferrer">${e(l.label || l.url)}</a>${canEdit ? `<button class="btn sm" data-lnkedit="${i}" type="button">✎</button><button class="btn sm danger" data-lnkrm="${i}" type="button">✕</button>` : ''}</div>`).join('') || '<p class="muted" style="margin:0">Aucun lien. Ajoutez le lien d\'un dossier de plans, de photos ou de documents (Google Drive, Dropbox, OneDrive…).</p>'}${canEdit ? '<button class="btn sm" id="lnkadd" type="button" style="margin-top:8px">+ Ajouter un lien</button>' : ''}</div>
     ${gaugesBig(siteGauges(site, st, money), canEdit, site)}
@@ -185,6 +197,9 @@ export async function renderSite(el, id) {
   $('#prog', el)?.addEventListener('input', ev => { $('#pv', el).textContent = ev.target.value + ' %'; });
   $('#prog', el)?.addEventListener('change', async ev => { site.progress = +ev.target.value; await db.put('sites', site); refresh(); });
   if (canAssign) $('#assign', el).onclick = () => assignModal(null, { siteId: site.id });
+  $('#nsassign', el)?.addEventListener('click', () => assignModal(null, { siteId: site.id }));
+  $('#nsfinish', el)?.addEventListener('click', () => $('#finish', el)?.click());
+  $$('#nextstep [data-rel]', el).forEach(b => b.addEventListener('click', () => import('./docmail.js').then(m => m.relanceModal(b.dataset.rel, () => refresh()))));
   $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
   $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));

@@ -15,6 +15,9 @@ import { MAIL_DEFAULTS, MAIL_TOKENS, mailError } from './docmail.js';
 import { remindList, RELANCE_DEFAULTS, RELANCE_TOKENS } from './reminders.js';
 import * as backup from './backup.js';
 import { dupNumbers } from './doccheck.js';
+import { findSimilar, statsByClient } from './clients.js';
+import { simBoxHtml, bindSimilar, dupQuestion } from './clients-ui.js';
+import { nextSteps, todoItems } from './nextstep.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -45,14 +48,22 @@ export function contactModal(c, kind, onSaved) {
   const isNew = !c; c = c || { kind };
   const body = `<div class="cols"><label class="f"><span>Civilité / forme (libre)</span><input name="civ" value="${e(c.civ || '')}" list="civs" placeholder="Mr, Mme, Mr et Mme, SARL…" autocomplete="off"><datalist id="civs">${CIVS.map(x => `<option value="${e(x)}">`).join('')}</datalist></label>${F('Nom / raison sociale', 'name', c.name, { req: true })}
     <label class="f"><span>Civilité du contact</span><input name="companyCiv" value="${e(c.companyCiv || '')}" list="civs" autocomplete="off" placeholder="Mr, Mme…"></label>${F('Contact (personne)', 'company', c.company)}
+    ${isNew ? simBoxHtml() : ''}
     ${F('Adresse', 'address', c.address, { cls: 'full' })}${F('Code postal', 'zip', c.zip)}${F('Ville', 'city', c.city)}
     ${F('Téléphone', 'phone', c.phone, { type: 'tel' })}${F('E-mail', 'email', c.email, { type: 'email' })}
     ${c.kind === 'moe' ? `<label class="f"><span>Fonction</span><input name="fonction" value="${e(c.fonction || '')}" list="fonctions" placeholder="Architecte, maître d'œuvre…" autocomplete="off"><datalist id="fonctions">${['Architecte', 'Maître d\'œuvre', 'Bureau d\'études', 'Économiste', 'Conducteur de travaux', 'Coordinateur SPS', 'Autre'].map(x => `<option value="${x}">`).join('')}</datalist></label>` : ''}
     ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>${!isNew && c.kind === 'client' ? '<div class="rel" id="rel"></div>' : ''}`;
   modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : c.kind === 'moe' ? 'architecte / maître d\'œuvre' : 'client'}`, body, async o => {
+    if (isNew) { // B3 : même e-mail, téléphone, SIRET ou même nom qu'une fiche existante → confirmation avant de créer le doublon
+      const strong = findSimilar(await db.all('contacts'), o, { kind: c.kind }).filter(x => x.strong);
+      if (strong.length && !confirm(dupQuestion(strong, c.kind))) return false;
+    }
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
-  }, { onOpen: f => { addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind === 'client') fillRel(f, c); }, del: isNew ? null : async () => {
+  }, { onOpen: f => {
+    if (isNew) db.all('contacts').then(list => bindSimilar(f, list, { kind: c.kind, useLabel: onSaved ? 'Utiliser cette fiche' : 'Ouvrir sa fiche', // depuis un devis ou un chantier : on reprend la fiche existante
+      onUse: ex => { document.querySelector('#modal').close(); if (onSaved) onSaved(ex); else contactModal(ex); } }));
+    addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind === 'client') fillRel(f, c); }, del: isNew ? null : async () => {
     const [docs, sites] = await Promise.all([db.all('documents'), db.all('sites')]);
     if (docs.some(d => d.clientId === c.id)) return alert('Ce contact a des devis/factures : suppression impossible.');
     const used = sites.filter(x => x.clientId === c.id || x.moeId === c.id);
@@ -81,15 +92,15 @@ async function renderTeamContacts(el) {
 
 async function renderContacts(el, tab = 'client') {
   if (tab === 'team') return renderTeamContacts(el);
-  const [contacts, docs, payments] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('payments')]);
+  const [contacts, docs, payments, sites, S] = await Promise.all([db.all('contacts'), db.all('documents'), db.all('payments'), db.all('sites'), getS()]);
   const LK = await lock.allLocks();
-  const dueOf = c => docs.filter(d => d.clientId === c.id && d.type === 'invoice' && counts(d)).reduce((a, d) => a + totals(d).ttc - paidOf(payments, d.id), 0);
-  const DUE = Object.fromEntries(contacts.map(c => [c.id, tab === 'client' ? dueOf(c) : 0]));
+  const ST = tab === 'client' ? statsByClient(contacts.filter(c => c.kind === 'client'), docs, payments, sites, S) : {}; // M6 : encours par client
+  const DUE = Object.fromEntries(contacts.map(c => [c.id, ST[c.id] ? ST[c.id].due : 0]));
   const NDOC = Object.fromEntries(contacts.map(c => [c.id, docs.filter(d => d.clientId === c.id).length]));
   const list = contacts.filter(c => c.kind === tab);
   const cities = [...new Set(list.map(c => c.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   const FC = [{ id: 'sort', label: 'Trier par', def: 'name', options: [['name', 'Nom A→Z'], ['city', 'Ville'], ['zip', 'Code postal'], ['due', 'Solde dû ↓'], ['docs', 'Nombre de documents ↓'], ['recent', 'Plus récents']] },
-    { id: 'city', label: 'Ville', options: [['', 'Toutes'], ...cities.map(c => [c, c])] }, { id: 'due', type: 'check', label: 'Solde dû' }, { id: 'phone', type: 'check', label: 'Avec téléphone' }, { id: 'nodoc', type: 'check', label: 'Sans document' }];
+    { id: 'city', label: 'Ville', options: [['', 'Toutes'], ...cities.map(c => [c, c])] }, { id: 'due', type: 'check', label: 'A un impayé' }, { id: 'phone', type: 'check', label: 'Avec téléphone' }, { id: 'nodoc', type: 'check', label: 'Sans document' }];
   const SORTS = { name: (a, b) => a.name.localeCompare(b.name, 'fr'), city: (a, b) => (a.city || '~').localeCompare(b.city || '~', 'fr') || a.name.localeCompare(b.name, 'fr'), zip: (a, b) => (a.zip || '~').localeCompare(b.zip || '~'),
     due: (a, b) => DUE[b.id] - DUE[a.id], docs: (a, b) => NDOC[b.id] - NDOC[a.id], recent: (a, b) => (b._u || 0) - (a._u || 0) };
   el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['moe', 'Architectes / MOE'], ['team', 'Équipe']], tab)}
@@ -98,10 +109,11 @@ async function renderContacts(el, tab = 'client') {
   const draw = () => {
     const q = $('#q', el).value.toLowerCase(), F2 = getF ? getF() : {};
     $('#list', el).innerHTML = list.filter(c => (!F2.city || c.city === F2.city) && (!F2.due || DUE[c.id] > 0.005) && (!F2.phone || c.phone) && (!F2.nodoc || !NDOC[c.id])).sort(SORTS[F2.sort] || SORTS.name).filter(c => !q || [c.civ, c.name, c.company, c.city, c.phone, c.email].join(' ').toLowerCase().includes(q)).map(c => {
-      let due = 0;
-      if (tab === 'client') docs.filter(d => d.clientId === c.id && d.type === 'invoice' && counts(d)).forEach(d => (due += totals(d).ttc - paidOf(payments, d.id)));
-      return `<div class="item${lock.lockCls(LK, c.id)}" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div></div>
-        <div class="r">${lock.lockTag(LK, c.id)}${due > 0.005 ? `<span class="chip bad">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
+      const st = ST[c.id], due = st ? st.due : 0, QL = { draft: 'brouillon', sent: 'envoyé', accepted: 'accepté', refused: 'refusé', invoiced: 'facturé' };
+      const enc = st ? [st.lastQuote ? `dernier devis ${e(st.lastQuote.number)} du ${dateFr(String(st.lastQuote.date).slice(0, 10))} · ${eur(st.lastQuote.ttc)} (${QL[st.lastQuote.status] || ''})` : 'aucun devis',
+        st.openSites ? `${st.openSites} chantier${st.openSites > 1 ? 's' : ''} ouvert${st.openSites > 1 ? 's' : ''}${st.lateSites ? ` dont ${st.lateSites} en retard` : ''}` : ''].filter(Boolean) : [];
+      return `<div class="item${lock.lockCls(LK, c.id)}" data-id="${c.id}"><div class="main"><div class="t">${e(cname(c))}</div><div class="s">${[c.zip && c.city ? c.zip + ' ' + c.city : c.city, c.phone, c.email].filter(Boolean).map(e).join(' · ')}</div>${enc.length ? `<div class="s enc">${enc.join(' · ')}</div>` : ''}</div>
+        <div class="r">${lock.lockTag(LK, c.id)}${st && st.nLate ? `<span class="chip bad" title="${st.nLate} facture(s) échue(s), ${st.lateDays} j de retard au plus">en retard ${eur(st.late)}</span>` : ''}${due > 0.005 ? `<span class="chip ${st && st.nLate ? 'warn' : 'bad'}">dû ${eur(due)}</span>` : ''}${c.phone ? `<a class="btn sm" href="tel:${e(c.phone)}" onclick="event.stopPropagation()">📞</a>` : ''}</div></div>`;
     }).join('') || '<div class="empty">Aucune fiche.</div>';
   };
   getF = bindFilters(el, 'contacts_' + tab + '_', FC, draw);
@@ -175,7 +187,6 @@ async function renderDashboard(el) {
 
   // chantiers en retard : date de fin dépassée et chantier encore ouvert
   const lateSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status) && x.end && x.end < today()).sort((a, b) => a.end.localeCompare(b.end));
-  const lateHtml = lateSites.length ? `<h3>Chantiers en retard</h3>${lateSites.slice(0, 8).map(x => `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · fin prévue le ${dateFr(x.end)}</div>${gaugesHtml(siteGauges(x, siteStats(x.id, docs, payments), auth.can('sites.money')))}</div><span class="chip bad">${Math.floor((Date.parse(today()) - Date.parse(x.end)) / 864e5)} j de retard</span></a>`).join('')}` : '';
 
   // planning des 7 prochains jours
   const days = weekDays(today());
@@ -193,10 +204,17 @@ async function renderDashboard(el) {
   habAlerts.sort((a, b) => (a.h.expiry || '').localeCompare(b.h.expiry || ''));
   const lateDays = d => Math.floor((Date.parse(today()) - Date.parse(d)) / 864e5);
 
+  /* M12 : une seule liste d'actions à la place des alertes dispersées (relances, habilitations, chantiers en retard, chantiers à facturer, stock bas) */
+  const openSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status));
+  const siteSteps = openSites.map(site => ({ site, steps: nextSteps(site, { docs, payments, tasks, S, st: siteStats(site.id, docs, payments), rem }) }));
+  const todo = todoItems({ rem, lateSites, steps: siteSteps, low, habs: habAlerts, C });
+  const todoRow = x => `<div class="item todoi"><a class="main" href="${e(x.href)}" style="text-decoration:none;color:inherit"><div class="t"><span class="chip ${x.tone}">${e(x.tag)}</span> ${e(x.title)}</div><div class="s">${e(x.sub)}</div></a>${x.rel ? `<div class="r"><button type="button" class="btn sm" data-rel="${e(x.rel)}">${e(x.label)}</button></div>` : x.label ? `<div class="r"><a class="btn sm" href="${e(x.href)}">${e(x.label)}</a></div>` : ''}</div>`;
+  const todoHtml = `<div class="card todo" id="todo"><h3 style="margin:0 0 4px">À faire aujourd'hui${todo.length ? ` <span class="muted" style="font-size:12px;font-weight:400">· ${todo.length} action${todo.length > 1 ? 's' : ''}</span>` : ''}</h3>${todo.length ? todo.slice(0, 8).map(todoRow).join('') + (todo.length > 8 ? `<details><summary class="muted" style="cursor:pointer;margin:6px 0">+ ${todo.length - 8} autre${todo.length - 8 > 1 ? 's' : ''}</summary>${todo.slice(8).map(todoRow).join('')}</details>` : '') : '<p class="muted" style="margin:4px 0 0">✅ Rien d\'urgent : aucune relance, aucun chantier en retard, stock et habilitations à jour.</p>'}</div>`;
+
   const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
   el.innerHTML = `<h2>Bonjour${first ? ' ' + e(first) : ''} 👋</h2>
-    <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
-    ${dupHtml}${bkHtml}
+    <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a>${auth.can('sites.edit') ? '<button type="button" class="btn" id="newdos" title="Client, chantier et devis en une seule suite d\'écrans">+ Nouveau dossier</button>' : ''}<a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
+    ${dupHtml}${bkHtml}${todoHtml}
     <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${per === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" id="pfrom" value="${e(pc.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" id="pto" value="${e(pc.to)}"></label></div>` : `<p class="muted" style="margin:0">Du ${dateFr(range.from)} au ${dateFr(range.to)}</p>`}
     <div class="hero">
@@ -212,11 +230,7 @@ async function renderDashboard(el) {
       ${open.length ? `<section><h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a></section>` : ''}
       <section><h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a></section>
     </div>
-    ${habAlerts.length ? `<h3>Habilitations à renouveler</h3>${habAlerts.map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.m.name)}</div><div class="s">${e(x.h.label)}</div></div><span class="chip ${x.st}">${x.st === 'bad' ? 'expirée le ' : 'expire le '}${dateFr(x.h.expiry)}</span></div>`).join('')}` : ''}
-    ${rem.length ? `<h3>À relancer <span class="muted" style="font-size:12px;font-weight:400">· ${rem.filter(x => x.kind === 'invoice').length} facture(s), ${rem.filter(x => x.kind === 'quote').length} devis</span></h3>${rem.slice(0, 6).map(x => `<div class="item" style="cursor:default"><a class="main" href="#/doc/${x.doc.id}" style="text-decoration:none;color:inherit"><div class="t">${e(x.doc.number)} · ${e(C[x.doc.clientId]?.name || '')}</div><div class="s">${x.kind === 'invoice' ? `échue le ${dateFr(x.due)} · ${x.days} j de retard · reste ${eur(x.left)}` : `devis envoyé il y a ${x.days} j · ${eur(totals(x.doc).ttc)} TTC`}${x.n ? ` · relancé ${x.n} fois` : ' · jamais relancé'}${x.kind === 'invoice' && x.n >= 3 ? ' · mise en demeure à envisager' : ''}</div></a><div class="r"><button class="btn sm" data-rel="${x.doc.id}">↻ Relancer</button></div></div>`).join('')}${rem.length > 6 ? `<p class="muted" style="margin:4px 0">+ ${rem.length - 6} autre(s) : ouvrez les factures ou les devis concernés.</p>` : ''}` : ''}
     ${unpaidList.length ? `<h3>Factures à encaisser <span class="muted" style="font-size:12px;font-weight:400">· toutes périodes : ${eur(unpaid)} (${unpaidList.length})</span></h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
-    ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
-    ${lateHtml}
     ${startCard}
     <h3>En un coup d'œil</h3><div class="grid">
       <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC · 90 derniers jours${nExpired ? ` · dont ${nExpired} expiré${nExpired > 1 ? 's' : ''}` : ''}</small></a>
@@ -228,6 +242,7 @@ async function renderDashboard(el) {
   $('#pto', el)?.addEventListener('change', ev => { sv('gp_pto', ev.target.value); refresh(); });
   $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
   $('#bknow', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
+  $('#newdos', el)?.addEventListener('click', () => import('./dossier.js').then(m => m.dossierModal()));
   $('#acc', el)?.addEventListener('click', () => import('./export.js').then(m => m.exportModal()));
   $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
   el.addEventListener('click', ev => { const b = ev.target.closest('[data-rel]'); if (b) import('./docmail.js').then(m => m.relanceModal(b.dataset.rel, () => refresh())); });

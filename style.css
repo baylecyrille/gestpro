@@ -695,3 +695,18 @@ span.tbadge{cursor:default}
 fieldset.ouvmode{border:1px solid var(--bd);border-radius:10px;margin:8px 0;padding:8px 12px}
 fieldset.ouvmode label{display:flex;gap:8px;align-items:flex-start;margin:8px 0;line-height:1.35}
 fieldset.ouvmode input[type=radio]{width:auto;margin:3px 0 0;flex:none}
+
+/* maj61 : clients en double, encours, à faire aujourd'hui, prochaine étape, rétractation */
+.simbox{border:1px solid #ecd9a0;border-left:4px solid var(--warn);border-radius:10px;background:#fff8e5;padding:8px 10px;font-size:14px}
+.simbox[hidden],#dnew[hidden]{display:none}
+.simbox .sim{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:6px}
+.item .enc{margin-top:1px}
+.todo .todoi{border-radius:0;box-shadow:none;border-left:0;border-right:0;border-top:0;margin:0;padding:8px 2px}
+.todo .todoi:last-child{border-bottom:0}
+.todo .todoi .t .chip{font-size:11.5px;margin-right:4px;vertical-align:1px}
+.nextstep{border-left:4px solid var(--p2);padding:10px 12px}
+.nextstep.bad{border-left-color:var(--bad)}.nextstep.warn{border-left-color:var(--warn)}.nextstep.ok{border-left-color:var(--ok)}
+.nextstep .nsl{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin-bottom:2px}
+.nextstep .nsr{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.nextstep .nsr b{flex:1 1 220px}
+.invbanner.retract{border-color:#b9cdea;border-left-color:var(--p2);background:#eef4fc}
