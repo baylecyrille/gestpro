@@ -6,6 +6,7 @@ import { matchLayout, buildResult, detectDocType, DOC_TYPES, docType } from './s
 import { openManual } from './supplier-manual.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
 import * as fl from './files.js';
+import { parseEInvoice, pickXml, decodeXml } from './efact-in.js';
 
 let pdfReady = null;
 function loadPdfJs() {
@@ -46,6 +47,26 @@ const forgetLayout = l => (l?.key ? db.del('settings', LAY + l.key) : null);
 
 const digits = s => String(s || '').replace(/\D/g, '');
 
+/* Mémoire des documents importés (M11) : fournisseur + type + numéro. Seuls ces trois repères (et la date et le total) sont retenus, jamais le contenu du document. */
+const IMP = 'impdoc:';
+const normName = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const impKeys = (S, DT, inv) => {
+  const n = String(inv?.number || '').toUpperCase().replace(/\s+/g, ''); if (!n) return [];
+  const t = DT?.key || 'autre', ks = [];
+  if (digits(S?.siret)) ks.push(`${IMP}${digits(S.siret)}|${t}|${n}`);
+  if (normName(S?.name)) ks.push(`${IMP}${normName(S.name)}|${t}|${n}`);
+  return ks;
+};
+export async function findImported(S, DT, inv) {
+  for (const k of impKeys(S, DT, inv)) { const r = await db.get('settings', k); if (r && r.value) return r.value; }
+  return null;
+}
+async function rememberImported(S, DT, inv, total) {
+  const k = impKeys(S, DT, inv)[0]; if (!k) return;
+  await db.put('settings', { id: k, value: { sup: S?.name || '', type: DT?.key || '', number: inv.number, date: inv.iso(inv.date) || '', total: Math.round((total || 0) * 100) / 100, at: new Date().toISOString() } });
+}
+const dupText = (x, DT) => `Ce document semble déjà importé le ${new Date(x.at).toLocaleDateString('fr-FR')} (${(DT?.label || x.type || 'document').toLowerCase()} ${x.number}${x.sup ? ' – ' + x.sup : ''}${x.total ? ', ' + eur(x.total) + ' HT' : ''}). Un second import compterait deux fois les mêmes achats.`;
+
 /* Crée ou complète la fiche fournisseur (sans jamais écraser une information déjà saisie) */
 export async function upsertSupplier(S, inv) {
   if (!S?.name) return null;
@@ -64,19 +85,30 @@ export async function upsertSupplier(S, inv) {
 
 export async function supplierImportModal(opts = {}) {
   const [products, locs, sites, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('sites'), db.all('contacts')]);
-  const body = `<p class="muted">Choisissez un document de fournisseur au format PDF (facture, bon de livraison, bon de commande, devis…). Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
-    <label class="f"><span>Document fournisseur (PDF)</span><input type="file" id="spf" accept="application/pdf,.pdf"></label><div id="spres"></div>`;
-  modal('Document fournisseur (PDF)', body, async (o, f) => (f._go ? f._go() : false), {
+  const body = `<p class="muted">Choisissez un document de fournisseur au format PDF (facture, bon de livraison, bon de commande, devis…) ou le fichier XML d'une facture électronique (Factur-X, UBL). Un PDF Factur-X est lu directement dans ses données : lignes, taux de TVA et totaux exacts. Le fichier est lu <b>uniquement sur cet appareil</b> : il n'est ni envoyé, ni enregistré. ${opts.onLines ? 'Les lignes que vous validez sont ajoutées au document en cours.' : 'Seules les lignes que vous validez sont ajoutées à votre catalogue.'}</p>
+    <label class="f"><span>Document fournisseur (PDF ou XML)</span><input type="file" id="spf" accept="application/pdf,.pdf,.xml,text/xml,application/xml"></label><div id="spres"></div>`;
+  modal('Document fournisseur (PDF ou facture électronique)', body, async (o, f) => (f._go ? f._go() : false), {
     wide: true, submitLabel: 'Importer la sélection',
     onOpen: f => {
       f.querySelector('footer .btn.primary').hidden = true;
       $('#spf', f).onchange = async ev => {
         const file = ev.target.files[0]; if (!file) return;
-        const out = $('#spres', f); out.innerHTML = '<p class="muted">Lecture du PDF…</p>';
+        const out = $('#spres', f); out.innerHTML = '<p class="muted">Lecture du fichier…</p>';
+        /* Facture électronique : XML seul (Factur-X / CII, UBL), ou PDF Factur-X dont le XML est joint */
+        if (/\.xml$/i.test(file.name) || /xml/i.test(file.type || '')) {
+          let x = null; try { x = parseEInvoice(decodeXml(new Uint8Array(await file.arrayBuffer()))); } catch { /* illisible */ }
+          if (!x) { out.innerHTML = '<p class="bad">Ce fichier XML n\'est pas une facture électronique reconnue (Factur-X / CII ou UBL avec au moins une ligne).</p>'; return; }
+          renderReview(f, out, x, products, locs, opts, sites, contacts, null, null); return;
+        }
         let raw;
         try { raw = await loadPdf(file); } catch (err) { out.innerHTML = `<p class="bad">${e(err.message || err)}</p>`; return; }
         raw.docType = detectDocType(raw.pages, raw.sizes);
         const env = { f, out, products, locs, opts, sites, contacts, file, raw };
+        try {
+          const xml = pickXml(await raw.doc.getAttachments());
+          const x = xml ? parseEInvoice(xml) : null;
+          if (x) { renderReview(f, out, x, products, locs, opts, sites, contacts, file, { env, used: null }); return; }
+        } catch { /* pas de données jointes : lecture du texte du PDF */ }
         /* 1) mise en page mémorisée pour ce fournisseur, 2) lecture automatique, 3) sinon lecture « à la main » */
         let r = null, used = null, note = '';
         try {
@@ -145,7 +177,8 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     <div class="card" style="margin:8px 0"><b>${e(S.name || 'Fournisseur non reconnu')}</b><span id="sphead">${inv.number ? ` · ${e(dtLabel().toLowerCase())} ${e(inv.number)}` : ''}</span>${inv.date ? ` du ${e(inv.date)}` : ''}${inv.due ? ` · échéance ${e(inv.due)}` : ''}<br>
       <span class="muted">${[S.address, [S.zip, S.city].filter(Boolean).join(' '), S.phone, S.email, S.siret && 'SIRET ' + S.siret].filter(Boolean).map(e).join(' · ')}</span></div>
     <p class="muted" style="margin:4px 0"><label>Type de document : <select id="sptype" style="width:auto">${typeOpts()}</select></label></p><p class="bad" id="spwarn" style="margin:4px 0" ${notInvoice() ? '' : 'hidden'}>${e(warnTxt())}</p><p class="muted" id="spbl" style="margin:4px 0" ${isBL() && !doc ? '' : 'hidden'}>${e(BLINFO)}</p>
-    ${ctx ? `<p class="muted" style="margin:4px 0">${ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » appliquée. ` : r.mode === 'manuel' ? 'Lignes lues d\'après les zones que vous avez entourées. ' : ''}<button type="button" class="btn sm" id="spman">✋ Lire à la main</button></p>` : ''}
+    ${ctx ? `<p class="muted" style="margin:4px 0">${ctx.used ? `Mise en page mémorisée pour « ${e(ctx.used.name)} » appliquée. ` : r.mode === 'manuel' ? 'Lignes lues d\'après les zones que vous avez entourées. ' : r.einvoice ? '✔ Lues dans les données de facture électronique jointes au PDF (taux de TVA et totaux exacts). ' : ''}<button type="button" class="btn sm" id="spman">✋ Lire à la main</button></p>` : r.einvoice ? '<p class="muted" style="margin:4px 0">✔ Lu dans le fichier XML de facture électronique (taux de TVA et totaux exacts).</p>' : ''}
+    ${doc ? '' : '<p class="bad" id="spdup" style="margin:4px 0" hidden></p>'}
     <p class="${r.sumOk === false ? 'bad' : 'muted'}">${r.items.length} ligne(s) lue(s) — total ${eur(r.sum)} HT${r.sumOk === true ? ' ✔ identique au total de la facture' : r.sumOk === false ? ` ⚠ la facture indique ${eur(r.totals.ht0)} : vérifiez les lignes` : ' (total de la facture non trouvé : vérifiez)'}${r.mode === 'texte' ? ' · lecture approximative, contrôlez chaque ligne' : ''}.
     ${r.fees.length ? `<br>Frais de la facture (jamais ajoutés au catalogue) : ${r.fees.map(x => `${e(x.label)} ${eur(x.amount)}`).join(', ')} (total ${eur(feeTot)} HT).` : ''}
     ${isBL() ? (rows.some(x => !(x.price > 0)) ? '<br>Lignes sans prix connu : saisissez le prix d\'achat (ou laissez 0 : l\'entrée en stock se fera sans valeur).' : '') : rows.some(x => x.price === 0) ? '<br>Les lignes à 0 € (composants d\'un lot déjà facturé) sont décochées.' : ''}</p>
@@ -167,12 +200,21 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       ${!doc && fl.available() && file ? '<label class="f full"><span><input type="checkbox" id="spkeep" checked> Conserver le PDF dans le stockage Drive / OneDrive (GestPro/Achats fournisseurs, et dans le chantier si affecté)</span></label>' : ''}
       <label class="f full"><span><input type="checkbox" id="spsup" ${S.name && !doc ? 'checked' : ''} ${S.name ? '' : 'disabled'}> Ajouter / compléter le fournisseur « ${e(S.name || '—')} » dans les contacts</span></label>
     </div><p id="spcnt" class="muted"></p>`;
+  /* M11 : ce document (fournisseur, type, numéro) a-t-il déjà été importé ? */
+  let dupOf = null;
+  const dupCheck = async () => {
+    const p = $('#spdup', out); if (doc || !p) return;
+    dupOf = await findImported(S, DT, inv).catch(() => null);
+    p.hidden = !dupOf; p.textContent = dupOf ? '⚠ ' + dupText(dupOf, DT) : '';
+  };
+  dupCheck();
   const btn = f.querySelector('footer .btn.primary'); btn.hidden = false;
   const upd = () => { $('#spcnt', out).textContent = `${nbOn()} ligne(s) sélectionnée(s).`; btn.disabled = !nbOn() && !$('#spsup', out).checked; };
   out.onchange = ev => {
     if (ev.target.id === 'sptype') {
       DT = ev.target.value ? (docType(ev.target.value) || DT) : null;
       $('#sphead', out).textContent = inv.number ? ` · ${dtLabel().toLowerCase()} ${inv.number}` : '';
+      dupCheck();
       const w = $('#spwarn', out); w.textContent = warnTxt(); w.hidden = !notInvoice();
       const bi = $('#spbl', out); if (bi) bi.hidden = !isBL() || doc;
       const stk0 = $('#spstk', out); if (stk0) stk0.checked = isBL();
@@ -201,6 +243,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   if (ap) ap.onclick = () => $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=dest]', tr).value = $('#spsite', out).value; });
   upd();
   f._go = async () => {
+    if (!doc) { dupOf = await findImported(S, DT, inv).catch(() => null); if (dupOf && !confirm('⚠ ' + dupText(dupOf, DT) + '\n\nL\'importer quand même ?')) return false; }
     const sel = $$('tr[data-i]', out).filter(tr => $('[data-on]', tr).checked).map(tr => {
       const g = k => $(`[data-k=${k}]`, tr).value;
       return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')), tva: r.items[+tr.dataset.i]?.tva, dest: doc ? '' : g('dest').trim() };
@@ -236,7 +279,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         if (!live.includes(p)) live.push(saved);
         x.pid = saved.id; x.sell = saved.sell;
         isNew ? created++ : updated++;
-        if (toStock && x.qty > 0 && (x.price > 0 || isBL())) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
+        if (toStock && x.qty > 0 && (x.price > 0 || isBL())) { await recordMove(saved, { type: 'in', to: x.loc || loc, qty: x.qty, note: `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim(), unit: x.price, purchase: true, sup: S.name || '', ...(x.tva >= 0 ? { tva: x.tva } : {}) }); moved++; }
       }
     }
     /* Chantiers : les achats affectés deviennent des charges du chantier (comptées dans la rentabilité) */
@@ -247,11 +290,11 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     for (const [sid, xs] of Object.entries(bySite)) {
       const st = await db.get('sites', sid); if (!st) continue;
       const date = inv.iso(inv.date) || today(), note = `${dtLabel()} ${inv.number || ''} ${S.name || ''}`.trim();
-      const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note, purchase: true, ...(x.tva >= 0 ? { tva: x.tva } : {}) }));
+      const add = xs.map(x => ({ id: db.uid(), pid: x.pid || '', label: x.name, qty: x.qty, unit: x.unit, cost: x.price, date, note, purchase: true, sup: S.name || '', ...(x.tva >= 0 ? { tva: x.tva } : {}) }));
       const feeTotal = r.fees.reduce((a, y) => a + y.amount, 0);
       if (!doc && $('#spfees', out)?.checked && feeTotal && totAll > 0) {
         const share = Math.round(feeTotal * xs.reduce((a, x) => a + x.qty * x.price, 0) / totAll * 100) / 100;
-        if (share) add.push({ id: db.uid(), pid: '', label: 'Frais de port / divers (quote-part)', qty: 1, unit: 'forfait', cost: share, date, note, purchase: true, tva: 20 });
+        if (share) add.push({ id: db.uid(), pid: '', label: 'Frais de port / divers (quote-part)', qty: 1, unit: 'forfait', cost: share, date, note, purchase: true, sup: S.name || '', tva: 20 });
       }
       st.charges = [...(st.charges || []), ...add];
       await db.put('sites', st); charged += xs.length;
@@ -275,6 +318,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));
       toast(`${sel.length} ligne(s) ajoutée(s) au document`); return;
     }
+    if (inv.number && (cat || moved || charged || supplier)) { try { await rememberImported(S, DT, inv, sel.reduce((x, y) => x + y.qty * y.price, 0)); } catch { /* mémoire facultative */ } }
     toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, moved && `${moved} entrée(s) en stock`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, kept, supMsg].filter(Boolean).join(' · ') || 'Terminé');
     refresh();
   };

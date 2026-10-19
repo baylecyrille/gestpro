@@ -30,6 +30,8 @@ export const DEFAULTS = {
   appName: 'GestPro',
   autoCloseSites: true,
   payDays: 30,
+  autoBackup: true,
+  remindQuoteDays: 10, remindInvDays: 3, remindEvery: 7, relanceSubject: '', relanceQuote: '', relanceInvoice: '',
   photoPx: 2560,
   stSecColor: '#1e5aa8', stSecBg: '#dbe7f7', stLineBg: '#ffffff', stTextBg: '#f6f7f9',
   fbPage: '', fbId: '', fbToken: '',

@@ -67,9 +67,9 @@ export async function getSettings(defaults) {
 }
 export const saveSettings = v => put('settings', { id: 'main', value: v });
 
-export async function exportAll() {
+export async function exportAll(skip = []) {
   const out = { app: 'gestpro', version: 1, date: new Date().toISOString() };
-  for (const s of STORES) out[s] = (await all(s)).map(({ _u, _d, ...r }) => r);
+  for (const s of STORES) if (!skip.includes(s)) out[s] = (await all(s)).map(({ _u, _d, ...r }) => r);
   return out;
 }
 

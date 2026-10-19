@@ -1,8 +1,9 @@
 // Calculs financiers : période, CA, achats, TVA, courbe mensuelle, rentabilité d'un chantier.
 import { num, round2, today } from './util.js';
 import { doneBySite } from './hours.js';
-import { totals } from './docs.js';
+import { totals, counts } from './docs.js';
 import { buyRate } from './vat.js';
+import { opOf, vatDebitsOf } from './efact.js';
 import { addDays } from './team.js';
 
 export const PERIODS = [['d30', '30 derniers jours'], ['m3', '3 derniers mois'], ['y1', '1 an (12 derniers mois)'], ['custom', 'Date à date…'], ['month', 'Ce mois'], ['quarter', 'Ce trimestre'], ['year', 'Cette année'], ['lastyear', 'Année dernière']];
@@ -19,8 +20,8 @@ export function periodRange(key, ref = today(), custom = {}) {
   if (key === 'lastyear') return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` };
   return { from: `${y}-${p(m)}-01`, to: `${y}-${p(m)}-31` };
 }
-const inR = (d, r) => !!d && d.slice(0, 10) >= r.from && d.slice(0, 10) <= r.to;
-const sign = d => (d.type === 'credit' ? -1 : 1);
+export const inR = (d, r) => !!d && d.slice(0, 10) >= r.from && d.slice(0, 10) <= r.to;
+export const sign = d => (d.type === 'credit' ? -1 : 1);
 
 /* Valeur d'achat d'une réception de stock (HT, TVA) */
 export function purchaseOf(mv, P) {
@@ -32,11 +33,38 @@ export function purchaseOf(mv, P) {
 /* Achats affectés directement à un chantier (importés d'une facture fournisseur) : mêmes calculs que les réceptions de stock */
 const chargeBuys = (sites, P) => (sites || []).flatMap(st => (st.charges || []).filter(c => c.purchase).map(c => ({ date: c.date, ...purchaseOf({ qty: c.qty, unit: c.cost, tva: c.tva, productId: c.pid }, P) })));
 
-export function summary(range, docs, payments, moves, products, sites = []) {
+/* TVA collectée de la période, mouvement par mouvement (A6).
+   - TVA due à la FACTURE : option « TVA sur les débits » cochée, ou livraison de biens (date de la facture, avoirs en négatif) ;
+   - TVA due à l'ENCAISSEMENT : prestations de services, travaux compris, quand l'option n'est pas cochée (date de chaque règlement, remboursements en négatif ;
+     les imputations d'avoir ne sont pas de l'argent encaissé : elles sont ignorées).
+   Sans réglages (S absent) : TVA à la date des factures, comme avant la maj59. Retourne [{ date, docId, number, type, basis, ht, tva, rates:[{ rate, ht, tva }] }]. */
+/* La TVA de ce document est-elle comptée à la date de la facture (sinon : à l'encaissement) ? Un avoir suit le régime de la facture qu'il annule. */
+export const vatOnInvoice = (d, D, S) => { const b = (d.type === 'credit' && D[d.fromInvoice]) || d; return !S || vatDebitsOf(b, S) || opOf(b, S) === 'goods'; };
+export function vatEvents(range, docs, payments, S) {
+  const D = Object.fromEntries(docs.map(d => [d.id, d])), legacy = !S, ev = [];
+  const onInv = d => vatOnInvoice(d, D, S);
+  for (const d of docs) {
+    if ((d.type !== 'invoice' && d.type !== 'credit') || !counts(d) || !inR(d.date, range) || !onInv(d)) continue;
+    const t = totals(d), k = sign(d);
+    ev.push({ date: d.date, docId: d.id, number: d.number || '', type: d.type, basis: 'facture', ht: round2(k * t.ht), tva: round2(k * t.tva), rates: t.rates.map(x => ({ rate: x.rate, ht: round2(k * x.ht), tva: round2(k * x.tva) })) });
+  }
+  if (!legacy) {
+    for (const p of payments) {
+      if (p.method === 'avoir' || p.kind === 'avoir' || !inR(p.date, range)) continue;
+      const d = D[p.docId]; if (!d || d.status === 'draft' || onInv(d)) continue;
+      const t = totals(d); if (!(t.ttc > 0)) continue;
+      const k = (p.kind === 'remboursement' ? -1 : 1) * num(p.amount) / t.ttc;
+      ev.push({ date: p.date, docId: d.id, number: d.number || '', type: d.type, basis: 'encaissement', payId: p.id, ht: round2(t.ht * k), tva: round2(t.tva * k), rates: t.rates.map(x => ({ rate: x.rate, ht: round2(x.ht * k), tva: round2(x.tva * k) })) });
+    }
+  }
+  return ev.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+export function summary(range, docs, payments, moves, products, sites = [], S = null) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const sales = docs.filter(d => (d.type === 'invoice' || d.type === 'credit') && d.status !== 'draft' && d.status !== 'cancelled' && inR(d.date, range));
   const ca = round2(sales.reduce((a, d) => a + sign(d) * totals(d).ht, 0));
-  const tvaColl = round2(sales.reduce((a, d) => a + sign(d) * totals(d).tva, 0));
+  const tvaColl = round2(vatEvents(range, docs, payments, S || undefined).reduce((a, v) => a + v.tva, 0));
   const buys = [...moves.filter(m => m.purchase && inR(m.date, range)).map(m => purchaseOf(m, P)), ...chargeBuys(sites, P).filter(b => inR(b.date, range))];
   const achats = round2(buys.reduce((a, b) => a + b.ht, 0)), tvaDed = round2(buys.reduce((a, b) => a + b.tva, 0));
   const cash = round2(payments.filter(p => inR(p.date, range) && p.method !== 'avoir').reduce((a, p) => a + (p.kind === 'remboursement' ? -1 : 1) * num(p.amount), 0));

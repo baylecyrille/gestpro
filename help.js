@@ -34,7 +34,8 @@ export const TOPICS = {
         ['Compagnon / salarié', 'Son planning et ses chantiers sans montants, saisie de ses heures, stock'],
         ['Intervenant', 'Seulement son planning et les chantiers où il intervient, sans montants']])}
         <p>Il doit toujours rester au moins un administrateur actif avec un code.</p>`),
-      S('Sauvegarder', `<p>Faites une sauvegarde avant toute grosse opération (import, nettoyage) : <b>Réglages › Sauvegarde › Exporter (JSON)</b>, et gardez le fichier hors de l'appareil. « Restaurer… » recharge un fichier de sauvegarde.</p>`)
+      S('Sauvegarder', `<p>Faites une sauvegarde avant toute grosse opération (import, nettoyage) : <b>Réglages › Sauvegarde › Exporter (JSON)</b>, et gardez le fichier hors de l'appareil. « Restaurer… » recharge un fichier de sauvegarde.</p>
+        <p><b>Sauvegarde automatique</b> : une fois le script Apps Script relié, une copie datée part chaque semaine dans <b>GestPro/Sauvegardes</b> de votre Drive ou OneDrive (les 8 dernières sont gardées). Elle se fait à l'ouverture de l'application, après la synchronisation, seulement sur le compte administrateur ; l'application ne peut pas travailler quand elle est fermée. La copie ne contient ni les photos des produits (elles restent dans le classeur) ni les clés personnelles (jeton Facebook, identifiant Google). Pour la restaurer, téléchargez-la avec le bouton ⬇ puis utilisez « Restaurer… ».</p>`)
     ]
   },
 
@@ -74,7 +75,22 @@ export const TOPICS = {
         '<b>Planning des 7 prochains jours</b> : qui travaille où (affiché à côté des chantiers sur un grand écran, en dessous sur téléphone)',
         '<b>Habilitations à renouveler</b> : expirées ou bientôt expirées',
         '<b>Factures à encaisser</b> : les plus anciennes d\'abord',
+        '<b>À relancer</b> : devis sans réponse et factures échues (voir « Relancer les devis et les factures »)',
+        '<b>Numéro en double</b> : deux documents de même type portent le même numéro (voir plus bas)',
+        '<b>Sauvegarde automatique en retard</b> : la dernière copie date de plus de 10 jours ou a échoué',
         '<b>À réapprovisionner</b> : produits sous leur seuil'])),
+      S('Relancer les devis et les factures', `<p>La liste <b>À relancer</b> apparaît quand il y a quelque chose à faire. Rien n'est envoyé tout seul : chaque ligne a un bouton <b>Relancer</b> qui ouvre un e-mail prêt à envoyer (PDF joint), que vous relisez et modifiez avant l'envoi.</p>${ul([
+        '<b>Devis envoyé</b> et sans réponse : proposé 10 jours après l\'envoi, puis tous les 7 jours, trois relances au plus',
+        '<b>Facture échue</b> et non soldée : proposée 3 jours après l\'échéance, puis tous les 7 jours. Le message rappelle le reste dû et le retard ; dès la 2<sup>e</sup> relance il ajoute les pénalités et l\'indemnité de 40 €. À partir de la 3<sup>e</sup> relance, l\'écran suggère d\'envisager une mise en demeure',
+        'Les factures <b>en litige</b>, brouillons, annulées, réglées ou entièrement couvertes par un avoir ne sont jamais proposées',
+        '<b>Relance faite autrement</b> (téléphone, courrier, sur place) : enregistre la relance dans l\'historique du document sans envoyer d\'e-mail'])}
+        <p>Les délais et les textes se règlent dans <b>Réglages › Relances</b>. Chaque document garde l'historique de ses relances ; le bouton <b>Relancer</b> existe aussi sur la page d'un devis envoyé ou d'une facture impayée.</p>`),
+      S('Export pour le comptable', `<p>Le bouton <b>Export pour le comptable</b> (carte Achats &amp; TVA) prépare, pour une période (mois dernier, trimestre, année ou dates libres), des fichiers <b>CSV</b> qui s'ouvrent directement dans Excel : <b>ventes</b> (factures et avoirs, avec les montants HT et TVA par taux, l'encaissé et le reste dû), <b>règlements</b>, <b>achats</b> (réceptions de stock et achats de chantier, avec la TVA déductible), <b>TVA</b> (collectée et déductible par taux) et <b>heures</b> (absences comprises).</p>
+        <p>Vous pouvez télécharger un fichier seul ou tout en un <b>ZIP</b> accompagné d'un petit « LISEZ-MOI ». Les avoirs et les remboursements sont en négatif. Rien n'est envoyé : les fichiers sont créés sur l'appareil.</p>
+        <p class="warnnote">Ce sont des aides au calcul : faites valider la base de TVA par votre cabinet comptable.</p>`),
+      S('TVA collectée à l\'encaissement', `<p>Pour les prestations de services et les travaux, la TVA est due à l'<b>encaissement</b> : l'accueil compte la part de TVA de chaque règlement reçu (au prorata de la facture), les remboursements d'avoir étant déduits. Les <b>livraisons de biens</b> restent comptées à la date de la facture, ainsi que toutes les factures si vous cochez l'option <b>TVA sur les débits</b> (Réglages › Entreprise / Mentions légales). Le chiffre d'affaires, lui, reste celui des factures émises.</p>`),
+      S('Numéro en double', `<p>Si deux appareils émettent chacun un document hors ligne, ils peuvent attribuer le même numéro. L'accueil affiche alors un bandeau nommant les deux documents, et une alerte est donnée une fois après la synchronisation. Ouvrez l'un des deux et corrigez son numéro avant tout envoi : la numérotation doit rester unique et continue.</p>`),
+      S('Sauvegarde automatique', `<p>Quand le script Apps Script est relié (Drive ou OneDrive), l'application dépose chaque semaine, à l'ouverture, une copie datée de vos données dans le dossier <b>GestPro/Sauvegardes</b> ; les 8 dernières sont conservées. Si la copie échoue ou n'a pas eu lieu depuis plus de 10 jours, un rappel apparaît ici avec le bouton <b>Sauvegarder maintenant</b>. Détails dans Réglages.</p>`),
       S('En un coup d\'œil', `<p>Quatre tuiles : <b>Devis en attente</b> (devis « Envoyé » datés de moins de 90 jours ; les plus anciens restent dans la liste des devis), <b>Chantiers ouverts</b> (Nouveau, Signé, En cours), <b>Stock bas / épuisé</b> et <b>Publications à faire</b> (Facebook).</p>
         <p>Tant que la configuration n'est pas terminée, la carte « Pour démarrer » propose cinq étapes ; « Masquer » la retire.</p>`)
     ]
@@ -200,6 +216,8 @@ export const TOPICS = {
         <p><b>✋ Lire à la main</b> : si les lignes ne sont pas reconnues (ou si la lecture est fausse), le PDF s'affiche et vous entourez vous-même les zones : le <b>tableau des lignes</b>, le <b>fournisseur</b> (nom et adresse), le <b>n° du document</b>, la <b>date</b>. Glissez un rectangle ou touchez un mot, puis vérifiez l'affectation des colonnes (désignation, référence, quantité, prix, montant) et les lignes lues. Cochez « Retenir cette mise en page » : elle est enregistrée <b>par fournisseur et par type de document</b> (la facture, le bon de livraison et le bon de commande d'un même fournisseur ont chacun la leur) et les prochains documents de ce type seront lus automatiquement. Seules les <b>positions</b> des zones sont gardées, jamais le contenu des factures.</p>
         <p><b>Bon de livraison</b> : les lignes sans prix prennent le <b>dernier prix connu</b> du catalogue (pastille « prix du catalogue ») ; pour un article inconnu (pastille « prix à saisir »), tapez le prix à la main ou laissez 0. L'option « Enregistrer l'entrée en stock » est cochée d'office. Comme une réception de colis, l'entrée est comptée dans vos achats : quand la facture arrive, importez-la en mettant le catalogue à jour <b>sans refaire l'entrée en stock</b>.</p>
         <p>Un <b>devis</b>, un <b>bon de commande</b> ou un <b>avoir</b> n'est pas un achat réalisé : l'application vous prévient et ne propose aucun chantier par défaut.</p>
+        <p><b>Facture électronique</b> : le bouton accepte aussi le fichier <b>XML</b> d'une facture électronique (Factur-X, UBL) et un PDF Factur-X, dont les données sont lues directement : lignes, unités, taux de TVA et totaux sont exacts, sans lecture « à la main ». Les frais de port ou de livraison sont signalés à part, et le total des lignes est comparé à celui de la facture.</p>
+        <p><b>Déjà importé ?</b> L'application retient, sur cet appareil et dans votre classeur, le fournisseur, le type, le numéro, la date et le total des documents importés (jamais leur contenu). Si vous importez à nouveau le même document, elle le signale et demande confirmation avant d'ajouter les lignes une seconde fois.</p>
         <p class="warnnote">Vérifiez toujours le tableau de lecture avant de valider : la lecture d'un PDF peut se tromper sur une quantité ou un prix.</p>`)
     ]
   },
@@ -299,7 +317,8 @@ export const TOPICS = {
         '<b>🧾 Facture électronique</b> : vérifie les mentions obligatoires (SIREN du client, nature de l\'opération, TVA sur les débits, adresse de livraison) puis exporte un Factur-X ou le XML seul. Le dépôt sur la plateforme agréée n\'est pas automatique',
         '<b>⧉ Dupliquer</b> : nouveau brouillon sans numéro, sans règlements et sans lien avec l\'original',
         '<b>Supprimer</b> : efface un devis ou un brouillon et ses règlements ; une facture émise s\'annule par un avoir (voir « Annuler une facture émise »)'])),
-      S('TVA à taux réduit (5,5 % et 10 %)', `<p>Quand un document contient des travaux à taux réduit, l'éditeur affiche un encadré : l'attestation papier n'existe plus, le client certifie les conditions par une mention imprimée sur le devis (« Bon pour accord ») et la facture. Son texte se modifie dans « Mise en page – zones ». Conservez devis, factures et photos des travaux 5 ans, et faites valider le texte par votre cabinet comptable.</p>`)
+      S('TVA à taux réduit (5,5 % et 10 %)', `<p>Quand un document contient des travaux à taux réduit, l'éditeur affiche un encadré : l'attestation papier n'existe plus, le client certifie les conditions par une mention imprimée sur le devis (« Bon pour accord ») et la facture. Son texte se modifie dans « Mise en page – zones ». Conservez devis, factures et photos des travaux 5 ans, et faites valider le texte par votre cabinet comptable.</p>`),
+      S('Relancer un devis ou une facture', `<p>Sur un devis envoyé ou une facture impayée, le bouton <b>Relancer</b> ouvre un e-mail de relance prêt à envoyer (texte réglable dans Réglages › Relances). L'historique des relances faites s'affiche sous le bouton ; <b>Relance faite autrement</b> y ajoute un appel téléphonique ou un courrier.</p>`)
     ]
   },
 
@@ -328,13 +347,14 @@ export const TOPICS = {
         ['Mentions légales', 'N° de TVA intracommunautaire, RCS, répertoire des métiers, médiateur de la consommation, délai d\'exécution des devis : imprimés en pied de page (seulement ce qui est renseigné). Un avertissement s\'affiche avant d\'imprimer ou d\'envoyer un document s\'il en manque une'],
         ['Ventes', 'Préfixes et prochains numéros (avec <code>{AAAA}</code> l\'année se met toute seule et la numérotation repart à 1 chaque 1er janvier), délai de règlement, textes par défaut, nature d\'opération, clôture automatique des chantiers'],
         ['E-mails', 'Objet et message par défaut, avec un bouton d\'essai'],
+        ['Relances', 'Délais (devis, factures, entre deux relances) et textes des relances de devis et de factures'],
         ['Couleurs et mise en page', 'Couleurs des lignes, mise en page commune des documents'],
         ['Accès des membres', 'État de la protection par code PIN, avec bouton pour la désactiver'],
         ['Google Sheets', 'Connexion, synchronisation, état de la dernière synchro'],
         ['Modèles de texte', 'Textes réutilisables à insérer dans les devis et factures'],
         ['Importer des devis / factures', 'Voir ci-dessous'],
         ['Photos & fichiers (Drive ou OneDrive)', '« Tester le stockage » vérifie l\'envoi dans le dossier GestPro et indique où partent les fichiers'],
-        ['Sauvegarde', 'Exporter (JSON) et Restaurer']])
+        ['Sauvegarde', 'Exporter (JSON), Restaurer, et sauvegarde automatique hebdomadaire dans Drive / OneDrive (liste des copies, téléchargement, « Sauvegarder maintenant »)']])
         + `<p>Les numéros sont attribués dans l'ordre : si vous reprenez un historique, réglez le « prochain numéro » avant d'émettre un document.</p>`),
       S('Importer des devis et des factures', `<p>La carte ajoute à vos données le contenu d'un fichier d'import GestPro (clients, chantiers, produits, devis, factures, règlements) <b>sans rien remplacer ni modifier</b> : ce qui existe déjà est ignoré. Une confirmation indique d'abord ce qui sera ajouté.</p>
         <p>La même carte accepte un <b>fichier de correction des statuts</b> (devis et chantiers importés) : l'application annonce le nombre de modifications avant d'agir, conserve ce que vous avez changé à la main depuis l'import, et une seconde application ne change plus rien.</p>

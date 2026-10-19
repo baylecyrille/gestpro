@@ -12,6 +12,9 @@ import * as sheets from './sheets.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
 import { MAIL_DEFAULTS, MAIL_TOKENS, mailError } from './docmail.js';
+import { remindList, RELANCE_DEFAULTS, RELANCE_TOKENS } from './reminders.js';
+import * as backup from './backup.js';
+import { dupNumbers } from './doccheck.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -109,11 +112,11 @@ async function renderContacts(el, tab = 'client') {
 
 /* ---------- Tableau de bord ---------- */
 async function renderDashboard(el) {
-  const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves, times] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves'), db.all('times')]);
+  const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves, times, bk] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves'), db.all('times'), backup.getState()]);
   let per = 'd30', pc = {}; try { per = localStorage.getItem('gp_period') || 'd30'; pc = { from: localStorage.getItem('gp_pfrom') || '', to: localStorage.getItem('gp_pto') || '' }; } catch { /* ignore */ }
   if (!PERIODS.some(p => p[0] === per)) per = 'd30';
   const range = periodRange(per, today(), pc);
-  const sm = summary(range, docs, payments, moves, products, sites);
+  const sm = summary(range, docs, payments, moves, products, sites, S);
   const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
   const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
   const invoices = docs.filter(d => d.type === 'invoice' && counts(d));
@@ -126,8 +129,13 @@ async function renderDashboard(el) {
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent' && (d.date || '') >= recent);
   const nExpired = quotesPending.filter(d => quoteExpired(d)).length; // date de validité dépassée
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
+  const rem = remindList(docs, payments, S); // N1 : relances à faire aujourd'hui
   const C = Object.fromEntries(contacts.map(c => [c.id, c]));
   const SI = Object.fromEntries(sites.map(x => [x.id, x]));
+  const dups = dupNumbers(docs); // M14 : numéros en double après synchronisation
+  const dupHtml = dups.length ? `<div class="card" style="border-left:4px solid var(--bad)"><b>⚠ Numéro${dups.length > 1 ? 's' : ''} en double</b><p class="muted" style="margin:4px 0">Deux appareils ont probablement émis un document hors ligne avec le même numéro. Ouvrez l'un des deux et corrigez son numéro avant tout envoi : la numérotation doit rester unique et continue.</p>${dups.slice(0, 5).map(g => `<div><b>${e(g.number)}</b> : ${g.docs.map(d => `<a href="#/doc/${d.id}">${e(C[d.clientId]?.name || '(sans client)')} · ${dateFr(d.date)} · ${eur(totals(d).ttc)}</a>`).join(' et ')}</div>`).join('')}</div>` : '';
+  const bkLate = sheets.scriptMode() && S.autoBackup !== false && auth.can('settings') && (bk.at || bk.error) && backup.overdueBackup(bk); // N4 : rappel si la copie automatique n'a pas abouti
+  const bkHtml = bkLate ? `<div class="card" style="border-left:4px solid var(--warn)"><b>⚠ Sauvegarde automatique en retard</b><p class="muted" style="margin:4px 0">${bk.at ? 'Dernière copie le ' + dateFr(bk.at.slice(0, 10)) : 'Aucune copie réussie'}${bk.error ? ' · dernier essai : ' + e(bk.error) : ''}.</p><button type="button" class="btn sm" id="bknow">Sauvegarder maintenant</button></div>` : '';
   // « Pour démarrer » : disparaît tout seul quand toutes les étapes sont faites (ou via « Masquer »)
   const steps = [
     ['Compléter l\'entreprise (IBAN, BIC, logo) dans Réglages', !!S.iban, '#/settings'],
@@ -188,6 +196,7 @@ async function renderDashboard(el) {
   const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
   el.innerHTML = `<h2>Bonjour${first ? ' ' + e(first) : ''} 👋</h2>
     <div class="row"><a class="btn primary" href="#/stock/scan">▦ Scanner</a><a class="btn" href="#/doc/new/quote">+ Devis</a><a class="btn" href="#/doc/new/invoice">+ Facture</a><a class="btn" href="#/site/new">+ Chantier</a><a class="btn" href="#/facebook/post">f Publier</a></div>
+    ${dupHtml}${bkHtml}
     <div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Chiffres de la période</h3><select id="per" style="width:auto">${PERIODS.map(([k, l]) => `<option value="${k}" ${k === per ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${per === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" id="pfrom" value="${e(pc.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" id="pto" value="${e(pc.to)}"></label></div>` : `<p class="muted" style="margin:0">Du ${dateFr(range.from)} au ${dateFr(range.to)}</p>`}
     <div class="hero">
@@ -196,13 +205,15 @@ async function renderDashboard(el) {
       <a class="kpi ${unpaidPerSum > 0.005 ? 'bad' : 'ok'}" href="#/docs/invoice"><small>Reste à encaisser (factures de la période)</small><b>${eur(unpaidPerSum)}</b><small>${unpaidPer.length} facture(s) impayée(s) à ce jour</small></a></div>
     <div class="card"><b>Achats &amp; TVA</b>
       <div class="mini" style="margin-top:8px"><div><small>Achats HT (stock et chantiers)</small><b>${eur(sm.achats)}</b></div><div><small>TVA collectée</small><b>${eur(sm.tvaColl)}</b></div><div><small>TVA déductible</small><b>${eur(sm.tvaDed)}</b></div><div><small>${sm.tvaDue < 0 ? 'Crédit de TVA' : 'TVA due'}</small><b class="${sm.tvaDue > 0 ? 'warn' : 'ok'}">${eur(Math.abs(sm.tvaDue))}</b></div></div>
-      <p class="cnote">TVA calculée sur les factures émises (et avoirs) et sur les achats : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit).</p></div>
+      <p class="cnote">${S.vatDebits ? 'TVA collectée à la date des factures émises (option « TVA sur les débits » cochée dans Réglages), avoirs déduits.' : 'TVA collectée à l\'encaissement : part de TVA de chaque règlement reçu, remboursements déduits (prestations de services et travaux). Les livraisons de biens restent comptées à la facture.'} TVA déductible : réceptions de stock et factures fournisseurs importées (taux de la facture, sinon celui du produit). Base à confirmer avec votre cabinet.</p>
+      <div class="row" style="margin:6px 0 0"><button type="button" class="btn sm" id="acc" title="Ventes, règlements, achats, TVA et heures en CSV">⬇ Export pour le comptable</button></div></div>
     <div class="card"><b>12 derniers mois</b> <span class="muted" style="font-size:12px"><span style="color:var(--p)">■</span> CA HT &nbsp;<span style="color:var(--warn)">■</span> Achats HT</span>${chart}</div>
     <div class="duo">
       ${open.length ? `<section><h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a></section>` : ''}
       <section><h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a></section>
     </div>
     ${habAlerts.length ? `<h3>Habilitations à renouveler</h3>${habAlerts.map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.m.name)}</div><div class="s">${e(x.h.label)}</div></div><span class="chip ${x.st}">${x.st === 'bad' ? 'expirée le ' : 'expire le '}${dateFr(x.h.expiry)}</span></div>`).join('')}` : ''}
+    ${rem.length ? `<h3>À relancer <span class="muted" style="font-size:12px;font-weight:400">· ${rem.filter(x => x.kind === 'invoice').length} facture(s), ${rem.filter(x => x.kind === 'quote').length} devis</span></h3>${rem.slice(0, 6).map(x => `<div class="item" style="cursor:default"><a class="main" href="#/doc/${x.doc.id}" style="text-decoration:none;color:inherit"><div class="t">${e(x.doc.number)} · ${e(C[x.doc.clientId]?.name || '')}</div><div class="s">${x.kind === 'invoice' ? `échue le ${dateFr(x.due)} · ${x.days} j de retard · reste ${eur(x.left)}` : `devis envoyé il y a ${x.days} j · ${eur(totals(x.doc).ttc)} TTC`}${x.n ? ` · relancé ${x.n} fois` : ' · jamais relancé'}${x.kind === 'invoice' && x.n >= 3 ? ' · mise en demeure à envisager' : ''}</div></a><div class="r"><button class="btn sm" data-rel="${x.doc.id}">↻ Relancer</button></div></div>`).join('')}${rem.length > 6 ? `<p class="muted" style="margin:4px 0">+ ${rem.length - 6} autre(s) : ouvrez les factures ou les devis concernés.</p>` : ''}` : ''}
     ${unpaidList.length ? `<h3>Factures à encaisser <span class="muted" style="font-size:12px;font-weight:400">· toutes périodes : ${eur(unpaid)} (${unpaidList.length})</span></h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
     ${low.length ? `<h3>À réapprovisionner</h3>${low.slice(0, 6).map(p => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(p.name)}</div></div><span class="chip warn">${total(p)} / seuil ${p.min || 0}</span></div>`).join('')}` : ''}
     ${lateHtml}
@@ -216,7 +227,10 @@ async function renderDashboard(el) {
   $('#pfrom', el)?.addEventListener('change', ev => { sv('gp_pfrom', ev.target.value); refresh(); });
   $('#pto', el)?.addEventListener('change', ev => { sv('gp_pto', ev.target.value); refresh(); });
   $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
+  $('#bknow', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
+  $('#acc', el)?.addEventListener('click', () => import('./export.js').then(m => m.exportModal()));
   $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
+  el.addEventListener('click', ev => { const b = ev.target.closest('[data-rel]'); if (b) import('./docmail.js').then(m => m.relanceModal(b.dataset.rel, () => refresh())); });
 }
 
 /* ---------- Réglages ---------- */
@@ -224,7 +238,7 @@ let installEvt;
 window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); installEvt = ev; });
 
 async function renderSettings(el) {
-  const S = await getS(), nowY = +today().slice(0, 4);
+  const S = await getS(), nowY = +today().slice(0, 4), bk = await backup.getState();
   el.innerHTML = `<h2>Réglages</h2><form id="sf" class="card"><div class="cols">
     <h3 class="full">Entreprise (en-tête des documents)</h3>
     ${F('Nom de l\'application', 'appName', S.appName, { cls: 'full' })}
@@ -237,6 +251,7 @@ async function renderSettings(el) {
     ${F('IBAN', 'iban', S.iban)}${F('BIC', 'bic', S.bic)}
     ${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
     <label class="f full"><span><input type="checkbox" name="vatDebits" ${S.vatDebits ? 'checked' : ''}> Option pour le paiement de la TVA sur les débits (mention imprimée sur les factures)</span></label>
+    <p class="muted full" style="margin-top:-6px">Décochée (cas général) : le tableau de bord compte la TVA des prestations de services, travaux compris, à l'encaissement des règlements, et celle des livraisons de biens à la facture. Cochée : toute la TVA est comptée à la date des factures.</p>
     <h3 class="full">Mentions légales (imprimées en pied de page des documents)</h3>
     ${F('N° TVA intracommunautaire', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('RCS', 'rcs', S.rcs, { ph: 'ex : 511 277 287 R.C.S. Limoges' })}
     ${F('Répertoire des métiers (RM)', 'rm', S.rm, { ph: 'si l\'entreprise y est inscrite' })}${F('Délai d\'exécution par défaut des devis', 'delay', S.delay, { ph: 'ex : 6 semaines après acceptation' })}
@@ -258,6 +273,13 @@ async function renderSettings(el) {
     ${F('Objet par défaut', 'mailSubject', S.mailSubject || '', { cls: 'full', ph: MAIL_DEFAULTS.subject })}
     ${F('Message par défaut', 'mailBody', S.mailBody || '', { type: 'textarea', rows: 6, cls: 'full', ph: MAIL_DEFAULTS.body })}
     <p class="muted full">Laissez vide pour le texte conseillé (en gris). Jetons automatiques : <code>${e(MAIL_TOKENS)}</code>. L'envoi part de votre compte Google (script Apps Script) ; les réponses arrivent sur l'e-mail de l'entreprise ci-dessus.</p>
+    <h3 class="full">Relances (devis sans réponse, factures impayées)</h3>
+    ${F('Relancer un devis envoyé sans réponse après (jours)', 'remindQuoteDays', S.remindQuoteDays ?? 10, { type: 'number' })}${F('Relancer une facture après son échéance de (jours)', 'remindInvDays', S.remindInvDays ?? 3, { type: 'number' })}
+    ${F('Délai entre deux relances (jours)', 'remindEvery', S.remindEvery ?? 7, { type: 'number' })}<span></span>
+    ${F('Objet des relances', 'relanceSubject', S.relanceSubject || '', { cls: 'full', ph: RELANCE_DEFAULTS.subject })}
+    ${F('Message de relance d\'un devis', 'relanceQuote', S.relanceQuote || '', { type: 'textarea', rows: 5, cls: 'full', ph: RELANCE_DEFAULTS.quote })}
+    ${F('Message de relance d\'une facture', 'relanceInvoice', S.relanceInvoice || '', { type: 'textarea', rows: 6, cls: 'full', ph: RELANCE_DEFAULTS.invoice })}
+    <p class="muted full">Le tableau de bord liste les relances à faire ; rien n'est envoyé sans votre validation. Un devis est relancé trois fois au plus. Laissez vide pour le texte conseillé (en gris). Jetons : <code>${e(RELANCE_TOKENS)}</code>.</p>
     <label class="f full"><span><input type="checkbox" name="mailBcc" ${S.mailBcc === false ? '' : 'checked'}> M'envoyer une copie cachée (Cci) de chaque e-mail envoyé</span></label>
     <div class="full row" style="margin:0"><button type="button" class="btn" id="mtest" ${sheets.scriptMode() ? '' : 'disabled'}>✉ Envoyer un e-mail de test à l'adresse de l'entreprise</button><span id="mtstat" class="muted"></span></div>
     <h3 class="full">Couleurs des lignes de devis / factures</h3>
@@ -310,6 +332,10 @@ async function renderSettings(el) {
     <p id="fstat" class="muted">${sheets.scriptMode() ? 'Connexion par script Apps Script : prêt.' : '⚠ Nécessite la connexion par script Apps Script (carte Google Sheets ci-dessus).'}</p>
     <div class="row"><button type="button" class="btn" id="ftest" ${sheets.scriptMode() ? '' : 'disabled'}>Tester le stockage</button><span class="muted">Indique si les fichiers partent vers Google Drive ou OneDrive.</span></div></div>
   <div class="card"><h3 style="margin-top:0">Sauvegarde</h3><p class="muted">${sheets.configured() ? 'Vos données sont synchronisées automatiquement avec Google Sheets (« GestPro – Données ») après chaque modification, et disponibles sur vos autres appareils connectés au même classeur. Une copie en fichier reste utile comme sauvegarde supplémentaire.' : 'Google Sheets n\'est pas configuré : les données sont stockées uniquement sur cet appareil. Configurez la synchronisation ci-dessus, ou faites une sauvegarde régulière et transférez-la pour changer de téléphone/ordinateur.'}</p>
+    <div style="margin:10px 0"><label class="f full"><span><input type="checkbox" id="autobk" ${S.autoBackup !== false ? 'checked' : ''}> Sauvegarde automatique chaque semaine dans votre espace de stockage (Google Drive ou OneDrive, dossier GestPro/Sauvegardes ; les 8 dernières copies sont conservées)</span></label>
+      <p class="muted" id="bkstat" style="margin:4px 0">${!sheets.scriptMode() ? 'Disponible une fois le script Apps Script relié (voir la carte Google Sheets).' : bk.at ? `Dernière copie : ${new Date(bk.at).toLocaleDateString('fr-FR')}${bk.by ? ' (' + e(bk.by) + ')' : ''}.` : 'Aucune copie pour le moment : la première part à la prochaine ouverture.'}${bk.error && sheets.scriptMode() ? ` <span class="bad">Dernier essai échoué : ${e(bk.error)}.</span>` : ''} La copie est faite à l'ouverture de l'application, quand la dernière a plus de 7 jours ; elle ne contient ni les photos de produits ni les clés personnelles (Facebook, Google).</p>
+      ${(bk.list || []).length ? `<div>${[...bk.list].reverse().map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.name)}</div><div class="s">${Math.max(1, Math.round((x.size || 0) / 1024))} Ko</div></div><div class="r"><button type="button" class="btn sm" data-bkdl="${e(x.id)}" title="Télécharger cette copie, puis « Restaurer… »">⬇</button></div></div>`).join('')}</div>` : ''}
+      <div class="row"><button type="button" class="btn" id="bknow2" ${sheets.scriptMode() ? '' : 'disabled'}>Sauvegarder maintenant</button></div></div>
     <div class="row"><button class="btn" id="exp">Exporter (JSON)</button><label class="btn"><input type="file" id="imp" accept=".json" hidden>Restaurer…</label>${installEvt ? '<button class="btn primary" id="inst">Installer l\'application</button>' : ''}</div></div>`;
   const gstat = () => {
     const st = sheets.getStatus(), t = sheets.lastSync();
@@ -375,7 +401,7 @@ async function renderSettings(el) {
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx'].forEach(k => (o[k] = num(o[k])));
+    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx', 'remindQuoteDays', 'remindInvDays', 'remindEvery'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites; o.mailBcc = !!o.mailBcc;
     let logoV = S.logoV;
@@ -387,6 +413,9 @@ async function renderSettings(el) {
     await db.saveSettings(normNumbering({ ...S, ...o, logo, logoV })); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
+  $('#autobk', el)?.addEventListener('change', async ev => { await db.saveSettings({ ...(await getS()), autoBackup: ev.target.checked }); toast(ev.target.checked ? 'Sauvegarde automatique activée' : 'Sauvegarde automatique désactivée'); });
+  $('#bknow2', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
+  $$('[data-bkdl]', el).forEach(b => b.onclick = async () => { const it = (bk.list || []).find(x => x.id === b.dataset.bkdl); if (!it) return; b.disabled = true; try { await backup.downloadCopy(it); } catch (err) { alert('Téléchargement impossible : ' + (err.message || err)); } b.disabled = false; });
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
   $('#imp', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
@@ -557,11 +586,21 @@ sheets.onStatus(st => {
   cloud.title = st.msg || '';
   // la liaison avec Google fonctionne : les pièces restées sur cet appareil partent vers le stockage (Drive ou OneDrive)
   if (st.state === 'ok' && sheets.scriptMode()) import('./files.js').then(m => m.flushPending()).then(n => { if (n) toast(`${n} fichier(s) envoyé(s)`); }).catch(() => {});
+  if (st.state === 'ok' && sheets.scriptMode()) backup.maybeBackup(); // N4 : copie hebdomadaire si elle est due
 });
 cloud.onclick = () => sheets.sync({ interactive: true }).then(r => r?.pulled && toast(`${r.pulled} élément(s) reçus`)).catch(err => toast(err.message));
 sheets.setOnPulled(() => {
   const editing = $('#modal').open || location.hash.startsWith('#/doc/') || location.hash.startsWith('#/site/') || $('.scanner') || $('#view :focus');
   if (!editing) refresh(); else toast('Nouvelles données reçues');
+  /* M14 : deux documents de même numéro après la synchronisation ? On prévient une fois par numéro. */
+  Promise.all([db.all('documents'), db.all('contacts')]).then(([docs, cts]) => {
+    let seen = []; try { seen = JSON.parse(localStorage.getItem('gp_dups') || '[]'); } catch { /* ignore */ }
+    const d = dupNumbers(docs).filter(g => !seen.includes(g.type + g.number));
+    if (!d.length) return;
+    try { localStorage.setItem('gp_dups', JSON.stringify([...seen, ...d.map(g => g.type + g.number)].slice(-50))); } catch { /* ignore */ }
+    const who = x => `${cts.find(c => c.id === x.clientId)?.name || 'sans client'} (${dateFr(x.date)}, ${eur(totals(x).ttc)})`;
+    alert(`⚠ Numéro en double après la synchronisation :\n\n${d.map(g => `${g.number} : ${g.docs.map(who).join(' et ')}`).join('\n')}\n\nDeux appareils ont émis un document hors ligne avec le même numéro. Corrigez le numéro de l'un des deux avant tout envoi (détail sur le tableau de bord).`);
+  }).catch(() => {});
 });
 
 (async () => {

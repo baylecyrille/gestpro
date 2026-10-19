@@ -81,7 +81,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     <button class="btn" id="add">+ Produit</button>
     <button class="btn" id="imp">Importer</button>
     <button class="btn" id="clf" title="Ranger les produits existants dans les catégories des devis">🏷 Classer${toClassify(products) ? ` (${toClassify(products)})` : ''}</button></div>
-    <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="spdf" title="Facture, bon de livraison, bon de commande, devis d'un fournisseur (PDF)">📄 Document fournisseur (PDF)</button></div>
+    <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="spdf" title="Facture, bon de livraison, bon de commande, devis d'un fournisseur (PDF), ou facture électronique Factur-X / UBL">📄 Document fournisseur (PDF / Factur-X)</button></div>
     ${filterBar(FC)}
     <div id="list"></div>`;
   const list = $('#list', body);

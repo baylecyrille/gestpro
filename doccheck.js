@@ -78,3 +78,13 @@ export function checkMentions(S = {}, { client = {} } = {}) {
   if (particulier && !has(S.mediator)) R.push({ code: 'm_med', msg: 'Médiateur de la consommation non renseigné : mention obligatoire pour un client particulier (Réglages › Entreprise).' });
   return R;
 }
+
+/* M14 : documents numérotés qui portent le même numéro (deux appareils ont émis hors ligne puis se sont synchronisés) : [{ type, number, docs }] */
+export function dupNumbers(docs) {
+  const m = new Map();
+  for (const d of docs || []) {
+    const n = String(d.number || '').trim(); if (!n || !d.type) continue;
+    const k = d.type + '|' + n; if (!m.has(k)) m.set(k, []); m.get(k).push(d);
+  }
+  return [...m.values()].filter(g => g.length > 1).map(g => ({ type: g[0].type, number: String(g[0].number).trim(), docs: g.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a._u || 0) - (b._u || 0)) }));
+}

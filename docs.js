@@ -4,6 +4,7 @@ import { getS, logoSrc, seqOf, yearTok, lastNumber } from './defaults.js';
 import * as efact from './efact.js';
 import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt, docMargin, refOn } from './vat.js';
 import { checkDoc, checkMentions } from './doccheck.js';
+import { remindersOf } from './reminders.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
 import * as sheets from './sheets.js';
@@ -407,14 +408,18 @@ export async function renderDoc(el, id, arg) {
     return creditedTtc > 0.005 ? '' : '<button class="btn danger" id="cancelinv" title="Crée aussitôt un avoir total qui annule cette facture et rouvre son devis">Annuler par un avoir</button>';
   };
   const lockedNote = () => canDelete ? '' : `<p class="muted" style="margin-bottom:0">${isC ? 'Un avoir émis ne se supprime plus (numérotation continue).' : 'Une facture émise ne se supprime pas (numérotation continue) : elle s\'annule par un avoir.'}</p>`;
+  /* Relance (N1) : devis envoyé sans réponse, ou facture émise non soldée */
+  const canRelance = !!cur.number && !isC && (isQ ? cur.status === 'sent' : counts(cur) && cur.status !== 'dispute' && !fullyCredited && totals(cur).ttc - paidOf(allPay, cur.id) > 0.005);
+  const remindHist = () => { const h = remindersOf(cur); return h.length ? `<p class="muted" style="margin-bottom:0">↻ ${h.slice(-4).map(x => `Relancé le ${dateFr(String(x.at).slice(0, 10))} (${e(x.via || 'e-mail')}${x.to ? ' à ' + e(x.to) : ''})`).join(' · ')}</p>` : ''; };
   const actionsHtml = () => `<div class="card"><div class="row">
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}${cur.deposit && cur.fromQuote && DN[cur.fromQuote] ? `<a class="btn" href="#/doc/${cur.fromQuote}">Voir le devis</a>` : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
       ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${canInv && cur.status !== 'invoiced' ? '<button class="btn" id="todep" title="Crée une facture d\'acompte (en pourcentage ou en montant) à partir de ce devis">Facture d\'acompte</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
       ${!isC && cur.number ? '<button class="btn" id="dupbtn" title="Crée un nouveau brouillon à partir de ce document">⧉ Dupliquer</button>' : ''}
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
+      ${canRelance ? '<button class="btn" id="relbtn" title="Prépare un message de relance (e-mail, partage ou note) et l\'inscrit à l\'historique du dossier">↻ Relancer</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
-      ${deleteHtml()}</div>${lockedNote()}${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
+      ${deleteHtml()}</div>${lockedNote()}${remindHist()}${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
 
   /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, acomptes déjà facturés, options à part */
   /* Marge du document (information interne, jamais imprimée) */
@@ -754,6 +759,10 @@ export async function renderDoc(el, id, arg) {
     $('#mailbtn', el)?.addEventListener('click', async () => {
       readHeader(); pruneBlocks(cur); if (!(await mentionsOk())) return; await db.put('documents', cur);
       (await import('./docmail.js')).mailModal({ doc: cur, S, client: curClient(), payments, DN, onSent: () => refresh() });
+    });
+    $('#relbtn', el)?.addEventListener('click', async () => {
+      readHeader(); pruneBlocks(cur); await db.put('documents', cur);
+      (await import('./docmail.js')).relanceModal(cur.id, () => refresh());
     });
     $('#efact', el)?.addEventListener('click', async () => {
       readHeader(); pruneBlocks(cur); await db.put('documents', cur);
