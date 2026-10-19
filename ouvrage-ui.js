@@ -62,7 +62,9 @@ export async function bindCompo(f, p, products) {
     const on = cat.value === OUV_CAT;
     panel.hidden = !on;
     for (const n of ['buy', 'min', 'supplierId', 'tvaBuy', 'kind']) hide(n, on);
-    const stk = $('#stkbox', f); if (stk) stk.hidden = on;
+    const svc = cat.value === 'Main d\'œuvre' || cat.value === 'Sous-traitance'; // services : ni stock ni seuil d'alerte (B5)
+    hide('min', on || svc);
+    const stk = $('#stkbox', f); if (stk) stk.hidden = on || svc;
     if (on) { drawRows(); calc(); }
   };
   cat.addEventListener('change', show);

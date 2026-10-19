@@ -6,6 +6,8 @@ import { buyRate } from './vat.js';
 import { getS } from './defaults.js';
 import { OUV_CAT, hasCompo, priceOf } from './ouvrage.js';
 import { compoHtml, bindCompo } from './ouvrage-ui.js';
+import { avgBuy, deltaPct, isHike, fmtDelta } from './pricing.js';
+import { isStocked, isService, reservations, shortages } from './plan.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -32,6 +34,10 @@ function applyMove(p, m) {
 
 export async function recordMove(p, m) {
   m.productId = p.id; m.date = m.date || new Date().toISOString();
+  if (m.type === 'in' && m.purchase && num(m.unit) > 0 && !m.keepBuy) { // A8 : chaque achat remet à jour le prix d'achat de la fiche (prix moyen pondéré du stock en place et de la quantité reçue)
+    const nb = avgBuy(total(p), p.buy, m.qty, m.unit);
+    if (nb !== num(p.buy)) { m.buyBefore = num(p.buy); m.buyAfter = nb; p.buy = nb; }
+  }
   applyMove(p, m);
   await db.put('products', p);
   await db.put('moves', m);
@@ -64,18 +70,20 @@ export async function renderStock(el, tab = 'products') {
   if (tab === 'locations') return locationsTab(body, products, locs);
   if (tab === 'moves') return movesTab(body, products, locs);
   const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
-  const [members, S] = await Promise.all([db.all('members'), getS()]);
-  return productsTab(body, products, locs, contacts, photos, { products: new Map(products.map(p => [p.id, p])), members: new Map(members.map(m => [m.id, m])) }, S);
+  const [members, S, docs, sites, moves] = await Promise.all([db.all('members'), getS(), db.all('documents'), db.all('sites'), db.all('moves')]);
+  const PM = new Map(products.map(p => [p.id, p]));
+  return productsTab(body, products, locs, contacts, photos, { products: PM, members: new Map(members.map(m => [m.id, m])) }, S, reservations(sites, docs, moves, PM));
 }
 
 /* ---------- Produits ---------- */
-function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, ouvS = {}) {
+function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, ouvS = {}, resv = new Map()) {
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   products.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const cats = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   const FC = [{ id: 'sort', label: 'Trier par', def: 'name', options: [['name', 'Nom A→Z'], ['stockA', 'Stock ↑ (le plus bas)'], ['stockD', 'Stock ↓'], ['cat', 'Catégorie'], ['priceD', 'Prix de vente ↓'], ['valueD', 'Valeur du stock ↓'], ['recent', 'Plus récents']] },
     { id: 'cat', label: 'Catégorie', options: [['', 'Toutes'], ...cats.map(c => [c, c])] }, { id: 'loc', label: 'Emplacement', options: [['', 'Tous'], ...locs.map(l => [l.id, locLabel(l)])] },
-    { id: 'kind', label: 'Type', options: [['', 'Tous'], ['sale', 'Vendus'], ['internal', 'Usage interne']] }, { id: 'low', type: 'check', label: 'Stock bas / épuisé' }];
+    { id: 'kind', label: 'Type', options: [['', 'Tous'], ['sale', 'Vendus'], ['internal', 'Usage interne']] }, { id: 'low', type: 'check', label: 'Stock bas / épuisé' }, { id: 'short', type: 'check', label: 'Matériel manquant (devis signés)' }];
+  const shortIds = new Set(shortages(resv, ouvCtx.products || new Map(), total).map(x => x.p.id)); // M9 : stock inférieur à ce que les devis signés réservent
   const SORTS = { name: (a, b) => a.name.localeCompare(b.name, 'fr'), stockA: (a, b) => total(a) - total(b), stockD: (a, b) => total(b) - total(a), cat: (a, b) => (a.category || '~').localeCompare(b.category || '~', 'fr') || a.name.localeCompare(b.name, 'fr'),
     priceD: (a, b) => num(b.sell) - num(a.sell), valueD: (a, b) => total(b) * num(b.buy) - total(a) * num(a.buy), recent: (a, b) => (b._u || 0) - (a._u || 0) };
   let getF;
@@ -94,7 +102,8 @@ function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, o
     const F2 = getF ? getF() : {};
     const rows = products.filter(p => {
       const t = total(p);
-      if (F2.low && (p.category === OUV_CAT || !(t <= (p.min || 0)))) return false;
+      if (F2.low && (!isStocked(p) || !(t <= (p.min || 0)))) return false;
+      if (F2.short && !shortIds.has(p.id)) return false;
       if (F2.kind === 'internal' && p.kind !== 'internal') return false; if (F2.kind === 'sale' && p.kind === 'internal') return false;
       if (F2.cat && p.category !== F2.cat) return false; if (F2.loc && !(p.stock && p.stock[F2.loc] > 0)) return false;
       return !q || [p.name, p.ref, p.barcode, p.category].join(' ').toLowerCase().includes(q);
@@ -105,9 +114,10 @@ function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, o
       const chips = Object.entries(p.stock || {}).filter(([, q]) => q).map(([k, q]) => `<span class="chip">${e(locLabel(L[k]))} : ${q}</span>`).join('');
       const th = photos[p.id] ? `<img class="pthumb" src="${photos[p.id]}" alt="">` : '<div class="pthumb ph">▦</div>';
       const ouv = hasCompo(p) ? priceOf(p, ouvCtx, ouvS) : null; // ouvrage composé : prix recalculés d'après le catalogue et l'équipe
+      const rs = resv.get(p.id), av = rs ? Math.round((t - rs.reserved) * 1000) / 1000 : 0, svc = isService(p); // service (main d'œuvre, sous-traitance) : ni stock ni « 0 h » (B5)
       return `<div class="item" data-id="${p.id}">${th}<div class="main"><div class="t">${e(p.name)}${p.kind === 'internal' ? ' <span class="chip">usage interne</span>' : ''}</div>
-        <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}${ouv ? ` · ${p.compo.length} composant(s) · revient ${eur(ouv.cost)}` : ''}</div>${ouv ? '' : chips}</div>
-        <div class="r">${p.category === OUV_CAT ? `<span class="chip">ouvrage${ouv && ouv.warns ? ' ⚠' : ''}</span>` : `<span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span>`}<div class="s">${p.kind === 'internal' ? 'non vendu' : eur(ouv ? ouv.sell : p.sell) + ' HT'}</div></div></div>`;
+        <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}${ouv ? ` · ${p.compo.length} composant(s) · revient ${eur(ouv.cost)}` : ''}</div>${ouv || svc ? '' : chips}${rs ? `<div class="s resv">réservé par les devis signés : <b>${rs.reserved} ${e(p.unit || 'u')}</b> (${rs.sites.slice(0, 3).map(x => e(x.name)).join(', ')}${rs.sites.length > 3 ? '…' : ''}) · disponible <b class="${av < 0 ? 'neg' : ''}">${av}</b></div>` : ''}</div>
+        <div class="r">${p.category === OUV_CAT ? `<span class="chip">ouvrage${ouv && ouv.warns ? ' ⚠' : ''}</span>` : svc ? '<span class="chip">service</span>' : `<span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span>${rs && av < 0 ? `<span class="chip bad" title="Le stock ne couvre pas ce que les devis signés réservent">manque ${Math.round(-av * 1000) / 1000}</span>` : ''}`}<div class="s">${p.kind === 'internal' ? 'non vendu' : eur(ouv ? ouv.sell : p.sell) + ' HT'}</div></div></div>`;
     }).join('') : '<div class="empty">Aucun produit. Ajoutez-en un ou importez vos listes Excel.</div>';
   };
   getF = bindFilters(body, 'stock_', FC, draw);
@@ -236,7 +246,7 @@ export async function pickProduct(cb, { sale = false } = {}) {
 export async function moveModal(products, locs, preset = {}) {
   const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const lopt = locs.map(l => [l.id, locLabel(l)]);
-  const popt = products.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => [p.id, `${p.name}${p.ref ? ' (' + p.ref + ')' : ''}`]);
+  const popt = products.filter(p => isStocked(p) || p.id === preset.product).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => [p.id, `${p.name}${p.ref ? ' (' + p.ref + ')' : ''}`]);
   if (!popt.length) return alert('Créez d\'abord un produit.');
   const body = `<label class="f"><span>Produit</span><div style="display:flex;gap:6px"><select name="productId">${popt.map(([v, l]) => `<option value="${v}" ${v === preset.product ? 'selected' : ''}>${e(l)}</option>`).join('')}</select><button type="button" class="btn" data-scan>▦</button></div></label>
   ${F('Type', 'type', preset.type || 'in', { type: 'select', options: [['in', 'Entrée (réception)'], ['out', 'Sortie'], ['transfer', 'Transfert entre emplacements'], ['adjust', 'Inventaire (fixer la quantité)']] })}
@@ -255,8 +265,9 @@ export async function moveModal(products, locs, preset = {}) {
     const mv = { type: o.type, qty, from: o.from, to: o.to, note: o.note };
     if (o.type === 'in') Object.assign(mv, { purchase: true, unit: o.unit === '' ? num(p.buy) : num(o.unit), tva: buyRate(p) }); // réception = achat, avec la TVA d'achat de la fiche
     if (o.type === 'out') Object.assign(mv, { unit: num(p.buy), siteId: o.siteId || '' });
+    const before = num(p.buy);
     await recordMove(p, mv);
-    toast('Mouvement enregistré'); refresh();
+    toast('Mouvement enregistré' + (mv.type === 'in' && isHike(before, mv.unit) ? ` · hausse de prix : ${p.name} ${fmtDelta(deltaPct(before, mv.unit))}` : '')); refresh();
   }, {
     onOpen: f => {
       const upd = () => { const t = f.elements.type.value; $('#fromw', f).hidden = !(t === 'out' || t === 'transfer'); $('#tow', f).hidden = !(t === 'in' || t === 'transfer' || t === 'adjust'); $('#unitw', f).hidden = t !== 'in'; $('#sitew', f).hidden = t !== 'out'; };
@@ -515,15 +526,25 @@ export function importModal(products) {
 function lineEditor(f, products, lines, { price = false } = {}) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const box = $('#ll', f);
+  /* Réception : écart avec le prix d'achat de la fiche et prix moyen qui en résulte (A8) */
+  const priceHint = l => {
+    const p = P[l.pid]; if (!p || l.price === '' || l.price === undefined || !(num(l.price) > 0)) return '';
+    const d = deltaPct(p.buy, l.price), nb = avgBuy(total(p), p.buy, num(l.qty), l.price);
+    if (!d && nb === num(p.buy)) return '';
+    return `${isHike(p.buy, l.price) ? '<b style="color:var(--warn)">⚠ hausse de ' + e(fmtDelta(d)) + '</b> · ' : d ? e(fmtDelta(d)) + ' · ' : ''}prix d'achat actuel ${eur(num(p.buy))} → prix moyen après réception <b>${eur(nb)}</b>`;
+  };
   const draw = () => {
     box.innerHTML = lines.map((l, i) => `<div class="row ll" data-i="${i}" style="margin-bottom:6px">
       <select data-k="pid" style="flex:3;min-width:150px"><option value="">— produit —</option>${[...products].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => `<option value="${p.id}" ${p.id === l.pid ? 'selected' : ''}>${e(p.name)}</option>`).join('')}</select>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${l.qty ?? ''}" placeholder="Qté" style="flex:1;min-width:70px">
       ${price ? `<input data-k="price" type="number" step="0.01" inputmode="decimal" value="${l.price ?? ''}" placeholder="Prix HT" style="flex:1;min-width:80px">` : ''}
       <button type="button" class="btn sm" data-rm>✕</button>
-      ${l.pid && P[l.pid] ? `<small class="muted" style="flex-basis:100%">${e(P[l.pid].unit || 'u')} · en stock : ${total(P[l.pid])}${l.note ? ' · ' + e(l.note) : ''}</small>` : ''}</div>`).join('') || '<p class="muted">Aucune ligne : scannez un produit ou ajoutez une ligne.</p>';
+      ${l.pid && P[l.pid] ? `<small class="muted" style="flex-basis:100%">${e(P[l.pid].unit || 'u')} · en stock : ${total(P[l.pid])}${l.note ? ' · ' + e(l.note) : ''}</small>` : ''}${price ? `<small class="hike" data-hk style="flex-basis:100%">${priceHint(l)}</small>` : ''}</div>`).join('') || '<p class="muted">Aucune ligne : scannez un produit ou ajoutez une ligne.</p>';
   };
-  box.addEventListener('input', ev => { const r = ev.target.closest('.ll'); if (r && ev.target.dataset.k !== 'pid') lines[+r.dataset.i][ev.target.dataset.k] = ev.target.value; });
+  box.addEventListener('input', ev => {
+    const r = ev.target.closest('.ll'); if (r && ev.target.dataset.k !== 'pid') lines[+r.dataset.i][ev.target.dataset.k] = ev.target.value;
+    const h = r && r.querySelector('[data-hk]'); if (h) h.innerHTML = priceHint(lines[+r.dataset.i]);
+  });
   box.addEventListener('change', ev => {
     const r = ev.target.closest('.ll'); if (!r || ev.target.dataset.k !== 'pid') return;
     const l = lines[+r.dataset.i]; l.pid = ev.target.value; if (price && P[l.pid]) l.price = P[l.pid].buy ?? ''; draw();
@@ -541,6 +562,7 @@ function lineEditor(f, products, lines, { price = false } = {}) {
 }
 
 export async function receptionModal(products, locs) {
+  products = products.filter(isStocked); // la main d'œuvre, la sous-traitance et les ouvrages ne se stockent pas
   if (!products.length) return alert('Créez d\'abord des produits (ou importez-les).');
   const lines = [];
   const lopt = locs.map(l => [l.id, locLabel(l)]);
@@ -549,19 +571,22 @@ export async function receptionModal(products, locs) {
     ${F('Ranger dans', 'to', locs[0]?.id, { type: 'select', options: lopt, cls: 'full' })}</div>
     <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button></div>
     <div id="ll"></div>
-    <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible).</p>`,
+    <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible). À la validation, le prix d'achat de la fiche passe au <b>prix moyen</b> du stock en place et de la quantité reçue ; une hausse de plus de 5 % est signalée.</p>`,
     async o => {
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
       if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
+      const hikes = [];
       for (const l of ok) {
-        const p = products.find(x => x.id === l.pid);
-        await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, tva: buyRate(p), unit: l.price === '' || l.price === undefined ? num(p.buy) : num(l.price) });
+        const p = products.find(x => x.id === l.pid), before = num(p.buy), price = l.price === '' || l.price === undefined ? before : num(l.price);
+        await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, tva: buyRate(p), unit: price });
+        if (isHike(before, price)) hikes.push(`${p.name} ${fmtDelta(deltaPct(before, price))}`);
       }
-      toast(`${ok.length} produit(s) reçu(s)`); refresh();
+      toast(`${ok.length} produit(s) reçu(s)${hikes.length ? ' · hausse de prix : ' + hikes.join(', ') : ''}`); refresh();
     }, { wide: true, submitLabel: 'Valider la réception', onOpen: f => lineEditor(f, products, lines, { price: true }) });
 }
 
 export async function siteOutModal(products, locs, preset = {}) {
+  products = products.filter(isStocked);
   const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   if (!sites.length) { toast('Créez d\'abord un chantier'); return go('#/sites'); }
   if (!products.length) return alert('Aucun produit en stock.');

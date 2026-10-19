@@ -5,6 +5,7 @@ import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
 import { matchLayout, buildResult, detectDocType, DOC_TYPES, docType } from './supplier-layout.js';
 import { openManual } from './supplier-manual.js';
 import { recordMove, locLabel, UNITS } from './stock.js';
+import { isHike, deltaPct, fmtDelta } from './pricing.js';
 import * as fl from './files.js';
 import { parseEInvoice, pickXml, decodeXml } from './efact-in.js';
 
@@ -256,7 +257,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     }
     const cat = $('#spcat', out).checked, stk = !doc && $('#spstk', out).checked, sup = $('#spsup', out).checked, mg = num($('[name=spm]', out).value);
     const loc = doc ? '' : $('#splc', out).value;
-    let created = 0, updated = 0, moved = 0, supMsg = '';
+    let created = 0, updated = 0, moved = 0, supMsg = ''; const hikes = []; // A8 : hausses de prix par rapport à la fiche produit
     let supplier = null;
     if (sup) { const u = await upsertSupplier(S, inv); if (u) { supplier = u.contact; supMsg = u.isNew ? 'fournisseur créé' : 'fournisseur complété'; } }
     const live = await db.all('products');
@@ -267,6 +268,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         if (!cat && !toStock) continue;
         let p = live.find(q => x.ref && q.ref && q.ref.toLowerCase() === x.ref.toLowerCase()) || live.find(q => q.name.toLowerCase() === x.name.toLowerCase());
         const isNew = !p;
+        if (p && isHike(num(p.buy), x.price)) hikes.push(`${p.name} ${fmtDelta(deltaPct(p.buy, x.price))}`);
         if (!p) {
           p = { stock: {}, tva: 10, tvaBuy: x.tva >= 0 ? x.tva : 20, kind: 'sale', name: x.name, ref: x.ref, unit: x.unit, buy: x.price, sell: Math.round(x.price * (1 + mg / 100) * 100) / 100 };
           if (supplier) p.supplierId = supplier.id;
@@ -319,7 +321,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
       toast(`${sel.length} ligne(s) ajoutée(s) au document`); return;
     }
     if (inv.number && (cat || moved || charged || supplier)) { try { await rememberImported(S, DT, inv, sel.reduce((x, y) => x + y.qty * y.price, 0)); } catch { /* mémoire facultative */ } }
-    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, moved && `${moved} entrée(s) en stock`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, kept, supMsg].filter(Boolean).join(' · ') || 'Terminé');
+    toast([cat && `${created} produit(s) créé(s), ${updated} mis à jour`, moved && `${moved} entrée(s) en stock`, hikes.length && `hausse de prix : ${hikes.slice(0, 3).join(', ')}${hikes.length > 3 ? '…' : ''}`, charged && `${charged} ligne(s) affectée(s) à des chantiers`, kept, supMsg].filter(Boolean).join(' · ') || 'Terminé');
     refresh();
   };
 }

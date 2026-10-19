@@ -53,10 +53,10 @@ export function nextSteps(site, ctx = {}) {
   return out.sort((a, b) => PRIO[a.key] - PRIO[b.key]);
 }
 
-/* Liste « À faire aujourd'hui » : relances, habilitations, chantiers en retard, chantiers à facturer, stock bas.
-   o = { rem, lateSites, steps: [{ site, steps }], low, habs: [{ m, h, st }], C: { id → contact } }
+/* Liste « À faire aujourd'hui » : relances, habilitations, chantiers en retard, chantiers à facturer, dérives prévu/réalisé, matériel manquant, stock bas.
+   o = { rem, lateSites, steps: [{ site, steps }], low, habs: [{ m, h, st }], drifts: [{ site, flags }], short: [{ p, short, sites }], C: { id → contact } }
    Retourne [{ key, tone, tag, title, sub, href, rel?, label?, prio }] triée par urgence. */
-export function todoItems({ rem = [], lateSites = [], steps = [], low = [], habs = [], C = {}, ref = today() } = {}) {
+export function todoItems({ rem = [], lateSites = [], steps = [], low = [], habs = [], drifts = [], short = [], C = {}, ref = today() } = {}) {
   const out = [], cn = id => (C[id] && C[id].name) || '', day = iso => dateFr(String(iso).slice(0, 10));
   for (const x of rem) {
     const d = x.doc, who = cn(d.clientId);
@@ -69,6 +69,14 @@ export function todoItems({ rem = [], lateSites = [], steps = [], low = [], habs
     const s = l.find(x => ['final-invoice', 'deposit', 'finish', 'plan'].includes(x.key)); if (!s) continue;
     const tag = s.key === 'finish' ? 'Chantier à terminer' : s.key === 'plan' ? 'Chantier à planifier' : 'Chantier à facturer';
     out.push({ key: s.key + ':' + site.id, tone: s.tone, tag, title: site.name, sub: `${cn(site.clientId) ? cn(site.clientId) + ' · ' : ''}${s.text}`, href: s.key === 'plan' ? '#/site/' + site.id : s.href, label: s.label, prio: s.key === 'finish' ? 70 : s.key === 'plan' ? 80 : 40 });
+  }
+  for (const { site, flags } of drifts) { // M4 : chantier qui dépasse ses heures ou ses coûts prévus au devis (seulement les dérives avérées)
+    const bad = flags.filter(f => f.tone === 'bad'); if (!bad.length) continue;
+    out.push({ key: 'drift:' + site.id, tone: 'bad', tag: 'Chantier en dérive', title: site.name, sub: `${cn(site.clientId) ? cn(site.clientId) + ' · ' : ''}${bad.map(f => f.text).join(' ')}`, href: '#/site/' + site.id, prio: 35 });
+  }
+  if (short.length) { // M9 : devis signés dont le matériel dépasse le stock
+    const q = n => String(Math.round(n * 100) / 100).replace('.', ',');
+    out.push({ key: 'short', tone: 'warn', tag: 'Matériel manquant', title: `${short.length} article${short.length > 1 ? 's' : ''} manque${short.length > 1 ? 'nt' : ''} pour les devis signés`, sub: short.slice(0, 3).map(x => `${x.p.name} : manque ${q(x.short)} ${x.p.unit || ''}`.trim() + (x.sites.length ? ` (${x.sites.slice(0, 2).map(y => y.name).join(', ')}${x.sites.length > 2 ? '…' : ''})` : '')).join(' · ') + (short.length > 3 ? '…' : ''), href: '#/stock/products', prio: 45 });
   }
   if (low.length) out.push({ key: 'low', tone: 'warn', tag: 'Stock bas', title: `${low.length} article${low.length > 1 ? 's' : ''} à réapprovisionner`, sub: low.slice(0, 4).map(p => p.name).join(', ') + (low.length > 4 ? '…' : ''), href: '#/stock/products', prio: 55 });
   return out.map((x, i) => ({ ...x, i })).sort((a, b) => a.prio - b.prio || a.i - b.i).map(({ i, ...x }) => x);

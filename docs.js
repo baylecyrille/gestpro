@@ -8,6 +8,7 @@ import { remindersOf } from './reminders.js';
 import { retractInfo, earlyPayment, WHERE } from './retract.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
 import { pickProduct, autoOut, UNITS } from './stock.js';
+import { reservations, shortages, stockOf } from './plan.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
@@ -144,6 +145,17 @@ async function makeDeposit(q, sp, o = {}) {
   if (o.accept && !['accepted', 'invoiced'].includes(q.status)) { q.status = 'accepted'; if (!q.signDate) q.signDate = today(); await db.put('documents', q); }
   await syncInvStatus(inv.id); await bumpSite(q);
   return inv;
+}
+
+/* M9 : un devis signé réserve son matériel. Avertit si le stock ne suffit plus pour les lignes de ce devis (réservations de tous les devis signés comprises). */
+async function warnShortage(q) {
+  try {
+    if (!q || q.type !== 'quote' || q.status !== 'accepted') return;
+    const [sites, docs, moves, prods] = await Promise.all([db.all('sites'), db.all('documents'), db.all('moves'), db.all('products')]);
+    const PM = new Map(prods.map(p => [p.id, p])), ids = new Set((q.lines || []).map(l => l.pid).filter(Boolean));
+    const sh = shortages(reservations(sites, docs, moves, PM), PM, stockOf).filter(x => ids.has(x.p.id));
+    if (sh.length) toast('Matériel manquant pour ce devis : ' + sh.slice(0, 3).map(x => `${x.p.name} (manque ${String(Math.round(x.short * 100) / 100).replace('.', ',')} ${x.p.unit || ''})`.replace(' )', ')')).join(', ') + (sh.length > 3 ? '…' : ''));
+  } catch { /* l'avertissement est facultatif */ }
 }
 
 /* Un devis accepté/facturé fait passer son chantier de « Nouveau » à « Signé » */
@@ -428,7 +440,7 @@ export async function renderDoc(el, id, arg) {
   const actionsHtml = () => `<div class="card"><div class="row">
       ${isC ? (cur.fromInvoice && DN[cur.fromInvoice] ? `<a class="btn" href="#/doc/${cur.fromInvoice}">Voir la facture</a>` : '') : ''}${cur.deposit && cur.fromQuote && DN[cur.fromQuote] ? `<a class="btn" href="#/doc/${cur.fromQuote}">Voir le devis</a>` : ''}
       ${!isQ && !isC && cur.status !== 'draft' ? '<button class="btn" id="tocredit">Créer un avoir</button>' : ''}
-      ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${canInv && cur.status !== 'invoiced' ? '<button class="btn" id="todep" title="Crée une facture d\'acompte (en pourcentage ou en montant) à partir de ce devis">Facture d\'acompte</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
+      ${isQ ? `${canInv ? '<button class="btn primary" id="toinv">Transformer en facture</button>' : ''}${canInv && cur.status !== 'invoiced' ? '<button class="btn" id="todep" title="Crée une facture d\'acompte (en pourcentage ou en montant) à partir de ce devis">Facture d\'acompte</button>' : ''}${cur.status !== 'accepted' && cur.status !== 'invoiced' ? '<button class="btn" id="accept">Marquer accepté</button>' : ''}` : (isC ? '' : cur.stockOut ? '<span class="chip ok">Stock déjà déduit</span>' : cur.deposit ? '<span class="chip" title="Un acompte ne livre rien : le stock se déduit sur la facture finale">Acompte : pas de sortie de stock</span>' : '<button class="btn" id="stockout">Déduire du stock</button>')}
       ${!isC && cur.number ? '<button class="btn" id="dupbtn" title="Crée un nouveau brouillon à partir de ce document">⧉ Dupliquer</button>' : ''}
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${canRelance ? '<button class="btn" id="relbtn" title="Prépare un message de relance (e-mail, partage ou note) et l\'inscrit à l\'historique du dossier">↻ Relancer</button>' : ''}
@@ -536,7 +548,7 @@ export async function renderDoc(el, id, arg) {
     if (!isQ && !isC) await syncInvStatus(cur.id);
     await bumpSite(cur);
     if (isNew) { toast('Enregistré'); location.hash = '#/doc/' + cur.id; } else { toast('Enregistré'); refresh(); }
-    if (isQ && cur.status === 'accepted' && status0 !== 'accepted') offerSite();
+    if (isQ && cur.status === 'accepted' && status0 !== 'accepted') { offerSite(); warnShortage(cur); }
     return true;
   };
 
@@ -867,7 +879,7 @@ export async function renderDoc(el, id, arg) {
     if (isQ) {
       $('#todep', el)?.addEventListener('click', depositModal);
       if (arg === 'deposit' && $('#todep', el)) { try { history.replaceState(null, '', '#/doc/' + cur.id); } catch { /* ignore */ } depositModal(); } // lien « Facturer l'acompte » de la fiche chantier
-      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; if (!cur.signDate) cur.signDate = today(); await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); });
+      $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; if (!cur.signDate) cur.signDate = today(); await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); warnShortage(cur); });
       if (canInv) $('#toinv', el).onclick = async () => {
         if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
         readHeader();
@@ -883,7 +895,18 @@ export async function renderDoc(el, id, arg) {
     } else {
       $('#stockout', el)?.addEventListener('click', async () => {
         if (!confirm('Déduire du stock les produits de cette facture ?')) return;
-        const n = await autoOut(cur.lines, cur.number, cur.siteId || ''); cur.stockOut = true; await db.put('documents', cur);
+        let lines = cur.lines;
+        if (cur.siteId) { // matériel déjà sorti pour ce chantier (sortie chantier, autre facture) : on propose de ne déduire que le reste
+          const out = {}; (await db.all('moves')).filter(m => m.type === 'out' && m.siteId === cur.siteId).forEach(m => { out[m.productId] = (out[m.productId] || 0) + num(m.qty); });
+          const adj = [], done = [];
+          for (const l of cur.lines) {
+            if (!l.pid || !(out[l.pid] > 0)) { adj.push(l); continue; }
+            const take = Math.min(num(l.qty), out[l.pid]); out[l.pid] -= take; if (take > 0) done.push(`${l.desig || 'ligne'} (${take})`);
+            adj.push({ ...l, qty: num(l.qty) - take });
+          }
+          if (done.length && confirm(`Pour ce chantier, du matériel est déjà sorti du stock : ${done.join(', ')}.\n\nOK : ne déduire que le reste.\nAnnuler : tout déduire quand même.`)) lines = adj;
+        }
+        const n = await autoOut(lines, cur.number, cur.siteId || ''); cur.stockOut = true; await db.put('documents', cur);
         toast(n ? 'Stock mis à jour' : 'Aucune ligne liée au stock'); refresh();
       });
     }

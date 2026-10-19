@@ -74,6 +74,8 @@ export const TOPICS = {
         '<b>Habilitation expirée</b>, puis <b>Chantier en retard</b> (date de fin dépassée, chantier encore ouvert)',
         '<b>Chantier à facturer</b> : travaux à 100 % et reste à facturer, ou marché signé sans aucune facture',
         '<b>Devis à relancer</b> : envoyé sans réponse depuis plus de 10 jours',
+        '<b>Chantier en dérive</b> : un chantier a dépassé les heures ou les coûts prévus par son devis signé (détail dans « Prévu contre réalisé » de la fiche chantier)',
+        '<b>Matériel manquant</b> : le stock ne couvre pas ce que réservent les devis signés des chantiers ouverts (articles et chantiers concernés)',
         '<b>Stock bas</b> : produits sous leur seuil, regroupés en une ligne',
         '<b>Habilitation à renouveler</b> (bientôt expirée), <b>Chantier à terminer</b> (tout est facturé et encaissé) et <b>Chantier à planifier</b> (marché signé sans équipe affectée)'])}
         <p>Les huit premières actions sont visibles, les autres se déplient. Toucher une ligne ouvre le document, le chantier ou le stock concerné. Quand il n'y a rien à faire, le panneau l'indique. Il remplace les anciennes listes « À relancer », « Chantiers en retard », « Habilitations à renouveler » et « À réapprovisionner ».</p>`),
@@ -83,7 +85,7 @@ export const TOPICS = {
         '<b>Reste à encaisser</b> : ce que les clients doivent encore, à ce jour, sur les factures émises pendant la période choisie (comme les autres chiffres). Le total toutes périodes est rappelé à côté de « Factures à encaisser ». Touchez la tuile pour ouvrir la liste des factures'])}
         <p>La carte <b>Achats &amp; TVA</b> donne les achats HT, la TVA collectée, déductible et due : ce sont des aides au calcul, à faire valider par votre cabinet comptable. La courbe compare, mois par mois, le CA HT (bleu) et les achats HT (orange).</p>`),
       S('Ce qui s\'affiche d\'autre', ul([
-        '<b>Chantiers en cours &amp; marge</b> : les 8 chantiers ouverts les plus récents ; « (prév.) » = marge prévisionnelle',
+        '<b>Chantiers en cours &amp; marge</b> : les 8 chantiers ouverts les plus récents ; « (prév.) » = marge prévisionnelle. Tant qu\'aucun coût réel n\'est saisi, la marge est <b>estimée d\'après les prix d\'achat du devis</b> (« prév. devis ») ; sans prix d\'achat nulle part, la ligne indique <b>coûts non saisis</b> au lieu d\'une marge de 100 %. Une pastille orange ou rouge signale une dérive des heures ou des coûts',
         '<b>Planning des 7 prochains jours</b> : qui travaille où (affiché à côté des chantiers sur un grand écran, en dessous sur téléphone)',
         '<b>Factures à encaisser</b> : les plus anciennes d\'abord',
         '<b>Numéro en double</b> : deux documents de même type portent le même numéro (voir plus bas)',
@@ -148,14 +150,22 @@ export const TOPICS = {
       S('Avancement et chiffres', `<p>Trois jauges : <b>Paiement</b> (encaissé sur le marché), <b>Travaux</b> (le curseur d'avancement, saisi à la main) et <b>Délai</b> (elle rougit quand la date de fin est dépassée).</p>
         <p>Quatre chiffres : marché signé TTC (devis acceptés ou facturés), facturé TTC avec le reste à facturer, encaissé, reste à payer.</p>
         <p>Les boutons <b>+ Devis</b> et <b>+ Facture</b> créent un document déjà rattaché au chantier.</p>`),
+      S('Prévu contre réalisé', `<p>Dès qu\'un devis du chantier est <b>accepté</b> (ou facturé), la carte <b>Prévu contre réalisé</b> compare ce que le devis prévoyait à ce que le chantier consomme :</p>${ul([
+        '<b>Heures</b> : les lignes de <b>main d\'œuvre en heures</b> du devis (et les heures des ouvrages composés) donnent le budget d\'heures ; il est comparé aux heures saisies (« 96 h faites sur 112 prévues »)',
+        '<b>Coûts</b> : le coût prévu vient du <b>prix d\'achat</b> des lignes du devis (matières, sous-traitance, main d\'œuvre) ; le réel regroupe les sorties de stock, les charges non facturées et les heures saisies × coût horaire',
+        'Une ligne de main d\'œuvre en heures sans prix d\'achat est chiffrée au <b>coût horaire moyen de l\'équipe</b> ; les lignes sans prix d\'achat sont comptées et signalées (le coût prévu est alors incomplet)',
+        'Des <b>alertes</b> s\'affichent avant la facture finale : heures dépassées, heures presque épuisées alors que les travaux avancent moins vite, coûts supérieurs au prévu, coûts ou heures qui avancent plus vite que l\'avancement saisi, planning qui affecte plus d\'heures que le devis. Les dérives avérées remontent aussi dans « À faire aujourd\'hui »'])}
+        <p>Pour que la comparaison serve, renseignez le <b>prix d\'achat</b> des lignes du devis (il se reprend tout seul depuis le produit ou l\'ouvrage) et saisissez l\'avancement des travaux. Sans prix d\'achat sur le devis, la carte l\'indique au lieu de comparer.</p>`),
       S('Équipe, heures et matériel', `<p><b>Équipe &amp; heures</b> : membres affectés, heures réalisées et prévues, coût de main-d'œuvre. « + Affecter des membres » ouvre l'affectation, « Voir le planning » ouvre le planning.</p>
+        <p><b>Matériel à prévoir</b> : les produits du stock demandés par le devis accepté, avec ce qui est déjà sorti pour le chantier, le stock actuel et la pastille <b>couvert</b>, <b>sorti</b> ou <b>manque</b> (le stock ne couvre pas tout ce que réservent les devis signés des chantiers ouverts). La main d\'œuvre, la sous-traitance, les ouvrages et les lignes libres n\'en font pas partie.</p>
         <p><b>Matériel sorti du stock</b> : les quantités sorties pour ce chantier.</p>`),
       S('Charges non facturées et rentabilité', `<p>Une charge est un coût qui ne passe ni par le stock ni par une facture client : location, sous-traitance, déplacement. Touchez <b>+ Produit / charge</b>. Pour un produit stocké, « Sortir aussi du stock » enregistre la sortie en même temps.</p>${table(['Ligne', 'Origine'], [
-        ['Facturé HT', 'Factures du chantier, nettes d\'avoirs ; sinon le marché signé HT (marge « prévisionnelle »)'],
+        ['Facturé HT', 'Factures du chantier, nettes d\'avoirs ; sinon le marché signé HT (marge « prévisionnelle »). Tant qu\'aucun coût n\'est saisi, c\'est le marché signé HT qui sert de base'],
         ['− Matières', 'Sorties de stock rattachées au chantier'],
         ['− Charges', 'Le total des charges saisies'],
         ['− Main-d\'œuvre', 'Heures saisies par les salariés × coût horaire de chaque membre'],
         ['= Marge', 'Montant et pourcentage du facturé']])}
+        <p><b>Aucun coût saisi</b> : plutôt qu\'afficher une marge de 100 %, la carte estime la marge d\'après le coût prévu du devis (« Marge prévue d\'après le devis »), ou indique <b>coûts non saisis</b> si le devis n\'a pas de prix d\'achat. Dès qu\'une sortie de stock, une charge ou des heures sont saisies, la marge réelle reprend la place.</p>
         <p>Pour que la marge soit juste : rattachez chaque devis et facture au bon chantier, sortez le matériel en indiquant le chantier, saisissez les heures réalisées et le coût horaire de chaque membre.</p>`),
       S('Supprimer un chantier', `<p>La suppression est définitive et demande confirmation. Un chantier qui a déjà des devis, factures ou avoirs, des charges ou achats, du matériel sorti du stock ou des heures saisies ne peut pas être supprimé : terminez-le (« ✓ Terminer le chantier ») ou passez-le en « Perdu ». Seul un chantier vide, avec au plus un planning, se supprime ; son planning est alors supprimé.</p>`)
     ]
@@ -208,12 +218,13 @@ export const TOPICS = {
     intro: `Le stock suit chaque produit, dans chaque emplacement, de l'entrée à la sortie. Il sert à savoir ce qu'il reste, à calculer la matière consommée par chantier et à alimenter le catalogue des devis.`,
     sections: [
       S('La liste', `<p>Chaque produit montre sa vignette, sa référence, son code-barres, sa catégorie, la quantité par emplacement et son prix de vente HT. La pastille de quantité est <b>verte</b> (stock suffisant), <b>orange</b> (au seuil d'alerte ou en dessous), <b>rouge</b> (épuisé ou négatif).</p>
-        <p><b>Rechercher</b> par nom, référence, code-barres ou catégorie. <b>⚙ Filtres &amp; tri</b> : tri, catégorie, emplacement, type (vendus ou usage interne), « Stock bas / épuisé ».</p>
+        <p><b>Rechercher</b> par nom, référence, code-barres ou catégorie. <b>⚙ Filtres &amp; tri</b> : tri, catégorie, emplacement, type (vendus ou usage interne), « Stock bas / épuisé » et <b>« Matériel manquant (devis signés) »</b>.</p>
+        <p>Les devis <b>acceptés</b> des chantiers ouverts <b>réservent</b> leur matériel : sous la quantité, la ligne indique « réservé par les devis signés : X (chantiers) · disponible Y », et une pastille <b>manque N</b> apparaît quand le stock ne suffit pas. La réservation disparaît au fur et à mesure des sorties pour le chantier, et quand le devis est facturé ou le chantier terminé. La <b>main d\'œuvre</b> et la <b>sous-traitance</b> restent au catalogue pour les devis, mais n\'ont ni stock ni seuil : la ligne porte l\'étiquette « service ».</p>
         <p><b>▦ Scanner</b> lit un code-barres avec la caméra et ouvre le produit ; si le code est inconnu, l'application propose de créer le produit. Vous pouvez aussi saisir le code à la main ou utiliser une douchette.</p>`),
       S('Créer ou modifier un produit', `<p>Touchez <b>+ Produit</b>.</p>${ul([
         '<b>Catégorie</b> : Produit (fourniture), Matériel, Main d\'œuvre, Sous-traitance ou Ouvrage. Elle sert au menu « Produit » des devis et factures (pour classer d\'un coup tous les produits existants, voir « Classer les produits existants »)',
         '<b>Type d\'article</b> : « Vendu aux clients », ou « Usage interne » (encre, papier, consommables) : un article interne n\'est jamais proposé dans les devis',
-        '<b>Prix d\'achat HT</b> : sert aux achats, à la TVA déductible et à la marge. <b>Prix de vente HT</b> : repris dans les devis',
+        '<b>Prix d\'achat HT</b> : sert aux achats, à la TVA déductible et à la marge. Il suit vos achats : à chaque réception, il devient le <b>prix moyen pondéré</b> du stock en place et de la quantité reçue (10 en stock à 10 € + 10 reçus à 12 € → 11 €). <b>Prix de vente HT</b> : repris dans les devis',
         '<b>TVA de vente</b> : reprise sur la ligne du devis quand elle diffère du taux du document (la colonne TVA de l\'éditeur doit être affichée). <b>TVA d\'achat</b> (20 % par défaut) : celle que vous déduisez sur vos achats ; elle sert aux réceptions de stock et aux calculs « Achats &amp; TVA » quand la facture fournisseur n\'indique pas son propre taux',
         '<b>Seuil d\'alerte stock</b> : en dessous, le produit apparaît dans « À réapprovisionner » sur l\'accueil',
         '<b>Quantité initiale et emplacement</b> : à la création seulement ; enregistre un premier mouvement « Stock initial »',
@@ -268,7 +279,8 @@ export const TOPICS = {
         + `<p>L'application refuse une sortie ou un transfert supérieur au stock disponible.</p>`),
       S('Les deux assistants', `<p><b>📦 Réception colis</b> : indiquez le fournisseur ou le bon de livraison et l'emplacement de rangement, ajoutez les produits (scan ou « + Ligne ») avec leur quantité, puis « Valider la réception » crée toutes les entrées d'un coup.</p>
         <p><b>🏗 Sortie chantier</b> : choisissez le chantier, ajoutez produits et quantités ; l'application prélève sur les emplacements les mieux fournis. « Reprendre les besoins du devis » remplit les lignes avec les produits des devis acceptés ou facturés du chantier, moins ce qui est déjà sorti.</p>
-        <p>Depuis une facture de vente, « Déduire du stock » sort d'un coup les produits de la facture, rattachés au chantier.</p>`)
+        <p>À chaque réception (colis, mouvement d\'entrée ou facture fournisseur importée), le <b>prix d\'achat de la fiche passe au prix moyen</b> ; l\'écart avec le prix précédent s\'affiche avant de valider et une <b>hausse de plus de 5 %</b> est signalée (« ⚠ hausse de +8 % »), y compris dans le message qui suit la validation.</p>
+        <p>Depuis une facture de vente <b>finale</b>, « Déduire du stock » sort d'un coup les produits de la facture, rattachés au chantier ; si du matériel est déjà sorti pour ce chantier, l\'application propose de ne déduire que le reste. Une <b>facture d\'acompte</b> ne livre rien : le bouton n\'y figure pas. La main d\'œuvre et la sous-traitance ne créent jamais de mouvement.</p>`)
     ]
   },
 
@@ -314,7 +326,7 @@ export const TOPICS = {
       S('Statuts d\'un devis', table(['Statut', 'Signification'], [
         ['Brouillon', 'En préparation'],
         ['Envoyé', 'Remis au client ; automatique à l\'envoi par e-mail. Compté dans « Devis en attente » pendant 90 jours'],
-        ['Accepté', 'Le client a dit oui (« Marquer accepté ») : le chantier lié passe de Nouveau à Signé. Sans chantier, l\'application propose de le créer (client, adresse et devis déjà remplis)'],
+        ['Accepté', 'Le client a dit oui (« Marquer accepté ») : le chantier lié passe de Nouveau à Signé. Sans chantier, l\'application propose de le créer (client, adresse et devis déjà remplis). Le matériel du devis est alors réservé dans le stock ; un message signale ce qui manque'],
         ['Refusé', 'Le client a dit non'],
         ['Facturé', 'Le devis a été transformé en facture']])),
       S('Du devis à la facture', `${ul([

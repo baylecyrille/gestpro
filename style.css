@@ -710,3 +710,12 @@ fieldset.ouvmode input[type=radio]{width:auto;margin:3px 0 0;flex:none}
 .nextstep .nsr{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .nextstep .nsr b{flex:1 1 220px}
 .invbanner.retract{border-color:#b9cdea;border-left-color:var(--p2);background:#eef4fc}
+/* maj62 : prévu contre réalisé, matériel à prévoir */
+.bar.warn i{background:var(--warn)}.bar.bad i{background:var(--bad)}
+.pcr .bar{margin:2px 0 8px}
+.pcr .pcrr{display:flex;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;padding:3px 0}
+.pcr .pcrr small{color:var(--mut);font-weight:400}
+.pcr .pcrr.tot{margin-top:6px;border-top:1px solid var(--bd);padding-top:8px}
+.pcr .pcrf{margin-top:8px;padding:7px 10px;border-radius:8px;font-size:14px}
+.pcr .pcrf.bad{background:#fde5e5;color:var(--bad)}.pcr .pcrf.warn{background:#fff1d9;color:var(--warn)}
+.item.need .s{white-space:normal}

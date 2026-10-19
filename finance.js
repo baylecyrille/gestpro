@@ -95,7 +95,7 @@ export function siteMargin(siteId, docs, moves, tasks, members, site, times = []
   const hours = round2(Object.values(done).reduce((a, h) => a + h, 0));
   const mo = round2(Object.entries(done).reduce((a, [id, h]) => a + h * num(M[id]?.rate), 0));
   const base = fact || marche, couts = round2(matieres + charges + mo), marge = round2(base - couts);
-  return { fact, marche, base, previsionnel: !fact && !!marche, matieres, charges, mo, hours, couts, marge, pct: base ? Math.round(marge / base * 100) : null };
+  return { fact, marche, base, previsionnel: !fact && !!marche, matieres, charges, mo, hours, couts, noCosts: couts === 0, partiel: fact > 0 && marche - fact > 0.5, marge, pct: base ? Math.round(marge / base * 100) : null };
 }
 
 export const weekDays = (from = today(), n = 7) => Array.from({ length: n }, (_, i) => addDays(from, i));

@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import { e, eur, num, round2, dateFr, cname, today, F, addressAutocomplete, filterBar, bindFilters, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import { totals, paidOf, invBadge } from './docs.js';
-import { siteTeamHtml, assignModal } from './team.js';
+import { siteTeamHtml, assignModal, siteHours } from './team.js';
 import { siteMargin } from './finance.js';
 import { doneBySite } from './hours.js';
 import * as auth from './auth.js';
@@ -10,6 +10,7 @@ import * as lock from './lock.js';
 import * as fl from './files.js';
 import { getS } from './defaults.js';
 import { nextSteps } from './nextstep.js';
+import { estimateMargin, siteCompare, siteNeeds, reservations, stockOf } from './plan.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -123,9 +124,24 @@ export async function renderSite(el, id) {
   const client = contacts.find(c => c.id === site.clientId), moe = contacts.find(c => c.id === site.moeId);
   const st = siteStats(site.id, docs, payments);
   const mine = docs.filter(d => d.siteId === site.id).sort((a, b) => (b.date + b.number).localeCompare(a.date + a.number));
-  const prods = await db.all('products');
+  const [prods, allSites, Sg] = await Promise.all([db.all('products'), db.all('sites'), getS()]);
   /* M1 : prochaine étape du dossier, déduite des devis, factures, règlements et du planning (réservé à ceux qui voient les montants) */
-  const steps = money ? nextSteps(site, { docs, payments, tasks, S: await getS(), st }) : [];
+  const steps = money ? nextSteps(site, { docs, payments, tasks, S: Sg, st }) : [];
+  /* M3 / M4 / A7 : budget tiré des devis signés (prix d'achat des lignes, lignes de main d'œuvre en heures) comparé au réel */
+  const PM = new Map(prods.map(p => [p.id, p])), MM = new Map(members.map(m => [m.id, m])), tm = siteHours(site.id, tasks, members, times);
+  const { budget: bud, cmp } = money ? siteCompare(site, docs, { products: PM, members: MM }, Sg, mg, tm.planned) : { budget: null, cmp: null };
+  const estBase = mg.marche || mg.base, est = money && mg.noCosts ? estimateMargin(estBase, bud) : null; // le coût prévu couvre tout le marché : on le compare au marché signé, pas à un simple acompte facturé
+  const fh = h => String(Math.round(h * 100) / 100).replace('.', ',') + ' h', fq = n => String(Math.round(n * 100) / 100).replace('.', ',');
+  const toneOf = pct => (pct === null || pct === undefined ? '' : pct > 100 ? 'bad' : pct >= 85 ? 'warn' : ''), pbar = (pct, tone) => `<div class="bar ${tone}"><i style="width:${Math.max(0, Math.min(100, pct || 0))}%"></i></div>`;
+  const pcrHtml = !money || !bud ? '' : cmp ? `<h3>Prévu contre réalisé</h3><div class="card pcr" id="pcr">
+      ${cmp.hours.planned > 0 ? `<div class="pcrr"><span>Heures</span><b>${fh(cmp.hours.done)} faites sur ${fh(cmp.hours.planned)} prévues${cmp.hours.pct !== null ? ` (${cmp.hours.pct} %)` : ''}</b></div>${pbar(cmp.hours.pct, toneOf(cmp.hours.pct))}` : ''}
+      ${cmp.total.planned > 0 ? `<div class="pcrr"><span>Matières, sous-traitance, charges</span><b>${eur(cmp.mat.real)} <small>sur ${eur(cmp.mat.planned)} prévus</small></b></div>
+      <div class="pcrr"><span>Main-d'œuvre</span><b>${eur(cmp.mo.real)} <small>sur ${eur(cmp.mo.planned)} prévus</small></b></div>
+      <div class="pcrr tot"><span>Coût total</span><b>${eur(cmp.total.real)} <small>sur ${eur(cmp.total.planned)} prévus${cmp.total.pct !== null ? ` (${cmp.total.pct} %)` : ''}</small></b></div>${pbar(cmp.total.pct, toneOf(cmp.total.pct))}` : ''}
+      ${cmp.progress !== null ? `<div class="pcrr"><span>Avancement des travaux</span><b>${Math.round(cmp.progress)} %</b></div>` : ''}
+      ${cmp.flags.map(f => `<div class="pcrf ${f.tone}">⚠ ${e(f.text)}</div>`).join('')}
+      <p class="muted" style="margin:8px 0 0">Prévu d'après le devis signé (${bud.quotes.map(e).join(', ')}) : prix d'achat des lignes et lignes de main d'œuvre en heures.${bud.unknown ? ` ${bud.unknown} ligne${bud.unknown > 1 ? 's' : ''} sans prix d'achat : le coût prévu est incomplet.` : ''}${bud.estimated ? ` Main d'œuvre de ${bud.estimated} ligne${bud.estimated > 1 ? 's' : ''} chiffrée au coût horaire moyen de l'équipe.` : ''} Réel : sorties de stock, charges non facturées, heures saisies × coût horaire.${tm.planned && cmp.hours.planned ? ` Planning : ${fh(tm.planned)} affectées.` : ''}</p></div>`
+    : bud.quotes.length ? `<h3>Prévu contre réalisé</h3><div class="card" id="pcr"><p class="muted" style="margin:0">Le devis signé ne contient ni prix d'achat ni ligne de main d'œuvre en heures : renseignez le « prix d'achat » des lignes du devis (ou composez des ouvrages) pour comparer le prévu au réel.</p></div>` : '';
   const stepHtml = steps.length ? (() => {
     const m = steps[0], more = steps.slice(1, 4).map(x => e(x.label));
     const btn = m.rel ? `<button type="button" class="btn primary" data-rel="${e(m.rel)}">↻ ${e(m.label)}</button>`
@@ -137,7 +153,12 @@ export async function renderSite(el, id) {
   const outs = {};
   for (const m of moves) if (m.siteId === site.id && m.type === 'out') outs[m.productId] = (outs[m.productId] || 0) + num(m.qty);
   const matRows = Object.entries(outs).map(([pid, q]) => { const p = prods.find(x => x.id === pid); return `<div class="item"><div class="main"><div class="t">${e(p?.name || 'Produit supprimé')}</div></div><div class="r"><b>${q} ${e(p?.unit || '')}</b></div></div>`; });
-  const matHtml = auth.can('stock') || money ? `<h3>Matériel sorti du stock</h3>${matRows.join('') || '<p class="muted">Aucune sortie pour ce chantier.</p>'}${auth.can('stock') ? '<a class="btn sm" href="#/stock/moves">🏗 Sortie / mouvements</a>' : ''}` : '';
+  /* M9 : matériel que les devis signés réservent, avec le manque éventuel (stock − réservé par tous les chantiers ouverts) */
+  const needs = OPEN.includes(site.status) ? siteNeeds(site.id, docs, moves, PM) : new Map(), resv = reservations(allSites, docs, moves, PM);
+  const needRows = [...needs].map(([pid, n]) => { const p = PM.get(pid); if (!p) return ''; const r = resv.get(pid), avail = stockOf(p) - (r ? r.reserved : 0), short = n.left > 0 && avail < -1e-9 ? -avail : 0;
+    return `<div class="item need"><div class="main"><div class="t">${e(p.name)}</div><div class="s">besoin ${fq(n.need)} · déjà sorti ${fq(n.out)} · reste à sortir ${fq(n.left)} ${e(p.unit || '')} · en stock ${fq(stockOf(p))}</div></div><div class="r">${short ? `<span class="chip bad" title="Stock ${fq(stockOf(p))}, réservé par les devis signés ${fq(r.reserved)} (tous chantiers ouverts)">manque ${fq(short)}</span>` : n.left > 0 ? '<span class="chip ok">couvert</span>' : '<span class="chip ok">sorti</span>'}</div></div>`; }).join('');
+  const needHtml = (auth.can('stock') || money) && needRows ? `<h3>Matériel à prévoir <span class="muted" style="font-size:12px;font-weight:400">· d'après le devis signé</span></h3>${needRows}` : '';
+  const matHtml = auth.can('stock') || money ? `${needHtml}<h3>Matériel sorti du stock</h3>${matRows.join('') || '<p class="muted">Aucune sortie pour ce chantier.</p>'}${auth.can('stock') ? '<a class="btn sm" href="#/stock/moves">🏗 Sortie / mouvements</a>' : ''}` : '';
   const row = d => {
     const t = totals(d);
     const badge = d.type === 'invoice' || d.type === 'credit' ? invBadge(d, payments) : `<span class="chip ${d.status === 'accepted' || d.status === 'invoiced' ? 'ok' : d.status === 'refused' ? 'bad' : ''}">${{ draft: 'Brouillon', sent: 'Envoyé', accepted: 'Accepté', refused: 'Refusé', invoiced: 'Facturé' }[d.status] || ''}</span>`;
@@ -163,16 +184,21 @@ export async function renderSite(el, id) {
       <div class="kpi ${st.resteAPayer ? 'warn' : ''}"><small>Reste à payer</small><b>${eur(st.resteAPayer)}</b>${st.aRembourser ? `<small>à rembourser au client : ${eur(st.aRembourser)}</small>` : ''}</div>
     </div>
     ${sect('Devis', 'quote', 'Devis')}${sect('Factures', 'invoice', 'Facture')}${mine.some(d => d.type === 'credit') ? sect('Avoirs', 'credit', '') : ''}` : ''}
+    ${pcrHtml}
     ${siteTeamHtml(site.id, tasks, members, { edit: canAssign, money, times })}
     ${matHtml}
     ${money ? `<h3>Charges non facturées</h3><div class="card">${(site.charges || []).map((c, i) => `<div class="item" data-ch="${i}"><div class="main"><div class="t">${e(c.label)}</div><div class="s">${dateFr(c.date)} · ${num(c.qty)} ${e(c.unit || '')} × ${eur(num(c.cost))}${c.note ? ' · ' + e(c.note) : ''}</div></div><div class="r"><b>${eur(num(c.qty) * num(c.cost))}</b> <button class="btn sm danger" data-chrm="${i}">✕</button></div></div>`).join('') || '<p class="muted" style="margin-top:0">Aucune charge. Ajoutez ici les produits utilisés sur ce chantier mais non facturés au client : ils réduisent la marge.</p>'}${canEdit || auth.can('stock') ? '<button class="btn sm" id="addch">+ Produit / charge</button>' : ''}</div>
     <h3>Rentabilité</h3><div class="card"><div class="totals" style="margin:0;max-width:none">
-      <div><span>${mg.previsionnel ? 'Marché signé HT (rien de facturé)' : 'Facturé HT (net des avoirs)'}</span><b>${eur(mg.base)}</b></div>
-      <div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>
+      <div><span>${est ? 'Marché signé HT' : mg.previsionnel ? 'Marché signé HT (rien de facturé)' : 'Facturé HT (net des avoirs)'}</span><b>${eur(est ? estBase : mg.base)}</b></div>
+      ${mg.noCosts ? (est ? `<div><span>− Coût prévu d'après le devis</span><b>${eur(bud.total)}</b></div>
+      <div class="big"><span>Marge prévue d'après le devis</span><span style="color:${est.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(est.marge)}${est.pct !== null ? ` (${est.pct} %)` : ''}</span></div>`
+        : `<div class="big"><span>Marge</span><span style="color:var(--warn)">coûts non saisis</span></div>`)
+      : `<div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>
       <div><span>− Charges non facturées</span><b>${eur(mg.charges)}</b></div>
       <div><span>− Main-d'œuvre (${mg.hours} h × coût horaire)</span><b>${eur(mg.mo)}</b></div>
-      <div class="big"><span>Marge ${mg.previsionnel ? 'prévisionnelle' : ''}</span><span style="color:${mg.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(mg.marge)}${mg.pct !== null ? ` (${mg.pct} %)` : ''}</span></div></div>
-      <p class="muted" style="margin-bottom:0">Les matières viennent des sorties de stock rattachées à ce chantier (« Déduire du stock » depuis une facture, ou sortie manuelle avec chantier).</p></div>` : ''}
+      <div class="big"><span>Marge ${mg.previsionnel ? 'prévisionnelle' : ''}</span><span style="color:${mg.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(mg.marge)}${mg.pct !== null ? ` (${mg.pct} %)` : ''}</span></div>`}</div>
+      ${mg.partiel && !mg.noCosts ? `<p class="invbanner" id="partnote" style="margin:10px 0 0">Seule une partie du marché est facturée (${eur(mg.fact)} sur ${eur(mg.marche)} HT) : cette marge compare <b>tous les coûts déjà engagés</b> à cette part seulement.${bud && bud.ok && bud.total > 0 ? ` Marge prévue sur tout le marché, d'après le devis : <b>${eur(mg.marche - bud.total)}</b>${mg.marche ? ` (${Math.round((mg.marche - bud.total) / mg.marche * 100)} %)` : ''}.` : ''}</p>` : ''}
+      <p class="muted" style="margin-bottom:0" id="rentnote">${mg.noCosts ? (est ? `Aucun coût réel n'est encore saisi (sortie de stock, charge, heures) : cette marge est une estimation tirée des prix d'achat du devis${est.partial ? ` — ${bud.unknown} ligne${bud.unknown > 1 ? 's' : ''} sans prix d'achat, la marge réelle sera plus basse` : ''}.` : 'Aucun coût n\'est saisi, la marge ne peut pas être calculée : saisissez des sorties de stock, des charges ou des heures, ou renseignez le prix d\'achat des lignes du devis.') : 'Les matières viennent des sorties de stock rattachées à ce chantier (« Déduire du stock » depuis une facture finale, ou sortie manuelle avec chantier).'}</p></div>` : ''}
     ${canEdit ? '<div class="card" style="margin-top:14px"><button class="btn danger" id="del">Supprimer le chantier</button></div>' : ''}`;
   $('#stat', el).onchange = async ev => { site.status = ev.target.value; await db.put('sites', site); toast('Statut mis à jour'); refresh(); };
   const addr1 = (site.address || '').replace(/\s*\n\s*/g, ', ');

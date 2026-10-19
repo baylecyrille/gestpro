@@ -6,7 +6,7 @@ import { renderStock, ensureDefaultLocation, total } from './stock.js';
 import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, counts, quoteExpired } from './docs.js';
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
-import { renderPlanning, covers, habState } from './team.js';
+import { renderPlanning, covers, habState, siteHours } from './team.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -18,6 +18,7 @@ import { dupNumbers } from './doccheck.js';
 import { findSimilar, statsByClient } from './clients.js';
 import { simBoxHtml, bindSimilar, dupQuestion } from './clients-ui.js';
 import { nextSteps, todoItems } from './nextstep.js';
+import { isStocked, stockOf, estimateMargin, siteCompare, reservations, shortages } from './plan.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -129,8 +130,8 @@ async function renderDashboard(el) {
   if (!PERIODS.some(p => p[0] === per)) per = 'd30';
   const range = periodRange(per, today(), pc);
   const sm = summary(range, docs, payments, moves, products, sites, S);
-  const stockValue = products.reduce((a, p) => a + total(p) * (p.buy || 0), 0);
-  const low = products.filter(p => total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0);
+  const stockValue = products.reduce((a, p) => a + (isStocked(p) ? total(p) * (p.buy || 0) : 0), 0);
+  const low = products.filter(p => isStocked(p) && (total(p) <= (p.min || 0) && (p.min || 0) > 0 || total(p) < 0)); // la main d'œuvre et la sous-traitance n'ont pas de stock
   const invoices = docs.filter(d => d.type === 'invoice' && counts(d));
   const unpaidList = invoices.map(d => ({ d, left: Math.max(0, totals(d).ttc - paidOf(payments, d.id)) })).filter(x => x.left > 0.005).sort((a, b) => a.d.date.localeCompare(b.d.date));
   const unpaid = unpaidList.reduce((a, x) => a + x.left, 0);
@@ -181,9 +182,18 @@ async function renderDashboard(el) {
 
   // chantiers ouverts avec marge
   const open = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).sort((a, b) => (b._u || 0) - (a._u || 0)).slice(0, 8);
-  const siteRows = open.map(x => { const g = siteMargin(x.id, docs, moves, tasks, members, x, times); const st = siteStats(x.id, docs, payments);
-    return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div>${gaugesHtml(siteGauges(x, st, auth.can('sites.money')))}</div>
-      <div class="r"><b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div></div></a>`; }).join('');
+  /* A7 / M4 : marge réelle, sinon estimée d'après le devis (« coûts non saisis » quand rien n'est chiffré) ; dérive prévu/réalisé sur chaque chantier ouvert */
+  const PM = new Map(products.map(p => [p.id, p])), MM = new Map(members.map(m => [m.id, m])), pctx = { products: PM, members: MM };
+  const cmpOf = x => { const g = siteMargin(x.id, docs, moves, tasks, members, x, times); return { g, ...siteCompare(x, docs, pctx, S, g, siteHours(x.id, tasks, members, times).planned) }; };
+  const cmps = new Map(sites.filter(x => ['new', 'signed', 'progress'].includes(x.status)).map(x => [x.id, cmpOf(x)]));
+  const siteRows = open.map(x => { const { g, budget, cmp } = cmps.get(x.id) || cmpOf(x); const st = siteStats(x.id, docs, payments);
+    const est = g.noCosts ? estimateMargin(g.marche || g.base, budget) : null, flags = cmp ? cmp.flags : [];
+    const full = g.partiel && budget.ok && budget.total > 0 ? estimateMargin(g.marche, budget) : null; // facturé en partie seulement (acompte) : la marge sur le facturé n'a pas de sens, on montre celle du marché
+    const right = g.noCosts ? (est ? `<b style="color:${est.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(est.marge)}</b><div class="s" ${est.partial ? 'title="Des lignes du devis n\'ont pas de prix d\'achat : la marge réelle sera plus basse"' : ''}>${est.pct !== null ? est.pct + ' % de marge' : 'marge'} (prév. devis${est.partial ? ', incomplet' : ''})</div>` : `<b>—</b><div class="s">coûts non saisis</div>`)
+      : full ? `<b style="color:${full.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(full.marge)}</b><div class="s" title="Seule une partie du marché est facturée : marge prévue sur tout le marché d'après le devis">${full.pct !== null ? full.pct + ' % de marge' : 'marge'} (prév. devis${full.partial ? ', incomplet' : ''})</div>`
+      : `<b style="color:${g.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${g.base ? eur(g.marge) : '—'}</b><div class="s">${g.pct !== null ? g.pct + ' % de marge' : 'marge'}${g.previsionnel ? ' (prév.)' : ''}</div>`;
+    return `<a class="item" href="#/site/${x.id}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${e(x.color || '#2f7ad6')}"></span><div class="main"><div class="t">${e(x.name)}</div><div class="s">${e(C[x.clientId]?.name || '')} · ${SS[x.status]}${st.resteAPayer ? ' · reste à payer ' + eur(st.resteAPayer) : ''}</div>${flags.length ? `<div>${flags.slice(0, 2).map(f => `<span class="chip ${f.tone}" title="${e(f.text)}">${e(f.label)}</span>`).join('')}</div>` : ''}${gaugesHtml(siteGauges(x, st, auth.can('sites.money')))}</div>
+      <div class="r">${right}</div></a>`; }).join('');
 
   // chantiers en retard : date de fin dépassée et chantier encore ouvert
   const lateSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status) && x.end && x.end < today()).sort((a, b) => a.end.localeCompare(b.end));
@@ -207,7 +217,9 @@ async function renderDashboard(el) {
   /* M12 : une seule liste d'actions à la place des alertes dispersées (relances, habilitations, chantiers en retard, chantiers à facturer, stock bas) */
   const openSites = sites.filter(x => ['new', 'signed', 'progress'].includes(x.status));
   const siteSteps = openSites.map(site => ({ site, steps: nextSteps(site, { docs, payments, tasks, S, st: siteStats(site.id, docs, payments), rem }) }));
-  const todo = todoItems({ rem, lateSites, steps: siteSteps, low, habs: habAlerts, C });
+  const drifts = openSites.map(site => ({ site, flags: (cmps.get(site.id) || cmpOf(site)).cmp?.flags || [] })).filter(x => x.flags.length);
+  const short = shortages(reservations(sites, docs, moves, PM), PM, stockOf);
+  const todo = todoItems({ rem, lateSites, steps: siteSteps, low, habs: habAlerts, drifts, short, C });
   const todoRow = x => `<div class="item todoi"><a class="main" href="${e(x.href)}" style="text-decoration:none;color:inherit"><div class="t"><span class="chip ${x.tone}">${e(x.tag)}</span> ${e(x.title)}</div><div class="s">${e(x.sub)}</div></a>${x.rel ? `<div class="r"><button type="button" class="btn sm" data-rel="${e(x.rel)}">${e(x.label)}</button></div>` : x.label ? `<div class="r"><a class="btn sm" href="${e(x.href)}">${e(x.label)}</a></div>` : ''}</div>`;
   const todoHtml = `<div class="card todo" id="todo"><h3 style="margin:0 0 4px">À faire aujourd'hui${todo.length ? ` <span class="muted" style="font-size:12px;font-weight:400">· ${todo.length} action${todo.length > 1 ? 's' : ''}</span>` : ''}</h3>${todo.length ? todo.slice(0, 8).map(todoRow).join('') + (todo.length > 8 ? `<details><summary class="muted" style="cursor:pointer;margin:6px 0">+ ${todo.length - 8} autre${todo.length - 8 > 1 ? 's' : ''}</summary>${todo.slice(8).map(todoRow).join('')}</details>` : '') : '<p class="muted" style="margin:4px 0 0">✅ Rien d\'urgent : aucune relance, aucun chantier en retard, stock et habilitations à jour.</p>'}</div>`;
 
