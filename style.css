@@ -636,3 +636,38 @@ span.tbadge{cursor:default}
 .tl [hidden]{display:none}
 .tday.today{border-color:var(--p2);box-shadow:0 0 0 1px var(--p2) inset}
 .tday .chip{margin:0}
+
+/* Récapitulatif mensuel des heures (Planning › Heures) */
+.rcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0}
+.rc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column}
+.rc b{font-size:22px;color:var(--p);line-height:1.15}.rc span{font-size:13px}.rc small{color:var(--mut);font-size:11.5px;margin-top:2px}
+.rc.warn{border-color:var(--warn)}.rc.warn b{color:var(--warn)}
+.rtab{border-collapse:collapse;width:100%}
+.rtab th,.rtab td{border:1px solid var(--bd);padding:3px 3px;font-size:12px;text-align:center;vertical-align:middle}
+.rtab thead th{background:#eaf1fb;color:var(--p);font-weight:600;line-height:1.2}
+.rtab th.who{text-align:left;white-space:nowrap;min-width:104px;position:sticky;left:0;background:#fff;z-index:1;font-weight:600}
+.rtab thead th.who{background:#eaf1fb}
+.rtab td[data-m]{min-width:30px;height:40px;padding:2px}
+.rtab td.ed{cursor:pointer}.rtab td.ed:hover{background:#dbe8f9}
+.rtab .we{background:#eef1f6}.rtab th.we{background:#dfe5ee}
+.rtab td.miss{background:#fff4e0}.rtab .rq{color:var(--warn);font-weight:700}
+.rtab td.tdy{box-shadow:0 0 0 2px var(--p2) inset}.rtab thead th.tdy{background:var(--p);color:#fff}
+.rtab td.tot,.rtab th.tot{white-space:nowrap;min-width:38px;background:#f7f9fc}.rtab td.tot{font-weight:700}
+.rtab tr.gt th,.rtab tr.gt td{background:#eaf1fb;font-weight:700}
+.rtab td b{display:block;line-height:1.1}
+.rtab.sum td.n{text-align:right;white-space:nowrap}.rtab.sum td.rwho,.rtab.sum td:first-child{text-align:left}
+.rabs{display:block;font-size:10px;background:#fff1d9;color:var(--warn);border-radius:6px;padding:0 3px;margin-top:1px;white-space:nowrap}
+.rdots{display:flex;gap:2px;justify-content:center;flex-wrap:wrap;margin-top:2px}
+.rdots i,.rleg i,.rdot{display:inline-block;width:7px;height:7px;border-radius:50%}
+.rdot{margin-right:6px;vertical-align:middle}
+.rleg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin:6px 0}.rleg span{display:inline-flex;align-items:center;gap:5px}.rleg i{width:9px;height:9px}
+.rname{font:inherit;font-weight:600;color:var(--p);background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;text-decoration:underline dotted}
+.rtab tr.rk td{color:var(--mut)}
+.rwk{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:12px 0 4px;padding:4px 8px;background:#eaf1fb;border-radius:8px;font-weight:600;color:var(--p)}.rwk span{font-weight:400;color:var(--tx)}
+.tday.ro{cursor:default}
+/* impression comptable */
+.sheet.rcp h2{font:700 14px Arial,sans-serif;color:#1e5aa8;margin:18px 0 0;border-bottom:1.5px solid #9dbbe3;padding-bottom:2px}
+.sheet.rcp .pb{page-break-before:always;break-before:page}
+.sheet.rcp td,.sheet.rcp th{font-size:11.5px}
+.sheet.rcp table{margin-top:6px}
+.sheet.rcp tr.subt td{font-weight:700;border-top:1px solid #888}

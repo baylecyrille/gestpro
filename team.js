@@ -3,6 +3,7 @@ import * as db from './db.js';
 import { compressImage, e, num, round2, dateFr, today, F, modal, toast, tabs, refresh, go, colorField, bindColors, $, $$ } from './util.js';
 import * as auth from './auth.js';
 import * as H from './hours.js';
+import { renderRecap } from './recap.js';
 
 export const CONTRACTS = ['CDI', 'CDD', 'CDD saisonnier', 'CDI de chantier / d\'opération', 'Intérim (mission)', 'Contrat d\'apprentissage', 'Contrat de professionnalisation', 'Stage', 'Gérant / mandataire social', 'Sous-traitant / indépendant', 'Autre'];
 export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
@@ -21,11 +22,7 @@ const JOURS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
 /* L'affectation couvre-t-elle ce jour ? (week-ends exclus sauf option) */
-export function covers(a, day) {
-  if (!a.start || day < a.start || day > (a.end || a.start)) return false;
-  const dow = parse(day).getDay();
-  return a.weekend || (dow !== 0 && dow !== 6);
-}
+export const covers = H.covers; // (calcul partagé avec le récapitulatif mensuel, voir hours.js)
 export function daysOf(a) {
   const out = []; if (!a.start) return out;
   for (let d = a.start; d <= (a.end || a.start); d = addDays(d, 1)) if (covers(a, d)) out.push(d);
@@ -237,10 +234,17 @@ export async function renderPlanning(el, tab = 'week', arg) {
   const times = seeAll ? times0 : times0.filter(t => t.memberId === me?.id);
   const canEnter = (m, d) => !!m && (edit || (hoursOk && !!me && m.id === me.id && d <= today())); // le salarié saisit ses propres jours (jusqu'à aujourd'hui), le gestionnaire ceux de tous
   const env = { sites, tasks: tasks0, times: times0, me };
-  const TABS_ = [['week', 'Semaine'], ['month', 'Mois'], ...(auth.can('team') ? [['team', 'Équipe']] : [])];
+  if (tab === 'hours' && !seeAll) tab = 'week'; // le récapitulatif de toute l'équipe est réservé à ceux qui voient tout le planning
+  const TABS_ = [['week', 'Semaine'], ['month', 'Mois'], ...(seeAll ? [['hours', 'Heures']] : []), ...(auth.can('team') ? [['team', 'Équipe']] : [])];
   const head = `<h2>${seeAll ? 'Planning' : 'Mon planning'}</h2>${tabs('#/planning', TABS_, tab)}`;
   const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}${EXT[t.extId] ? ' — avec ' + e(EXT[t.extId].name) : ''}">${e(s.name)}<small>${num(t.hours)} h${EXT[t.extId] ? ' · 🏛 ' + e(EXT[t.extId].name) : ''}</small></button>` : ''; };
   const act = members.filter(m => m.active !== false && (seeAll || m.id === me?.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+  if (tab === 'hours') { // récapitulatif mensuel des heures de tous (feuille de pointage, impression comptable)
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(arg || '') ? arg : today().slice(0, 7);
+    renderRecap(el, { head, month, members, sites, tasks: tasks0, times: times0, canEnter, openDay: (m, d) => timeModal(m, d, env) });
+    return;
+  }
 
   if (tab === 'team') {
     const soon = h => habState(h);
@@ -266,7 +270,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
     const nextM = ymd(new Date(y, mo, 1)).slice(0, 7), prevM = ymd(new Date(y, mo - 2, 1)).slice(0, 7);
     const cells = [];
     for (let i = 0; i < 42; i++) { const d = addDays(gridStart, i); if (i >= 35 && d.slice(0, 7) !== base) break; cells.push(d); }
-    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a>${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>
+    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a>${seeAll ? `<a class="btn" href="#/planning/hours/${base}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>
       <div class="mgrid">${JOURS.map(j => `<div class="mh">${j}</div>`).join('')}${cells.map(d => {
         const day = tasks.filter(t => covers(t, d) && members.find(m => m.id === t.memberId));
         const bySite = {}; day.forEach(t => (bySite[t.siteId] ||= []).push(t));
@@ -282,7 +286,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(w0, i));
   const wn = Math.ceil(((parse(days[3]) - new Date(parse(days[3]).getFullYear(), 0, 1)) / 864e5 + 1) / 7);
   const nav = `<div class="row"><a class="btn" href="#/planning/week/${addDays(w0, -7)}">‹</a><b style="flex:1;text-align:center">Semaine ${wn} · ${dateFr(days[0])} – ${dateFr(days[6])}</b><a class="btn" href="#/planning/week/${addDays(w0, 7)}">›</a>
-    <a class="btn" href="#/planning/week">Aujourd'hui</a>${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>`;
+    <a class="btn" href="#/planning/week">Aujourd'hui</a>${seeAll ? `<a class="btn" href="#/planning/hours/${days[3].slice(0, 7)}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>`;
   const plannedOf = (m, d) => tasks.filter(t => t.memberId === m.id && covers(t, d));
   /* pastille d'heures saisies d'un jour */
   const badge = (m, d) => {
