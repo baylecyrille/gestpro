@@ -30,6 +30,7 @@ export const DEFAULTS = {
   appName: 'GestPro',
   autoCloseSites: true,
   payDays: 30,
+  ouvCoef: 1.3,
   autoBackup: true,
   remindQuoteDays: 10, remindInvDays: 3, remindEvery: 7, relanceSubject: '', relanceQuote: '', relanceInvoice: '',
   photoPx: 2560,

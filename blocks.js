@@ -3,6 +3,8 @@ import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
 import { UNITS, pickProduct, productModal, total as stockOf, CATS, CAT_NAMES, catIcon } from './stock.js';
+import { hasCompo } from './ouvrage.js';
+import { ouvrageInsertModal } from './ouvrage-ui.js';
 import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt, hasCost, lineMargin, refOn } from './vat.js';
 
 let SEQ = 0;
@@ -274,11 +276,12 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     if (focus) richOf(row)?.focus();
   };
   const closeTb = row => { $('.rtb', row)?.remove(); $('[data-tb]', row)?.classList.remove('on'); };
+  const ouvIds = new Set(); // ouvrages composés du catalogue (bouton « Détailler » sur leurs lignes)
   let sg = null; // liste de suggestions ouverte dans une ligne classée par catégorie
   const draw = () => {
     sg = null; let open = false;
     host.innerHTML = d.blocks.map(b => { const ins = open && (b.type === 'line' || b.type === 'text'); if (b.type === 'section') open = true; if (b.type === 'sectionend') open = false; return `<div class="blk blk-${b.type}${ins ? ' insec' : ''}${b.type === 'line' && isOpt(b) ? ' optl' : ''}" data-id="${b.id}" draggable="false"><div class="bh"><span class="grip" title="Glisser pour déplacer" data-grip>⋮⋮</span><span class="bt">${b.type === 'line' && b.cat ? `${catIcon(b.cat)} ${e(b.cat)}` : LABEL[b.type]}</span><span class="sp"></span>
-      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'line' || b.type === 'text' ? `<button type="button" class="btn sm" data-tb title="${b.type === 'line' ? 'Mise en forme de la désignation (gras, couleur, taille, liste, saut de ligne…)' : 'Mise en forme du texte (gras, couleur, taille…)'}" aria-label="Mise en forme du texte">Aa</button>` : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
+      <button type="button" class="btn sm" data-up title="Monter">▲</button><button type="button" class="btn sm" data-dn title="Descendre">▼</button><button type="button" class="btn sm" data-dup title="Dupliquer">⧉</button>${b.type === 'line' && b.pid ? '<button type="button" class="btn sm" data-prod title="Ouvrir / modifier la fiche produit">✎ Produit</button>' : ''}${b.type === 'line' && b.pid && ouvIds.has(b.pid) ? '<button type="button" class="btn sm" data-detail title="Remplacer cette ligne par le détail de l\'ouvrage (une ligne par composant, même total)">⤵ Détailler</button>' : ''}${b.type === 'line' || b.type === 'text' ? `<button type="button" class="btn sm" data-tb title="${b.type === 'line' ? 'Mise en forme de la désignation (gras, couleur, taille, liste, saut de ligne…)' : 'Mise en forme du texte (gras, couleur, taille…)'}" aria-label="Mise en forme du texte">Aa</button>` : ''}${b.type === 'text' ? '<button type="button" class="btn sm" data-tpl title="Enregistrer comme modèle">💾</button>' : ''}<button type="button" class="btn sm danger" data-rm title="Supprimer">✕</button></div>
       <div class="bb"${b.type === 'line' ? ` style="background:${e(STY.lineBg)}"` : b.type === 'text' ? ` style="background:${e(STY.textBg)}"` : ''}>${inner(b)}</div></div>`; }).join('') || '<div class="empty">Document vide : ajoutez un produit, une section ou un texte.</div>';
     tbOpen.forEach(id => { const r = host.querySelector(`.blk[data-id="${id}"]`); if (r) openTb(r); else tbOpen.delete(id); });
     updSub(); const snapped = snapAll(); paintMeta(); loadMeta(); if (snapped) change();
@@ -318,6 +321,13 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
         });
       });
     }
+    else if (ev.target.closest('[data-detail]')) {
+      readHeader();
+      db.get('products', b.pid).then(p => {
+        if (!p || !hasCompo(p)) { alert('Cet ouvrage n\'a plus de composition dans le catalogue.'); return; }
+        ouvrageInsertModal(p, { qty: num(b.qty) || 1, mode: 'detail', sell: num(b.pu), title: `Détailler l'ouvrage « ${p.name} »` }, res => applyOuvrage(b.id, res, p));
+      });
+    }
     else if (ev.target.closest('[data-tb]')) { if (tbOpen.has(b.id)) { tbOpen.delete(b.id); closeTb(row); } else { tbOpen.add(b.id); openTb(row, true); } }
     else if (ev.target.closest('[data-rm]')) { tbOpen.delete(b.id); d.blocks.splice(i, 1); active = null; draw(); change(); }
     else if (ev.target.closest('[data-tpl]')) {
@@ -344,6 +354,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   db.all('products').then(ps => {
     const all = ps.filter(p => p.kind !== 'internal' && p.name).sort((a, b) => a.name.localeCompare(b.name, 'fr')), sale = all.slice(0, 1500);
     catalog = all; if (sg) sgDraw(true);
+    all.filter(hasCompo).forEach(p => ouvIds.add(p.id)); if (ouvIds.size && d.blocks.some(b => b.type === 'line' && ouvIds.has(b.pid))) draw();
     sale.forEach(p => byName.set(p.name.trim().toLowerCase(), p));
   }).catch(() => {});
   /* Désignation tapée à la main = nom exact d'un produit vendu : la ligne reprend sa fiche (seulement si le texte a changé) */
@@ -397,9 +408,23 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   };
   /* TVA de vente de la fiche produit à reprendre sur la ligne : seulement si elle diffère de celle du document et si la colonne TVA est affichée (aucun taux caché) */
   const saleRate = p => V().tva !== false && p && p.tva !== undefined && p.tva !== null && p.tva !== '' && num(p.tva) !== num(d.tva);
+  /* Ouvrage composé choisi : une ligne (prix de revient en prix d'achat) ou une section détaillée ; remplace la ligne `id` (vide ou à détailler), sinon s'ajoute à la fin.
+     Une remise ou une option de la ligne remplacée est reportée sur chaque ligne ; son taux de TVA propre aussi, sinon celui de l'ouvrage s'il diffère du document. */
+  const applyOuvrage = (id, res, p) => {
+    const i = id ? idx(id) : -1, base = i >= 0 ? d.blocks[i] : null;
+    const rate = base && hasOwnRate(base) ? { tva: base.tva } : saleRate(p) ? { tva: String(p.tva) } : {};
+    const carry = base ? { ...(remOf(base) ? { rem: base.rem } : {}), ...(isOpt(base) ? { opt: true } : {}) } : {};
+    let blocks;
+    if (res.mode === 'detail' && res.detail) {
+      blocks = [{ id: bid(), type: 'section', title: res.detail.title, bold: true, sub: V().sub !== false }, ...res.detail.lines.map(l => ({ id: bid(), type: 'line', pid: '', ...l, ...rate, ...carry })), { id: bid(), type: 'sectionend' }];
+    } else blocks = [{ id: base ? base.id : bid(), type: 'line', ...res.line, ...rate, ...carry }];
+    if (base) d.blocks.splice(i, 1, ...blocks); else d.blocks.push(...blocks);
+    draw(); change();
+  };
   /* Choix d'un produit dans la liste : reprend désignation, unité, prix, référence, prix d'achat et TVA de vente de la fiche */
   const sgPick = pid => {
     if (!sg) return; const row = sg.row, b = d.blocks[idx(row.dataset.id)], p = (catalog || []).find(x => x.id === pid); if (!b || !p) return;
+    if (hasCompo(p)) { sgClose(); readHeader(); ouvrageInsertModal(p, {}, res => applyOuvrage(b.id, res, p)); return; } // ouvrage composé : quantité et présentation (une ligne / détaillée)
     const fresh = b.pid !== p.id, setv = (k, v) => { const el = $(`[data-k=${k}]`, row); if (el) { if (el.classList.contains('dz')) el.textContent = v; else el.value = v; } };
     b.pid = p.id; byId.set(p.id, p); b.desig = p.name; delete b.dhtml; setv('desig', p.name);
     if (fresh || !num(b.pu)) { b.pu = p.sell || 0; setv('pu', b.pu); }
@@ -505,7 +530,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   pmenu.onclick = ev => {
     const it = ev.target.closest('[data-cat]'); if (!it) return; menuClose(); readHeader();
     const cat = it.dataset.cat;
-    if (cat === '*') return pickProduct(p => { byId.set(p.id, p); add({ type: 'line', pid: p.id, ...(CAT_NAMES.includes(p.category) ? { cat: p.category } : {}), desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}), ...(saleRate(p) ? { tva: String(p.tva) } : {}) }); }, { sale: true });
+    if (cat === '*') return pickProduct(p => { if (hasCompo(p)) return ouvrageInsertModal(p, {}, res => applyOuvrage(null, res, p)); byId.set(p.id, p); add({ type: 'line', pid: p.id, ...(CAT_NAMES.includes(p.category) ? { cat: p.category } : {}), desig: p.name, qty: 1, unit: p.unit || 'u', pu: p.sell || 0, ...(String(p.ref ?? '').trim() ? { ref: p.ref } : {}), ...(num(p.buy) > 0 ? { pa: p.buy } : {}), ...(saleRate(p) ? { tva: String(p.tva) } : {}) }); }, { sale: true });
     const nl = add({ type: 'line', cat, pid: '', desig: '', qty: 1, unit: 'u', pu: 0 });
     focusField(nl.id, 'desig');
   };

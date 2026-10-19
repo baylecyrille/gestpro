@@ -3,6 +3,9 @@ import * as db from './db.js';
 import { e, eur, num, dateFr, today, F, filterBar, bindFilters, modal, closeModal, toast, scan, tabs, refresh, go, loadScript, readFileText, readFileBuf, compressImage, $, $$ } from './util.js';
 import { markPhotosDirty } from './sheets.js';
 import { buyRate } from './vat.js';
+import { getS } from './defaults.js';
+import { OUV_CAT, hasCompo, priceOf } from './ouvrage.js';
+import { compoHtml, bindCompo } from './ouvrage-ui.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -61,11 +64,12 @@ export async function renderStock(el, tab = 'products') {
   if (tab === 'locations') return locationsTab(body, products, locs);
   if (tab === 'moves') return movesTab(body, products, locs);
   const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
-  return productsTab(body, products, locs, contacts, photos);
+  const [members, S] = await Promise.all([db.all('members'), getS()]);
+  return productsTab(body, products, locs, contacts, photos, { products: new Map(products.map(p => [p.id, p])), members: new Map(members.map(m => [m.id, m])) }, S);
 }
 
 /* ---------- Produits ---------- */
-function productsTab(body, products, locs, contacts, photos = {}) {
+function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, ouvS = {}) {
   const L = Object.fromEntries(locs.map(l => [l.id, l]));
   products.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const cats = [...new Set(products.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
@@ -90,7 +94,7 @@ function productsTab(body, products, locs, contacts, photos = {}) {
     const F2 = getF ? getF() : {};
     const rows = products.filter(p => {
       const t = total(p);
-      if (F2.low && !(t <= (p.min || 0))) return false;
+      if (F2.low && (p.category === OUV_CAT || !(t <= (p.min || 0)))) return false;
       if (F2.kind === 'internal' && p.kind !== 'internal') return false; if (F2.kind === 'sale' && p.kind === 'internal') return false;
       if (F2.cat && p.category !== F2.cat) return false; if (F2.loc && !(p.stock && p.stock[F2.loc] > 0)) return false;
       return !q || [p.name, p.ref, p.barcode, p.category].join(' ').toLowerCase().includes(q);
@@ -100,9 +104,10 @@ function productsTab(body, products, locs, contacts, photos = {}) {
       const cls = t <= 0 ? 'bad' : t <= (p.min || 0) ? 'warn' : 'ok';
       const chips = Object.entries(p.stock || {}).filter(([, q]) => q).map(([k, q]) => `<span class="chip">${e(locLabel(L[k]))} : ${q}</span>`).join('');
       const th = photos[p.id] ? `<img class="pthumb" src="${photos[p.id]}" alt="">` : '<div class="pthumb ph">▦</div>';
+      const ouv = hasCompo(p) ? priceOf(p, ouvCtx, ouvS) : null; // ouvrage composé : prix recalculés d'après le catalogue et l'équipe
       return `<div class="item" data-id="${p.id}">${th}<div class="main"><div class="t">${e(p.name)}${p.kind === 'internal' ? ' <span class="chip">usage interne</span>' : ''}</div>
-        <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}</div>${chips}</div>
-        <div class="r"><span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span><div class="s">${p.kind === 'internal' ? 'non vendu' : eur(p.sell) + ' HT'}</div></div></div>`;
+        <div class="s">${[p.ref, p.barcode, p.category].filter(Boolean).map(e).join(' · ')}${ouv ? ` · ${p.compo.length} composant(s) · revient ${eur(ouv.cost)}` : ''}</div>${ouv ? '' : chips}</div>
+        <div class="r">${p.category === OUV_CAT ? `<span class="chip">ouvrage${ouv && ouv.warns ? ' ⚠' : ''}</span>` : `<span class="chip ${cls}">${t} ${e(p.unit || 'u')}</span>`}<div class="s">${p.kind === 'internal' ? 'non vendu' : eur(ouv ? ouv.sell : p.sell) + ' HT'}</div></div></div>`;
     }).join('') : '<div class="empty">Aucun produit. Ajoutez-en un ou importez vos listes Excel.</div>';
   };
   getF = bindFilters(body, 'stock_', FC, draw);
@@ -141,16 +146,23 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     ${F('Seuil d\'alerte stock', 'min', p.min ?? '', { type: 'number', step: 'any' })}
     ${F('Fournisseur', 'supplierId', p.supplierId || '', { type: 'select', options: suppliers, cls: 'full' })}
     ${F('Note', 'note', p.note, { type: 'textarea', rows: 2, cls: 'full' })}
+    ${compoHtml()}
     <div class="full" style="margin-bottom:10px"><span class="muted" style="font-size:12px">Photo (compressée automatiquement)</span>
       <div class="row" style="margin-top:4px"><div id="pbox" class="pthumb big ph">▦</div>
         <label class="btn"><input type="file" id="pfile" accept="image/*" hidden>📷 Photo</label><button type="button" class="btn" id="pdel" hidden>Retirer</button></div>
       <small id="pinfo" class="muted"></small></div>
-  </div>${stockHtml}`;
+  </div><div id="stkbox">${stockHtml}</div>`;
+  let compoReady = null; // panneau « Composition » (catégorie Ouvrage) : prêt une fois les membres chargés
   let newPhoto; // undefined = inchangée, '' = retirée, texte = nouvelle photo
   modal(isNew ? 'Nouveau produit' : 'Produit', body, async o => {
     const dup = o.barcode && products.find(x => x.barcode === o.barcode && x.id !== p.id);
     if (dup) throw new Error(`Ce code-barres est déjà utilisé par « ${dup.name} ».`);
     Object.assign(p, { name: o.name.trim(), ref: o.ref, barcode: o.barcode.trim(), category: o.category, kind: o.kind || 'sale', unit: o.unit, buy: num(o.buy), sell: num(o.sell), tva: num(o.tva), tvaBuy: num(o.tvaBuy ?? 20), min: num(o.min), supplierId: o.supplierId, note: o.note });
+    if (o.category === OUV_CAT && compoReady) { // ouvrage : composition, prix de revient et prix de vente calculés ; jamais en stock
+      const r = (await compoReady).read();
+      Object.assign(p, { compo: r.compo, priceMode: r.priceMode, buy: r.buy, sell: r.sell, kind: 'sale', min: 0 });
+      if (r.coef) p.coef = r.coef; else delete p.coef;
+    }
     const saved = await db.put('products', p);
     if (newPhoto !== undefined) {
       const v = Date.now();
@@ -162,6 +174,7 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
   }, {
     del: isNew ? null : async () => { if (total(p) !== 0 && !confirm(`Ce produit a encore ${total(p)} ${p.unit || ''} en stock. Le supprimer quand même ?`)) return; await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
     onOpen: f => {
+      compoReady = bindCompo(f, p, products);
       const showPhoto = data => {
         const box = $('#pbox', f);
         if (data) { box.className = 'pthumb big'; box.innerHTML = `<img src="${data}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:10px">`; }

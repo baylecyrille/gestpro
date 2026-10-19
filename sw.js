@@ -1,7 +1,7 @@
-const CACHE = 'gestpro-v82';
+const CACHE = 'gestpro-v83';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './style.css',
-  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './blocks.js', './importer.js', './layout.js', './lock.js', './files.js', './efact.js', './vat.js', './doccheck.js', './docmail.js', './docpdf.js', './facturx-pdf.js', './supplier-import.js', './supplier-parse.js', './hours.js', './recap.js', './supplier-layout.js', './supplier-manual.js', './facebook.js', './help.js', './reminders.js', './export.js', './efact-in.js', './backup.js',
+  './app.js', './db.js', './defaults.js', './sheets.js', './util.js', './stock.js', './docs.js', './sites.js', './team.js', './finance.js', './auth.js', './blocks.js', './importer.js', './layout.js', './lock.js', './files.js', './efact.js', './vat.js', './doccheck.js', './docmail.js', './docpdf.js', './facturx-pdf.js', './supplier-import.js', './supplier-parse.js', './hours.js', './recap.js', './supplier-layout.js', './supplier-manual.js', './facebook.js', './help.js', './reminders.js', './export.js', './efact-in.js', './backup.js', './ouvrage.js', './ouvrage-ui.js',
   './logo.png', './icon-192.png', './icon-512.png'
 ];
 

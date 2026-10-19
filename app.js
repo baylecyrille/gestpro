@@ -267,6 +267,7 @@ async function renderSettings(el) {
     <p class="muted full" id="seqprev">Prochains numéros : <b>${e(seqOf(S, 'quote', nowY).number)}</b> · <b>${e(seqOf(S, 'invoice', nowY).number)}</b> · <b>${e(seqOf(S, 'credit', nowY).number)}</b>. <code>{AAAA}</code> dans un préfixe met l'année en cours (<code>{AA}</code> : deux chiffres) ; la numérotation repart alors à 1 chaque 1er janvier, sans rien changer ici.</p>
     <label class="f full"><span><input type="checkbox" name="autoCloseSites" ${S.autoCloseSites !== false ? 'checked' : ''}> Terminer automatiquement un chantier quand tout est facturé et réglé</span></label>
     ${F('Délai de règlement par défaut (jours)', 'payDays', S.payDays ?? 30, { type: 'number' })}${F('Taille des photos envoyées (Drive / OneDrive)', 'photoPx', S.photoPx || 2560, { type: 'select', options: [['1600', 'Standard (1600 px, léger)'], ['2560', 'Haute (2560 px, conseillé)'], ['3600', 'Très haute (3600 px)']] })}${F('Nombre de chiffres du compteur', 'pad', S.pad, { type: 'number' })}${F('TVA par défaut (%)', 'tva', S.tva, { type: 'select', options: [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']] })}
+    ${F('Coefficient des ouvrages (prix de vente = prix de revient × coefficient)', 'ouvCoef', S.ouvCoef ?? 1.3, { type: 'number', step: '0.01' })}<span></span>
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
     <h3 class="full">E-mails (envoi des devis, factures et avoirs)</h3>
@@ -401,7 +402,7 @@ async function renderSettings(el) {
   $('#sf', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx', 'remindQuoteDays', 'remindInvDays', 'remindEvery'].forEach(k => (o[k] = num(o[k])));
+    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx', 'ouvCoef', 'remindQuoteDays', 'remindInvDays', 'remindEvery'].forEach(k => (o[k] = num(o[k])));
     delete o.undefined;
     o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites; o.mailBcc = !!o.mailBcc;
     let logoV = S.logoV;

@@ -379,7 +379,7 @@ body.lyopen{overflow:hidden}
 .item.locked{opacity:.5;filter:grayscale(.9)}
 .chip.lockchip{background:#fdecec;color:#a33}
 
-.filt .f.multi{flex:1 1 100%}.filt .f.multi>span{display:block;font-size:11px;color:var(--mut,#667);margin-bottom:3px}
+.filt .f.multi{flex:1 1 100%}.filt .f.multi>span{display:block;font-size:11px;color:var(--mut);margin-bottom:3px}
 .tgs{display:flex;flex-wrap:wrap;gap:6px}
 .tg{border:1px solid #c9d3e3;background:#fff;color:inherit;border-radius:99px;padding:5px 12px;font-size:13px;cursor:pointer}
 .tg[aria-pressed=true]{background:var(--p);border-color:var(--p);color:#fff}
@@ -671,3 +671,27 @@ span.tbadge{cursor:default}
 .sheet.rcp td,.sheet.rcp th{font-size:11.5px}
 .sheet.rcp table{margin-top:6px}
 .sheet.rcp tr.subt td{font-weight:700;border-top:1px solid #888}
+
+/* Ouvrages (composition d'un produit de catégorie « Ouvrage », fenêtre d'insertion dans un devis) */
+.ouv{border:1px solid var(--bd);border-radius:12px;padding:8px 12px 12px;margin:4px 0 10px;background:#f6f9fe}
+.ouv h3{margin:4px 0 8px;font-size:15px}
+.orow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 0;border-bottom:1px dashed var(--bd)}
+.orow:last-child{border-bottom:0}
+.orow .on{flex:1 1 160px;min-width:120px}
+.orow input,.orow select{padding:6px 8px;border:1px solid var(--bd);border-radius:8px;font:inherit;min-width:0}
+.orow input[data-f=qty]{width:84px}
+.orow input[data-f=name]{flex:1 1 46%}
+.orow select{flex:1 1 46%;width:auto}
+.orow .ou{color:var(--mut);font-size:13px;white-space:nowrap}
+.orow .oc{margin-left:auto;font-weight:600;white-space:nowrap}
+.orow .ow,.ouvs .ow{flex-basis:100%;color:var(--warn);font-size:12.5px}
+.ouvadd{margin:8px 0}
+.ouvq{border:1px solid var(--bd);border-radius:10px;padding:8px;margin:0 0 8px;background:#fff}
+.ouvq .sgi{display:flex;width:100%;gap:8px;align-items:baseline;text-align:left;background:none;border:0;padding:6px 4px;border-radius:6px;cursor:pointer;font:inherit}
+.ouvq .sgi:hover{background:#eef3fb}
+.ouvq .sgi .n{flex:1}
+.ouvs{margin:8px 0 2px;line-height:1.5}
+.ouvs .pos{color:var(--ok);font-weight:600}.ouvs .neg{color:var(--bad);font-weight:600}
+fieldset.ouvmode{border:1px solid var(--bd);border-radius:10px;margin:8px 0;padding:8px 12px}
+fieldset.ouvmode label{display:flex;gap:8px;align-items:flex-start;margin:8px 0;line-height:1.35}
+fieldset.ouvmode input[type=radio]{width:auto;margin:3px 0 0;flex:none}
