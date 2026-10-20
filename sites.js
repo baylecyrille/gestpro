@@ -12,6 +12,7 @@ import { getS } from './defaults.js';
 import { nextSteps } from './nextstep.js';
 import { estimateMargin, siteCompare, siteNeeds, reservations, stockOf } from './plan.js';
 import { alertBox, confirmBox, promptBox } from './dialogs.js';
+import { pickify } from './picker.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -287,8 +288,8 @@ function siteModal(site, clients, isNew, opts = {}) {
   const cLabel = c => cname(c) + (c.city ? ' — ' + c.city : '') + (c.zip ? ' (' + c.zip + ')' : '');
   modal(isNew ? 'Nouveau chantier' : 'Modifier le chantier',
     `<div class="cols">${F('Nom du chantier', 'name', site.name, { req: true, cls: 'full', ph: 'ex : Terrasse bois – Dupont' })}
-    ${quotes.length ? `<label class="f full"><span>Créer à partir d'un devis (facultatif)</span><input type="search" id="mqs" placeholder="🔍 N° de devis, client, référence…" autocomplete="off" style="margin-bottom:6px"><select name="quoteId"><option value="">— aucun —</option>${quotes.map(d => `<option value="${d.id}">${e(qLabel(d))}</option>`).join('')}</select></label>` : ''}
-    <label class="f full"><span>Client</span><input type="search" id="mcs" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === site.clientId ? 'selected' : ''}>${e(cLabel(c))}</option>`).join('')}</select></label>
+    ${quotes.length ? `<label class="f full"><span>Créer à partir d'un devis (facultatif)</span><select name="quoteId"><option value="">— aucun —</option>${quotes.map(d => `<option value="${d.id}">${e(qLabel(d))}</option>`).join('')}</select></label>` : ''}
+    <label class="f full"><span>Client</span><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" data-q="${e(c.company || '')}" ${c.id === site.clientId ? 'selected' : ''}>${e(cLabel(c))}</option>`).join('')}</select></label>
     <label class="f full"><span>Architecte / maître d'œuvre (facultatif — à créer dans Contacts)</span><select name="moeId"><option value="">— aucun —</option>${(opts.moes || []).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(c => `<option value="${c.id}" ${c.id === site.moeId ? 'selected' : ''}>${e(c.name)}${c.fonction ? ' (' + e(c.fonction) + ')' : ''}</option>`).join('')}</select></label>
     ${F('Adresse des travaux', 'address', site.address, { type: 'textarea', rows: 2, cls: 'full' })}
     ${F('Début', 'start', site.start, { type: 'date' })}${F('Fin prévue', 'end', site.end, { type: 'date' })}
@@ -308,22 +309,16 @@ function siteModal(site, clients, isNew, opts = {}) {
       }
       toast('Chantier enregistré'); if (opts.onSaved) opts.onSaved(saved); else isNew ? go('#/site/' + saved.id) : refresh();
     }, { onOpen: f => {
-      const sel = f.querySelector('[name=clientId]'), cs = f.querySelector('#mcs'), qs = f.querySelector('#mqs'), qsel = f.querySelector('[name=quoteId]');
-      const filt = (inp, selEl, items, label) => inp.addEventListener('input', () => {
-        const q = inp.value.toLowerCase().trim(), keep = selEl.value;
-        const rows = items.filter(x => x.id === keep || !q || label(x).toLowerCase().includes(q) || (x.company || '').toLowerCase().includes(q));
-        selEl.innerHTML = `<option value="">— ${selEl === sel ? 'choisir' : 'aucun'} —</option>` + rows.map(x => `<option value="${x.id}" ${x.id === keep ? 'selected' : ''}>${e(label(x))}</option>`).join('');
-        const m = rows.filter(x => x.id !== keep); if (q && m.length === 1 && !keep) { selEl.value = m[0].id; selEl.dispatchEvent(new Event('change')); }
-      });
-      filt(cs, sel, clients, cLabel);
-      if (qs) {
-        filt(qs, qsel, quotes, qLabel);
+      const sel = f.querySelector('[name=clientId]'), qsel = f.querySelector('[name=quoteId]');
+      pickify(sel, { placeholder: '🔍 Rechercher un client (nom, ville, code postal)…' });
+      if (qsel) {
+        pickify(qsel, { placeholder: '🔍 N° de devis, client, référence…' });
         let auto = f.querySelector('[name=name]').value;
         qsel.addEventListener('change', () => {
           const d = quotes.find(x => x.id === qsel.value); if (!d) return;
           const nm = f.querySelector('[name=name]'), ad = f.querySelector('[name=address]');
           if (!nm.value || nm.value === auto) nm.value = auto = d.siteRef || cname(CM[d.clientId]) || '';
-          if (d.clientId) { if (![...sel.options].some(o => o.value === d.clientId)) cs.value = ''; sel.value = d.clientId; }
+          if (d.clientId) { sel.value = d.clientId; sel.dispatchEvent(new Event('change', { bubbles: true })); }
           if (!ad.value && d.siteAddr) ad.value = d.siteAddr;
         });
         if (opts.quoteId) { qsel.value = opts.quoteId; qsel.dispatchEvent(new Event('change')); }
@@ -358,6 +353,7 @@ function chargeModal(site, prods) {
       refresh();
     }, { onOpen: f => {
       const sel = f.querySelector('[name=pid]');
+      pickify(sel, { placeholder: '🔍 Rechercher un produit du catalogue…' });
       sel.onchange = () => { const p = prods.find(x => x.id === sel.value); f.querySelector('#stk').hidden = !p; if (p) { f.querySelector('[name=label]').value = p.name; f.querySelector('[name=unit]').value = p.unit || 'u'; f.querySelector('[name=cost]').value = p.buy || 0; } };
     } });
 }

@@ -8,6 +8,9 @@ import { addDays } from './team.js';
 
 export const PERIODS = [['d30', '30 derniers jours'], ['m3', '3 derniers mois'], ['y1', '1 an (12 derniers mois)'], ['custom', 'Date à date…'], ['month', 'Ce mois'], ['quarter', 'Ce trimestre'], ['year', 'Cette année'], ['lastyear', 'Année dernière']];
 
+/* Périodes d'une section de l'accueil (« À faire », « Factures à encaisser ») : « Toutes périodes » d'abord (rien n'est masqué), puis les mêmes périodes que les chiffres */
+export const PERIODS_ALL = [['all', 'Toutes périodes'], ...PERIODS];
+
 const shift = (iso, dd, dm, dy) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() + dy); d.setUTCMonth(d.getUTCMonth() + dm); d.setUTCDate(d.getUTCDate() + dd); return d.toISOString().slice(0, 10); };
 export function periodRange(key, ref = today(), custom = {}) {
   if (key === 'd30') return { from: shift(ref, -29, 0, 0), to: ref };

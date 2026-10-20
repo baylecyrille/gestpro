@@ -824,3 +824,14 @@ dialog.adlg::backdrop{background:#0008}
 .adlg-f footer{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--bd);background:#f7f9fc}
 .btn.primary.dng{background:var(--bad);border-color:var(--bad)}
 @media (max-width:480px){.adlg-f footer .btn{flex:1}}
+/* choix dans une longue liste : recherche, bouton Ajouter, 10 lignes au plus (picker.js) */
+.pk{display:block;margin-bottom:9px}
+.pk-t{display:block;font-size:12px;color:var(--mut);margin-bottom:2px}
+.pk-bar{display:flex;gap:6px;margin-bottom:6px}
+.pk-bar .search{flex:1;min-width:0}
+.pk-list .item.pk-row{padding:7px 10px;margin-bottom:5px}
+.pk-row .t{font-weight:600}
+.pk-row.on{border-color:var(--p);background:#eaf1fb;box-shadow:0 0 0 1px var(--p) inset}
+.pk-ok{color:var(--p);font-weight:700;flex:none}
+.pk-more{font-size:12px;margin:0 0 4px}
+.pk-empty{padding:10px;font-size:14px}

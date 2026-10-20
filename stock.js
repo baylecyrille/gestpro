@@ -13,6 +13,7 @@ import { internalCode } from './barcode.js';
 import { UNITS, CATS, CAT_NAMES, catIcon, unitOpts, catOpts as catPick } from './lists.js';
 import { LIM } from './limits.js';
 import { alertBox, confirmBox } from './dialogs.js';
+import { pickify } from './picker.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -264,7 +265,7 @@ export async function moveModal(products, locs, preset = {}) {
   const lopt = locs.map(l => [l.id, locLabel(l)]);
   const popt = products.filter(p => isStocked(p) || p.id === preset.product).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => [p.id, `${p.name}${p.ref ? ' (' + p.ref + ')' : ''}`]);
   if (!popt.length) return alertBox('Créez d\'abord un produit.');
-  const body = `<label class="f"><span>Produit</span><div style="display:flex;gap:6px"><select name="productId">${popt.map(([v, l]) => `<option value="${v}" ${v === preset.product ? 'selected' : ''}>${e(l)}</option>`).join('')}</select><button type="button" class="btn" data-scan>▦</button></div></label>
+  const body = `<label class="f"><span>Produit</span><select name="productId"><option value="">— choisir un produit —</option>${popt.map(([v, l]) => `<option value="${v}" data-q="${e(products.find(x => x.id === v)?.barcode || '')}" ${v === preset.product ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></label>
   ${F('Type', 'type', preset.type || 'in', { type: 'select', options: [['in', 'Entrée (réception)'], ['out', 'Sortie'], ['transfer', 'Transfert entre emplacements'], ['adjust', 'Inventaire (fixer la quantité)']] })}
   ${F('Quantité', 'qty', '', { type: 'number', step: 'any', req: true })}
   <div id="fromw">${F('Depuis', 'from', locs[0]?.id, { type: 'select', options: lopt })}</div>
@@ -274,6 +275,7 @@ export async function moveModal(products, locs, preset = {}) {
   ${F('Note / n° bon de livraison', 'note', '')}`;
   modal('Mouvement de stock', body, async o => {
     const p = products.find(x => x.id === o.productId);
+    if (!p) throw new Error('Choisissez un produit dans la liste.');
     const qty = num(o.qty);
     if (o.type !== 'adjust' && qty <= 0) throw new Error('Quantité invalide');
     if (o.type === 'transfer' && o.from === o.to) throw new Error('Emplacements identiques');
@@ -288,7 +290,9 @@ export async function moveModal(products, locs, preset = {}) {
     onOpen: f => {
       const upd = () => { const t = f.elements.type.value; $('#fromw', f).hidden = !(t === 'out' || t === 'transfer'); $('#tow', f).hidden = !(t === 'in' || t === 'transfer' || t === 'adjust'); $('#unitw', f).hidden = t !== 'in'; $('#sitew', f).hidden = t !== 'out'; };
       f.elements.type.onchange = upd; upd();
-      $('[data-scan]', f).onclick = () => scan(c => { const p = products.find(x => x.barcode === c || x.ref === c); if (p) f.elements.productId.value = p.id; else toast('Code inconnu'); });
+      pickify(f.elements.siteId, { placeholder: '🔍 Rechercher un chantier…' });
+      pickify(f.elements.productId, { placeholder: '🔍 Nom, réf., code-barres…', addLabel: '▦ Scanner', addTitle: 'Scanner le code-barres du produit',
+        onAdd: () => scan(c => { const p = products.find(x => x.barcode === c || x.ref === c); if (p) { f.elements.productId.value = p.id; f.elements.productId.dispatchEvent(new Event('change', { bubbles: true })); } else toast('Code inconnu'); }) });
     }
   });
 }
@@ -614,12 +618,13 @@ export async function siteOutModal(products, locs, preset = {}) {
   const [docs, moves] = await Promise.all([db.all('documents'), db.all('moves')]);
   const lines = [];
   modal('🏗 Sortie pour un chantier',
-    `<div class="cols"><label class="f full"><span>Chantier</span><select name="siteId">${sites.map(s => `<option value="${s.id}" ${s.id === preset.siteId ? 'selected' : ''}>${e(s.name)}</option>`).join('')}</select></label>
+    `<div class="cols"><label class="f full"><span>Chantier</span><select name="siteId"><option value="">— choisir un chantier —</option>${sites.map(s => `<option value="${s.id}" ${s.id === preset.siteId ? 'selected' : ''}>${e(s.name)}</option>`).join('')}</select></label>
     ${F('Note (facultatif)', 'note', '', { cls: 'full', ph: 'ex : pour la pose de la terrasse' })}</div>
     <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button><button type="button" class="btn" id="needs">Reprendre les besoins du devis</button></div>
     <div id="ll"></div>
     <p class="muted">La sortie est prélevée automatiquement sur les emplacements les mieux fournis.</p>`,
     async (o, f) => {
+      if (!o.siteId) { alertBox('Choisissez le chantier dans la liste.'); return false; }
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
       if (!ok.length) { alertBox('Ajoutez au moins une ligne avec une quantité.'); return false; }
       const need = {}; ok.forEach(l => (need[l.pid] = (need[l.pid] || 0) + num(l.qty)));
@@ -641,6 +646,7 @@ export async function siteOutModal(products, locs, preset = {}) {
     }, {
       wide: true, submitLabel: 'Valider la sortie',
       onOpen: f => {
+        pickify(f.elements.siteId, { placeholder: '🔍 Rechercher un chantier…' });
         const ed = lineEditor(f, products, lines);
         // besoins = lignes (liées au stock) des devis acceptés / facturés du chantier, moins ce qui est déjà sorti
         $('#needs', f).onclick = () => {

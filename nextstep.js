@@ -60,11 +60,11 @@ export function todoItems({ rem = [], lateSites = [], steps = [], low = [], habs
   const out = [], cn = id => (C[id] && C[id].name) || '', day = iso => dateFr(String(iso).slice(0, 10));
   for (const x of rem) {
     const d = x.doc, who = cn(d.clientId);
-    if (x.kind === 'invoice') out.push({ key: 'rem:' + d.id, tone: 'bad', tag: 'Facture en retard', title: `${d.number}${who ? ' · ' + who : ''}`, sub: `échue le ${day(x.due)} · ${x.days} j de retard · reste ${eur(x.left)}${x.n ? ` · relancée ${x.n} fois` : ' · jamais relancée'}${x.n >= 3 ? ' · mise en demeure à envisager' : ''}`, href: '#/doc/' + d.id, rel: d.id, label: '↻ Relancer', prio: 10 });
-    else out.push({ key: 'rem:' + d.id, tone: 'warn', tag: 'Devis à relancer', title: `${d.number}${who ? ' · ' + who : ''}`, sub: `devis envoyé il y a ${x.days} j · ${eur(totals(d).ttc)} TTC${x.n ? ` · relancé ${x.n} fois` : ' · jamais relancé'}`, href: '#/doc/' + d.id, rel: d.id, label: '↻ Relancer', prio: 50 });
+    if (x.kind === 'invoice') out.push({ key: 'rem:' + d.id, tone: 'bad', tag: 'Facture en retard', title: `${d.number}${who ? ' · ' + who : ''}`, sub: `échue le ${day(x.due)} · ${x.days} j de retard · reste ${eur(x.left)}${x.n ? ` · relancée ${x.n} fois` : ' · jamais relancée'}${x.n >= 3 ? ' · mise en demeure à envisager' : ''}`, href: '#/doc/' + d.id, rel: d.id, label: '↻ Relancer', prio: 10, date: String(x.due || '').slice(0, 10) });
+    else out.push({ key: 'rem:' + d.id, tone: 'warn', tag: 'Devis à relancer', title: `${d.number}${who ? ' · ' + who : ''}`, sub: `devis envoyé il y a ${x.days} j · ${eur(totals(d).ttc)} TTC${x.n ? ` · relancé ${x.n} fois` : ' · jamais relancé'}`, href: '#/doc/' + d.id, rel: d.id, label: '↻ Relancer', prio: 50, date: String(d.date || '').slice(0, 10) });
   }
-  for (const x of habs) out.push({ key: 'hab:' + x.m.id + ':' + x.h.label, tone: x.st, tag: x.st === 'bad' ? 'Habilitation expirée' : 'Habilitation à renouveler', title: x.m.name, sub: `${x.h.label} · ${x.st === 'bad' ? 'expirée le ' : 'expire le '}${day(x.h.expiry)}`, href: '#/planning/team', prio: x.st === 'bad' ? 20 : 60 });
-  for (const s of lateSites) out.push({ key: 'late:' + s.id, tone: 'bad', tag: 'Chantier en retard', title: s.name, sub: `${cn(s.clientId) ? cn(s.clientId) + ' · ' : ''}fin prévue le ${day(s.end)} · ${Math.max(1, Math.round((Date.parse(ref) - Date.parse(s.end)) / 864e5))} j de retard`, href: '#/site/' + s.id, prio: 30 });
+  for (const x of habs) out.push({ key: 'hab:' + x.m.id + ':' + x.h.label, tone: x.st, tag: x.st === 'bad' ? 'Habilitation expirée' : 'Habilitation à renouveler', title: x.m.name, sub: `${x.h.label} · ${x.st === 'bad' ? 'expirée le ' : 'expire le '}${day(x.h.expiry)}`, href: '#/planning/team', prio: x.st === 'bad' ? 20 : 60, date: String(x.h.expiry || '').slice(0, 10) });
+  for (const s of lateSites) out.push({ key: 'late:' + s.id, tone: 'bad', tag: 'Chantier en retard', title: s.name, sub: `${cn(s.clientId) ? cn(s.clientId) + ' · ' : ''}fin prévue le ${day(s.end)} · ${Math.max(1, Math.round((Date.parse(ref) - Date.parse(s.end)) / 864e5))} j de retard`, href: '#/site/' + s.id, prio: 30, date: String(s.end || '').slice(0, 10) });
   for (const { site, steps: l } of steps) {
     const s = l.find(x => ['final-invoice', 'deposit', 'finish', 'plan'].includes(x.key)); if (!s) continue;
     const tag = s.key === 'finish' ? 'Chantier à terminer' : s.key === 'plan' ? 'Chantier à planifier' : 'Chantier à facturer';
@@ -80,4 +80,13 @@ export function todoItems({ rem = [], lateSites = [], steps = [], low = [], habs
   }
   if (low.length) out.push({ key: 'low', tone: 'warn', tag: 'Stock bas', title: `${low.length} article${low.length > 1 ? 's' : ''} à réapprovisionner`, sub: low.slice(0, 4).map(p => p.name).join(', ') + (low.length > 4 ? '…' : ''), href: '#/stock/products', prio: 55 });
   return out.map((x, i) => ({ ...x, i })).sort((a, b) => a.prio - b.prio || a.i - b.i).map(({ i, ...x }) => x);
+}
+
+/* Filtre de période de la liste « À faire » : une action DATÉE (échéance d'une facture, date d'un devis envoyé, expiration d'une habilitation, fin prévue d'un chantier)
+   n'est gardée que si sa date tombe dans la période ; les actions sans date (stock bas, chantier à facturer ou à planifier, dérive, matériel manquant) restent toujours.
+   range = { from, to } ou null (aucun filtre). Retourne { shown, hidden } : hidden = nombre d'actions datées hors période. */
+export function filterTodo(items, range) {
+  if (!range) return { shown: items, hidden: 0 };
+  const shown = (items || []).filter(x => !x.date || (x.date >= range.from && x.date <= range.to));
+  return { shown, hidden: (items || []).length - shown.length };
 }

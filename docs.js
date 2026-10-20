@@ -19,6 +19,7 @@ import * as fl from './files.js';
 import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
 import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, lineStats, clearLineOpt, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
 import { alertBox, confirmBox } from './dialogs.js';
+import { pickify } from './picker.js';
 
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
@@ -347,8 +348,8 @@ export async function renderDoc(el, id, arg) {
     <div id="pvwrap" hidden></div><div id="edwrap" class="${split ? 'split' : ''}"><div class="edmain">
     <h2>${isQ ? 'Devis' : isC ? 'Avoir' : cur.deposit ? 'Facture d\'acompte' : 'Facture'} ${e(cur.number || '(nouveau)')}</h2>${isC && cur.fromInvoice ? `<p class="muted" style="margin-top:-6px">sur la facture <a href="#/doc/${cur.fromInvoice}">${e(cur.fromInvoiceNumber || '')}</a></p>` : ''}${isQ && cur.status === 'invoiced' ? invoicedBannerHtml() : ''}<div id="retractbox">${retractBannerHtml()}</div><div id="signbox">${signBannerHtml()}</div>${cur.deposit && cur.fromQuote ? `<p class="muted" style="margin-top:-6px">Acompte sur le devis ${DN[cur.fromQuote] ? `<a href="#/doc/${cur.fromQuote}">${e(cur.fromQuoteNumber || '')}</a>` : e(cur.fromQuoteNumber || '')} · sera déduit de la facture finale</p>` : ''}${copyOf ? `<p class="muted" style="margin-top:-6px">Copie du ${isQ ? 'devis' : 'de la facture'} <b>${e(copyOf.number || '')}</b> : vérifiez le client et les lignes, puis enregistrez.</p>` : ''}
     <details class="card hdr" id="hdr" ${hdrOpen ? 'open' : ''}><summary><b id="hdrsum">${e(hdrSummary())}</b><span class="sp"></span><span class="muted"><span class="hdrlbl">En-tête</span> <span class="hdrtog">▾</span></span></summary><div class="cols">
-      <label class="f full"><span>Client</span><input type="search" id="csearch" placeholder="🔍 Rechercher un client (nom, ville, code postal)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select><button type="button" class="btn" id="newc">+</button></div></label>
-      <label class="f full"><span>Chantier</span><input type="search" id="ssearch" placeholder="🔍 Rechercher un chantier (nom, client, n° de devis ou de facture, adresse)…" autocomplete="off" style="margin-bottom:6px"><div style="display:flex;gap:6px"><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select><button type="button" class="btn" id="newsite" title="Créer un chantier pour ce document">+</button></div></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
+      <label class="f full"><span>Client</span><select name="clientId"><option value="">— choisir —</option>${clients.map(c => `<option value="${c.id}" data-q="${e([c.civ, c.company, c.zip].filter(Boolean).join(' '))}" ${c.id === cur.clientId ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('')}</select></label>
+      <label class="f full"><span>Chantier</span><select name="siteId"><option value="">— aucun —</option>${sites.map(x => `<option value="${x.id}" data-q="${e(siteText(x))}" ${x.id === cur.siteId ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('')}</select></label>${(() => { const st = sites.find(x => x.id === cur.siteId), m = st && contacts.find(c => c.id === st.moeId); return m ? `<div class="full muted" id="moeinfo" style="margin:-4px 0 6px">🏛 ${e(m.name)}${m.fonction ? ' (' + e(m.fonction) + ')' : ''}${m.phone ? ' · ' + e(m.phone) : ''}</div>` : ''; })()}
       ${F('Date', 'date', cur.date, { type: 'date' })}
       ${F(isQ ? 'N° de devis' : isC ? 'N° d\'avoir' : 'N° de facture', 'number', cur.number, { ph: 'automatique à l\'enregistrement' })}${isQ ? F('Valable jusqu\'au', 'validUntil', cur.validUntil, { type: 'date' }) : ''}
       ${isQ ? `<details class="full" ${cur.signDate || cur.signWhere || cur.signPlace || cur.urgent ? 'open' : ''}><summary class="muted" style="cursor:pointer;margin:4px 0">Signature du devis : date, lieu, rétractation</summary><div class="cols">${F('Date de signature', 'signDate', cur.signDate || '', { type: 'date' })}${F('Lieu de signature (ville ou adresse)', 'signPlace', cur.signPlace || '')}${F('Où le devis a-t-il été signé ?', 'signWhere', cur.signWhere || '', { type: 'select', options: WHERE, cls: 'full' })}${F('Travaux urgents (entretien ou réparation demandés par le client)', 'urgent', cur.urgent || '', { type: 'select', options: [['', 'Non'], ['1', 'Oui : pas de délai de 7 jours avant paiement']], cls: 'full' })}</div></details>` : ''}
@@ -804,26 +805,13 @@ export async function renderDoc(el, id, arg) {
         add: async a => { if (!a.pending) delete a.path; const fresh = (await db.get('documents', cur.id)) || cur; fresh.files = [...(fresh.files || []), a]; await db.put('documents', fresh); cur.files = fresh.files; const st = st0(); if (st && st.driveDir) await db.put('sites', st); },
         remove: async a => { const fresh = (await db.get('documents', cur.id)) || cur; fresh.files = (fresh.files || []).filter(x => x.id !== a.id); await db.put('documents', fresh); cur.files = fresh.files; } });
     }
-    $('#ssearch', el).oninput = ev => {
-      const q = ev.target.value.toLowerCase().trim(), sel = $('[name=siteId]', el), keep = sel.value;
-      const rows = sites.filter(x => x.id === keep || !q || siteText(x).toLowerCase().includes(q));
-      sel.innerHTML = '<option value="">— aucun —</option>' + rows.map(x => `<option value="${x.id}" ${x.id === keep ? 'selected' : ''}>${e(siteLabel(x))}</option>`).join('');
-      const m = rows.filter(x => x.id !== keep);
-      if (q && !keep && m.length === 1) { sel.value = m[0].id; sel.dispatchEvent(new Event('change')); }
-    };
+    pickify($('[name=clientId]', el), { compact: true, placeholder: '🔍 Nom, ville, code postal…', addLabel: '+ Client', addId: 'newc', addTitle: 'Créer un nouveau client' });
+    pickify($('[name=siteId]', el), { compact: true, placeholder: '🔍 Nom, client, n° de devis, adresse…', addLabel: '+ Chantier', addId: 'newsite', addTitle: 'Créer un chantier pour ce document' });
     $('#newsite', el).onclick = () => {
       readHeader();
       import('./sites.js').then(m => m.newSiteModal({ clientId: cur.clientId, name: cur.siteRef || cname(curClient()) || '', address: cur.siteAddr || '' }, st => {
         sites.push(st); cur.siteId = st.id; if (!cur.siteRef) cur.siteRef = st.name; if (!cur.siteAddr) cur.siteAddr = st.address || ''; if (!cur.clientId) cur.clientId = st.clientId || ''; draw(); toast('Chantier créé et rattaché – pensez à enregistrer le document');
       }));
-    };
-    $('#csearch', el).oninput = ev => {
-      const q = ev.target.value.toLowerCase().trim(), sel = $('[name=clientId]', el), keep = sel.value;
-      const rows = clients.filter(c => c.id === keep || !q || [c.civ, c.name, c.company, c.city, c.zip].join(' ').toLowerCase().includes(q));
-      sel.innerHTML = '<option value="">— choisir —</option>' + rows.map(c => `<option value="${c.id}" ${c.id === keep ? 'selected' : ''}>${e(cname(c))}${c.city ? ' — ' + e(c.city) : ''}</option>`).join('');
-      const m = rows.filter(c => c.id !== keep);
-      if (q && !keep && m.length === 1) sel.value = m[0].id;
-      else if (q && m.length === 1 && rows.length === 2) sel.value = m[0].id;
     };
     $('#newc', el).onclick = () => { readHeader(); import('./app.js').then(m => m.contactModal(null, 'client', c => { clients.push(c); cur.clientId = c.id; draw(); })); };
     $('[name=siteId]', el).onchange = () => {

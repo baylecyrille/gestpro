@@ -12,12 +12,12 @@ const inc = (m, k) => { if (k !== undefined && k !== null && k !== '') m.set(k, 
 /* Combien de fiches utilisent chaque valeur : une valeur utilisée ne se renomme pas (les anciens documents gardent leur texte) et ne se supprime pas, elle se masque. */
 export async function usageOf() {
   const [products, docs, pays, members, times] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('members'), db.all('times')]);
-  const U = { units: new Map(), cats: new Map(), methods: new Map(), contracts: new Map(), roles: new Map(), absTypes: new Map() };
+  const U = { units: new Map(), cats: new Map(), methods: new Map(), contracts: new Map(), roles: new Map(), absTypes: new Map(), activities: new Map() };
   for (const p of products) { inc(U.units, p.unit); inc(U.cats, p.category); for (const c of p.compo || []) inc(U.units, c.unit); }
   for (const d of docs) for (const l of lineArr(d)) { if (l && l.type !== 'section' && l.type !== 'text') { inc(U.units, l.unit); inc(U.cats, l.cat); } }
   for (const p of pays) inc(U.methods, p.method);
   for (const m of members) { inc(U.contracts, m.contract); inc(U.roles, m.role); }
-  for (const t of times) if (t.kind === 'absence') inc(U.absTypes, t.absType);
+  for (const t of times) { inc(U.activities, t.kind); if (t.kind === 'absence') inc(U.absTypes, t.absType); }
   return U;
 }
 
@@ -43,16 +43,16 @@ export async function mountLists(host) {
       ${kind === 'cat' ? `<label class="lr2-o" title="Une catégorie « service » n'a ni stock ni seuil d'alerte"><input type="checkbox" data-f="svc" ${it.svc ? 'checked' : ''} ${lock ? 'disabled' : ''}> service</label>` : ''}
       <label class="lr2-o"><input type="checkbox" data-f="vis" ${it.hidden ? '' : 'checked'} ${lock ? 'disabled' : ''}> proposée</label>
       <span class="lr2-n muted">${lock ? 'utilisée par l\'application' : n ? `utilisée ${n} fois${kind === 'id' ? '' : ' : non renommable'}` : ''}</span>
-      <button type="button" class="btn sm" data-del title="${lock ? 'Valeur protégée' : n ? 'Déjà utilisée : masquez-la plutôt que de la supprimer' : 'Supprimer'}" ${lock || n ? 'disabled' : ''} aria-label="Supprimer">🗑</button></div>`;
+      ${def.fixed ? '' : `<button type="button" class="btn sm" data-del title="${lock ? 'Valeur protégée' : n ? 'Déjà utilisée : masquez-la plutôt que de la supprimer' : 'Supprimer'}" ${lock || n ? 'disabled' : ''} aria-label="Supprimer">🗑</button>`}</div>`;
   };
   const secHtml = (k, open) => {
     const def = LIST_DEFS[k], items = work[k], hid = items.filter(x => x.hidden).length;
     return `<details class="lst" data-k="${k}" ${open ? 'open' : ''}><summary><b>${e(def.title)}</b> <small class="muted">${items.length - hid} proposée${items.length - hid > 1 ? 's' : ''}${hid ? ` · ${hid} masquée${hid > 1 ? 's' : ''}` : ''}${isCustom(k, items) ? ' · modifiée' : ''}</small></summary>
       <p class="muted" style="margin:4px 0 6px">${e(def.help)}</p>
       <div class="lrows">${items.map((it, i) => rowHtml(k, it, i)).join('')}</div>
-      <div class="row" style="margin:6px 0 0"><button type="button" class="btn sm" data-add>＋ Ajouter</button><button type="button" class="btn sm" data-reset title="Revient à la liste fournie avec l'application">↺ Liste d'origine</button></div></details>`;
+      <div class="row" style="margin:6px 0 0">${def.fixed ? '' : '<button type="button" class="btn sm" data-add>＋ Ajouter</button>'}<button type="button" class="btn sm" data-reset title="Revient à la liste fournie avec l'application">↺ Liste d'origine</button></div></details>`;
   };
-  host.innerHTML = `<p class="muted" style="margin-top:0">Les listes déroulantes de l'application : unités, catégories de produits, modes de règlement, contrats, fonctions, types d'absence et listes de suggestions. <b>Masquer</b> une valeur la retire des menus sans toucher aux fiches qui l'utilisent ; une valeur déjà utilisée ne peut pas être supprimée, et un texte repris tel quel dans les fiches et les documents (unité, catégorie, contrat) ne peut plus être renommé : les documents déjà émis gardent leur texte. Les listes sont partagées entre vos appareils.</p>
+  host.innerHTML = `<p class="muted" style="margin-top:0">Les listes déroulantes de l'application : unités, catégories de produits, modes de règlement, contrats, fonctions, activités des heures, types d'absence et listes de suggestions. <b>Masquer</b> une valeur la retire des menus sans toucher aux fiches qui l'utilisent ; une valeur déjà utilisée ne peut pas être supprimée, et un texte repris tel quel dans les fiches et les documents (unité, catégorie, contrat) ne peut plus être renommé : les documents déjà émis gardent leur texte. Les listes sont partagées entre vos appareils.</p>
     <div id="lsecs">${LIST_ORDER.map(k => secHtml(k, false)).join('')}</div>
     <div class="row zshow"><button type="button" class="btn primary" id="lsave" data-zsubmit>Enregistrer les listes</button><span class="muted" id="lmsg"></span></div>`;
 

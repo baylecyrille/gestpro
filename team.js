@@ -4,11 +4,12 @@ import { compressImage, e, num, round2, dateFr, today, F, modal, toast, tabs, re
 import * as auth from './auth.js';
 import * as H from './hours.js';
 import { renderRecap } from './recap.js';
-import { CONTRACTS, ROLES, ROLE_LABEL, HABS, ABS_TYPES, roleOpts, contractOpts, absOpts as absTypeOpts } from './lists.js';
+import { CONTRACTS, ROLES, ROLE_LABEL, HABS, ABS_TYPES, roleOpts, contractOpts, absOpts as absTypeOpts, kindOpts } from './lists.js';
 import { LIM } from './limits.js';
 import { absOn, absentDays } from './absence.js';
 import { absenceModal } from './absence-ui.js';
 import { alertBox, confirmBox } from './dialogs.js';
+import { pickify } from './picker.js';
 
 export { CONTRACTS, ROLES }; // listes modifiables : Réglages › Listes de choix (lists.js)
 const ROLE = ROLE_LABEL;
@@ -72,6 +73,7 @@ export function memberModal(m) {
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
     ${F('Coût horaire HT (€/h) – coût pour l\'entreprise', 'rate', m.rate, { type: 'number', step: '0.01' })}
     ${F('Coût facturé HT (€/h) – prix de vente au client', 'billRate', m.billRate ?? '', { type: 'number', step: '0.01' })}
+    ${F('Activité proposée par défaut pour la saisie des heures', 'defKind', m.defKind || '', { type: 'select', options: [['', `Celle de la liste : ${H.KIND_LABEL[H.defaultKind(null)] || ''}`], ...kindOpts(m.defKind || '').filter(x => x[0] !== 'absence')] })}
     ${F('Statut', 'active', m.active === false ? '0' : '1', { type: 'select', options: [['1', 'Actif'], ['0', 'Inactif']] })}
     ${F('Profil d\'accès à l\'appli', 'access', m.access || '', { type: 'select', options: auth.PROFILE_OPTIONS })}
     ${F(m.pinHash ? 'Nouveau code PIN (vide = inchangé)' : 'Code PIN (4 à 6 chiffres)', 'pin', '', { type: 'password', extra: 'inputmode="numeric" maxlength="6" autocomplete="new-password"' })}
@@ -120,16 +122,16 @@ export async function assignModal(t, preset = {}) {
   const [sites, members, tasks, allContacts, times, closedRec] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts'), db.all('times'), db.get('settings', 'hoursClosed')]);
   const closed = closedRec?.value || null;
   const moes = allContacts.filter(c => c.kind === 'moe').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  const isNew = !t; t = t || { siteId: preset.siteId || '', memberId: preset.memberId || '', start: preset.date || today(), end: preset.date || today(), hours: 7, weekend: false, done: '', note: '' };
+  const isNew = !t; t = t || { siteId: preset.siteId || '', memberId: preset.memberId || '', start: preset.start || preset.date || today(), end: preset.end || preset.date || today(), hours: preset.hours ?? 7, weekend: !!preset.weekend, done: preset.done ?? '', note: preset.note || '', extId: preset.extId || '' };
   const act = members.filter(m => m.active !== false || m.id === t.memberId).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const open = sites.filter(s => !['paid', 'lost'].includes(s.status) || s.id === t.siteId).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   if (!open.length) { toast('Créez d\'abord un chantier'); return go('#/sites'); }
   if (!act.length) { toast('Ajoutez d\'abord un membre'); return go('#/planning/team'); }
   const memberBox = isNew
-    ? `<div class="full"><span class="muted" style="font-size:12px">Membres affectés</span><div class="chk">${act.map(m => `<label><input type="checkbox" name="mem" value="${m.id}" ${m.id === t.memberId ? 'checked' : ''}> <span class="dot" style="background:${e(m.color)}"></span> ${e(m.name)} <small class="muted">${e(ROLE[m.role] || '')}</small></label>`).join('')}</div></div>`
+    ? `<div class="full"><span class="muted" style="font-size:12px">Membres affectés</span><div class="chk">${act.map(m => `<label><input type="checkbox" name="mem" value="${m.id}" ${m.id === t.memberId || (preset.memberIds || []).includes(m.id) ? 'checked' : ''}> <span class="dot" style="background:${e(m.color)}"></span> ${e(m.name)} <small class="muted">${e(ROLE[m.role] || '')}</small></label>`).join('')}</div></div>`
     : `<label class="f full"><span>Membre</span><select name="memberId">${act.map(m => `<option value="${m.id}" ${m.id === t.memberId ? 'selected' : ''}>${e(m.name)}</option>`).join('')}</select></label>`;
   modal(isNew ? 'Affecter au chantier' : 'Affectation',
-    `<div class="cols"><label class="f full"><span>Chantier</span><select name="siteId">${open.map(s => `<option value="${s.id}" ${s.id === t.siteId ? 'selected' : ''}>${e(s.name)}</option>`).join('')}</select></label>
+    `<div class="cols"><label class="f full"><span>Chantier</span><select name="siteId"><option value="">— choisir un chantier —</option>${open.map(s => `<option value="${s.id}" data-q="${e(allContacts.find(c => c.id === s.clientId)?.name || '')} ${e(s.address || '')}" ${s.id === t.siteId ? 'selected' : ''}>${e(s.name)}</option>`).join('')}</select></label>
     ${memberBox}
     ${F('Du', 'start', t.start, { type: 'date', req: true })}${F('Au', 'end', t.end || t.start, { type: 'date', req: true })}
     ${F('Heures prévues par jour', 'hours', t.hours, { type: 'number', step: '0.25', req: true })}
@@ -140,6 +142,7 @@ export async function assignModal(t, preset = {}) {
     ${moes.length ? `<label class="f full"><span>Intervenant extérieur présent (architecte, maître d'œuvre…) — facultatif</span><select name="extId"><option value="">— aucun —</option>${moes.map(c => `<option value="${c.id}" ${c.id === t.extId ? 'selected' : ''}>${e(c.name)}${c.fonction ? ' (' + e(c.fonction) + ')' : ''}</option>`).join('')}</select></label>` : ''}
     <p class="muted full" id="calc"></p></div>`,
     async (o, f) => {
+      if (!o.siteId) { alertBox('Choisissez le chantier dans la liste.'); return false; }
       if (o.end < o.start) { alertBox('La date de fin est avant la date de début.'); return false; }
       /* l'ancien total « réalisées » compte dans le mois du début : s'il est clôturé, on n'y touche plus */
       const hadDone = !isNew && t.done !== '' && t.done != null, doneNow = o.done === '' ? '' : num(o.done);
@@ -165,6 +168,16 @@ export async function assignModal(t, preset = {}) {
         await db.del('tasks', t.id); refresh();
       },
       onOpen: f => {
+        pickify($('[name=siteId]', f), { placeholder: '🔍 Nom, client, adresse…', ...(isNew ? { addLabel: '+ Chantier', addTitle: 'Créer un nouveau chantier, puis revenir à l\'affectation' } : {}),
+          onAdd: () => { // « + Chantier » : on ouvre la création, puis on revient ici avec ce qui était saisi (et le nouveau chantier choisi)
+            const v = n => $(`[name=${n}]`, f).value;
+            const keep = { ...preset, siteId: v('siteId'), start: v('start'), end: v('end'), hours: v('hours'), done: v('done'), note: v('note'), weekend: $('[name=weekend]', f).checked, extId: $('[name=extId]', f)?.value || '', memberIds: $$('[name=mem]:checked', f).map(i => i.value), memberId: $('[name=memberId]', f)?.value || '' };
+            let made = '';
+            import('./sites.js').then(m => {
+              m.newSiteModal({}, st => { made = st.id; });
+              $('#modal').addEventListener('close', () => setTimeout(() => assignModal(null, made ? { ...keep, siteId: made } : keep), 0), { once: true });
+            });
+          } });
         const calc = () => {
           const a = { start: $('[name=start]', f).value, end: $('[name=end]', f).value, hours: $('[name=hours]', f).value, weekend: $('[name=weekend]', f).checked };
           const n = daysOf(a).length; $('#calc', f).textContent = n ? `${n} jour(s) travaillé(s) · ${H.fmtHM(plannedHours(a))} prévues par membre` : '';
@@ -197,11 +210,11 @@ export function timeModal(m, date, env) {
   const seed = mine.length ? mine.map(x => ({ id: x.id, kind: x.kind, siteId: x.siteId, hours: x.hours, note: x.note, absType: x.absType || '' }))
     : planned.map(t => ({ id: '', kind: 'site', siteId: t.siteId, hours: num(t.hours), note: '' }));
   const defAbs = ABS_TYPES.some(t => t[0] === 'cp') ? 'cp' : (ABS_TYPES[0] || ['autre'])[0];
-  if (!seed.length) seed.push({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: defAbs });
+  if (!seed.length) seed.push({ id: '', kind: H.defaultKind(m), siteId: '', hours: '', note: '', absType: defAbs });
   const dayH = H.dayHoursOf(m);
   const siteOpts = sel => `<option value="">— choisir le chantier —</option>${plannedIds.size ? '<optgroup label="Prévus ce jour">' + open.filter(s => plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('') + '</optgroup><optgroup label="Autres chantiers">' : ''}${open.filter(s => !plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('')}${plannedIds.size ? '</optgroup>' : ''}`;
   const absOpts = l => `${l.kind === 'absence' && l.id && !l.absType ? `<option value="" selected>Absence (type non précisé)</option>` : ''}${absTypeOpts(l.absType || '').map(([k, n]) => `<option value="${k}" ${k === (l.absType || (l.id && l.kind === 'absence' ? '' : defAbs)) ? 'selected' : ''}>${e(n)}</option>`).join('')}`;
-  const line = l => `<div class="tl" data-id="${e(l.id || '')}"><select data-f="kind" aria-label="Activité">${H.KINDS.map(([k, n]) => `<option value="${k}" ${k === l.kind ? 'selected' : ''}>${e(n)}</option>`).join('')}</select>
+  const line = l => `<div class="tl" data-id="${e(l.id || '')}"><select data-f="kind" aria-label="Activité">${kindOpts(l.kind).map(([k, n]) => `<option value="${k}" ${k === l.kind ? 'selected' : ''}>${e(n)}</option>`).join('')}</select>
     <input data-f="hours" type="text" inputmode="decimal" autocomplete="off" value="${l.hours === '' ? '' : H.fmtH(l.hours)}" placeholder="h" aria-label="Heures (7,5 ou 7h30)"><button type="button" class="btn sm" data-rm aria-label="Supprimer la ligne">✕</button>
     <select data-f="site" class="tl-w" aria-label="Chantier" ${l.kind === 'site' ? '' : 'hidden'}>${siteOpts(l.siteId)}</select>
     <select data-f="abs" class="tl-w" aria-label="Type d'absence" ${l.kind === 'absence' ? '' : 'hidden'}>${absOpts(l)}</select>
@@ -211,7 +224,7 @@ export function timeModal(m, date, env) {
   modal(`${who} · ${dayLabel(date)}`,
     `${planned.length ? `<p class="muted" style="margin-top:0">Prévu : ${planned.map(t => `<b>${e(sites.find(s => s.id === t.siteId)?.name || '')}</b> ${H.fmtHM(t.hours)}`).join(' · ')}${mine.length ? '' : '. Heures préremplies d\'après le planning : changez-les si besoin.'}</p>` : '<p class="muted" style="margin-top:0">Rien de prévu ce jour : ajoutez ce que vous avez fait.</p>'}
     <div id="tls">${seed.map(line).join('')}</div>
-    <button type="button" class="btn sm" id="tladd">＋ Ajouter une ligne (autre chantier, atelier…)</button>
+    <button type="button" class="btn sm" id="tladd">＋ Ajouter une ligne (autre chantier, atelier, bureau…)</button>
     <p id="tltot" class="muted" style="margin-bottom:0"></p>`,
     async (o, f) => {
       const val = (r, k) => $(`[data-f=${k}]`, r).value;
@@ -241,7 +254,7 @@ export function timeModal(m, date, env) {
         f.addEventListener('input', tot);
         f.addEventListener('change', ev => { const k = ev.target.closest('[data-f=kind]'); if (k) { const r = k.closest('.tl'); $('[data-f=site]', r).hidden = k.value !== 'site'; $('[data-f=abs]', r).hidden = k.value !== 'absence'; } tot(); });
         f.addEventListener('click', ev => {
-          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: defAbs })); tot(); }
+          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: H.defaultKind(m), siteId: '', hours: '', note: '', absType: defAbs })); tot(); }
           const rm = ev.target.closest('[data-rm]'); if (rm) { rm.closest('.tl').remove(); tot(); }
           const full = ev.target.closest('[data-full]');
           if (full) {
@@ -370,7 +383,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
         const lines = l.length ? l.map(x => `${x.kind === 'site' ? e(S[x.siteId]?.name || 'Chantier') : e(x.kind === 'absence' && H.ABS_LABEL[x.absType] ? 'Absence · ' + H.ABS_LABEL[x.absType] : H.KIND_LABEL[x.kind])} ${H.fmtHM(x.hours)}`).join(' · ') : pl.map(t => `${e(S[t.siteId]?.name || '')} ${H.fmtHM(t.hours)}`).join(' · ');
         return `<div class="item tday ${d === today() ? 'today' : ''}" data-d="${d}"><div class="main"><div class="t">${dayLabel(d)}${d === today() ? ' <small class="muted">aujourd\'hui</small>' : ''}</div><div class="s">${lines || 'Rien de prévu'}</div></div><div class="r">${state}</div></div>`;
       }).join('')}
-      <p class="muted">Touchez un jour pour saisir vos heures : chantier prévu, autre chantier, atelier, déplacement ou absence. Vous pouvez corriger un jour déjà saisi.</p>`;
+      <p class="muted">Touchez un jour pour saisir vos heures : chantier prévu, autre chantier, atelier, bureau, déplacement ou absence. Vous pouvez corriger un jour déjà saisi.</p>`;
     const open = d => (!hoursOk ? toast('Votre profil ne permet pas de saisir des heures.') : H.isClosedDate(closed, d) ? toast(`${capFirst(monthName(d))} est clôturé : les heures ne se modifient plus. Demandez au gérant de rouvrir le mois.`) : canEnter(m, d) ? timeModal(m, d, env) : toast('Vous pourrez saisir ce jour-là à partir de la date du jour.'));
     $$('.tday', el).forEach(n => n.onclick = () => open(n.dataset.d));
     const tb = $('#today', el); if (tb) tb.onclick = () => open(today());

@@ -41,6 +41,11 @@ export const LIST_DEFS = {
     help: 'Saisie des heures, absences du planning, récapitulatif du comptable. « Autre absence » est utilisée par l\'application.',
     defaults: [['cp', 'Congé payé'], ['maladie', 'Maladie'], ['autre', 'Autre absence']].map(([v, label]) => ({ v, label, ...(v === 'autre' ? { lock: true } : {}) }))
   },
+  activities: {
+    title: 'Activités des heures', kind: 'id', fixed: true,
+    help: 'Saisie des heures (Atelier, Chantier, Bureau…) : changez l\'ordre, renommez ou masquez. La première activité proposée est celle qui s\'affiche par défaut (chaque salarié peut avoir la sienne sur sa fiche). « Chantier » et « Congés / absence » sont utilisées par l\'application ; on ne peut pas en ajouter, car chaque activité a sa colonne dans le récapitulatif des heures.',
+    defaults: [['atelier', 'Atelier'], ['site', 'Chantier'], ['bureau', 'Bureau'], ['trajet', 'Déplacement / approvisionnement'], ['absence', 'Congés / absence']].map(([v, label]) => ({ v, label, ...(v === 'site' || v === 'absence' ? { lock: true } : {}) }))
+  },
   habs: {
     title: 'Habilitations (suggestions)', kind: 'text',
     help: 'Propositions faites en saisissant une habilitation sur la fiche d\'un membre ; la saisie reste libre.',
@@ -57,7 +62,7 @@ export const LIST_DEFS = {
     defaults: ['Architecte', 'Maître d\'œuvre', 'Bureau d\'études', 'Économiste', 'Conducteur de travaux', 'Coordinateur SPS', 'Autre'].map(v => ({ v }))
   }
 };
-export const LIST_ORDER = ['cats', 'units', 'methods', 'contracts', 'roles', 'absTypes', 'habs', 'civs', 'moeFn'];
+export const LIST_ORDER = ['cats', 'units', 'methods', 'contracts', 'roles', 'activities', 'absTypes', 'habs', 'civs', 'moeFn'];
 
 const str = v => String(v ?? '').trim();
 const same = (a, b) => str(a).toLowerCase() === str(b).toLowerCase();
@@ -69,6 +74,7 @@ export function fullList(key, stored) {
   const out = [];
   for (const x of Array.isArray(stored) && stored.length ? stored : def.defaults) {
     const v = str(x && x.v); if (!v) continue;
+    if (def.fixed && !def.defaults.some(d => d.v === v)) continue; // liste fermée : seules les valeurs prévues par l'application
     if (out.some(y => (isText ? same(y.v, v) : y.v === v))) continue;
     const o = { v };
     if (def.kind === 'id') o.label = str(x.label) || v;
@@ -76,8 +82,8 @@ export function fullList(key, stored) {
     if (x.hidden) o.hidden = true;
     out.push(o);
   }
-  for (const d of def.defaults) { // protégées : toujours présentes, à leur forme d'origine, jamais masquées
-    if (!d.lock) continue;
+  for (const d of def.defaults) { // protégées (et, pour une liste fermée, toutes les valeurs prévues) : toujours présentes ; les protégées sont à leur forme d'origine, jamais masquées
+    if (!d.lock && !(def.fixed && !out.some(y => y.v === d.v))) continue;
     const i = out.findIndex(y => (isText ? same(y.v, d.v) : y.v === d.v));
     const keep = { ...d };
     if (i < 0) out.push(keep);
@@ -125,6 +131,8 @@ export const ROLES = [];            // [identifiant, libellé] des fonctions pro
 export const ROLE_LABEL = {};       // identifiant → libellé, y compris les fonctions masquées
 export const ABS_TYPES = [];        // [identifiant, libellé] des types d'absence proposés
 export const ABS_LABEL = {};        // identifiant → libellé, y compris les types masqués
+export const KINDS = [];            // [identifiant, libellé] des activités proposées pour la saisie des heures
+export const KIND_LABEL = {};       // identifiant → libellé, y compris les activités masquées
 export const HABS = [], CIVS = [], MOE_FN = [];
 
 export function applyLists(S) {
@@ -145,6 +153,9 @@ export function applyLists(S) {
   const ab = L('absTypes');
   fill(ABS_TYPES, vis(ab).map(x => [x.v, x.label]));
   fillObj(ABS_LABEL, ab.map(x => [x.v, x.label]));
+  const ac = L('activities');
+  fill(KINDS, vis(ac).map(x => [x.v, x.label]));
+  fillObj(KIND_LABEL, ac.map(x => [x.v, x.label]));
   fill(HABS, vis(L('habs')).map(x => x.v)); fill(CIVS, vis(L('civs')).map(x => x.v)); fill(MOE_FN, vis(L('moeFn')).map(x => x.v));
 }
 applyLists({}); // valeurs d'origine tant que les réglages ne sont pas lus
@@ -158,5 +169,6 @@ export const catOpts = cur => withCur(CATS.map(([c, i]) => [c, `${i ? i + ' ' : 
 export const contractOpts = cur => withCur(CONTRACTS.map(c => [c, c]), cur, cur + ' (ancien type)');
 export const roleOpts = cur => withCur(ROLES, cur && ROLE_LABEL[cur] ? cur : '', ROLE_LABEL[cur] ? ROLE_LABEL[cur] + ' (masquée)' : cur);
 export const methodOpts = cur => withCur(METHODS, cur && METHOD_LABEL[cur] ? cur : '', METHOD_LABEL[cur] ? METHOD_LABEL[cur] + ' (masqué)' : cur);
+export const kindOpts = cur => withCur(KINDS, cur && KIND_LABEL[cur] ? cur : '', KIND_LABEL[cur] ? KIND_LABEL[cur] + ' (masquée)' : cur);
 export const absOpts = cur => withCur(ABS_TYPES, cur && ABS_LABEL[cur] ? cur : '', ABS_LABEL[cur] ? ABS_LABEL[cur] + ' (masqué)' : cur);
 

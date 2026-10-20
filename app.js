@@ -11,7 +11,7 @@ import { ROLE_LABEL, MOE_FN } from './lists.js';
 import { LIM } from './limits.js';
 import { mountLists, mountLimits } from './lists-ui.js';
 import { zoneHtml, mountZones, anyEditing } from './zones.js';
-import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
+import { PERIODS, PERIODS_ALL, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
@@ -21,7 +21,7 @@ import * as backup from './backup.js';
 import { dupNumbers } from './doccheck.js';
 import { findSimilar, statsByClient } from './clients.js';
 import { simBoxHtml, bindSimilar, dupQuestion } from './clients-ui.js';
-import { nextSteps, todoItems } from './nextstep.js';
+import { nextSteps, todoItems, filterTodo } from './nextstep.js';
 import { isStocked, stockOf, estimateMargin, siteCompare, reservations, shortages } from './plan.js';
 import { alertBox, confirmBox, promptBox } from './dialogs.js';
 
@@ -129,6 +129,17 @@ async function renderContacts(el, tab = 'client') {
 }
 
 /* ---------- Tableau de bord ---------- */
+/* Période d'une section de l'accueil (« À faire », « Factures à encaisser ») : mémorisée sur l'appareil, une par section, « Toutes périodes » au départ */
+const secPeriod = id => {
+  let key = 'all', c = {};
+  try { key = localStorage.getItem('gp_p_' + id) || 'all'; c = { from: localStorage.getItem('gp_p_' + id + '_from') || '', to: localStorage.getItem('gp_p_' + id + '_to') || '' }; } catch { /* ignore */ }
+  if (!PERIODS_ALL.some(p => p[0] === key)) key = 'all';
+  return { key, custom: c, range: key === 'all' ? null : periodRange(key, today(), c) };
+};
+const secPerSel = (id, p) => `<select data-sper="${id}" style="width:auto" aria-label="Période">${PERIODS_ALL.map(([k, l]) => `<option value="${k}" ${k === p.key ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const secPerExtra = (id, p) => p.key === 'custom' ? `<div class="row"><label class="f" style="flex:1"><span>Du</span><input type="date" data-sfrom="${id}" value="${e(p.custom.from)}"></label><label class="f" style="flex:1"><span>Au</span><input type="date" data-sto="${id}" value="${e(p.custom.to)}"></label></div>` : '';
+const inRange = (iso, r) => { const d = String(iso || '').slice(0, 10); return d >= r.from && d <= r.to; };
+
 async function renderDashboard(el) {
   const [products, docs, payments, posts, contacts, S, sites, members, tasks, moves, times, bk] = await Promise.all([db.all('products'), db.all('documents'), db.all('payments'), db.all('fbposts'), db.all('contacts'), getS(), db.all('sites'), db.all('members'), db.all('tasks'), db.all('moves'), db.all('times'), backup.getState()]);
   let per = 'd30', pc = {}; try { per = localStorage.getItem('gp_period') || 'd30'; pc = { from: localStorage.getItem('gp_pfrom') || '', to: localStorage.getItem('gp_pto') || '' }; } catch { /* ignore */ }
@@ -143,6 +154,8 @@ async function renderDashboard(el) {
   // « Reste à encaisser » de la tuile : ce qui reste dû, à ce jour, sur les factures émises pendant la période choisie
   const unpaidPer = unpaidList.filter(x => { const dt = (x.d.date || '').slice(0, 10); return dt >= range.from && dt <= range.to; });
   const unpaidPerSum = unpaidPer.reduce((a, x) => a + x.left, 0);
+  const pTodo = secPeriod('todo'), pInv = secPeriod('inv');
+  const invShown = pInv.range ? unpaidList.filter(x => inRange(x.d.date, pInv.range)) : unpaidList, invShownSum = invShown.reduce((a, x) => a + x.left, 0); // section « Factures à encaisser » : factures émises dans sa période
   const recent = new Date(Date.parse(today()) - LIM.pendingDays * 864e5).toISOString().slice(0, 10); // « en attente » = envoyés depuis moins de 90 jours (réglable : Réglages › Seuils et délais)
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent' && (d.date || '') >= recent);
   const nExpired = quotesPending.filter(d => quoteExpired(d)).length; // date de validité dépassée
@@ -224,9 +237,9 @@ async function renderDashboard(el) {
   const siteSteps = openSites.map(site => ({ site, steps: nextSteps(site, { docs, payments, tasks, S, st: siteStats(site.id, docs, payments), rem }) }));
   const drifts = openSites.map(site => ({ site, flags: (cmps.get(site.id) || cmpOf(site)).cmp?.flags || [] })).filter(x => x.flags.length);
   const short = shortages(reservations(sites, docs, moves, PM), PM, stockOf);
-  const todo = todoItems({ rem, lateSites, steps: siteSteps, low, habs: habAlerts, drifts, short, C });
+  const { shown: todo, hidden: todoHidden } = filterTodo(todoItems({ rem, lateSites, steps: siteSteps, low, habs: habAlerts, drifts, short, C }), pTodo.range); // période : seules les actions datées hors période sont masquées
   const todoRow = x => `<div class="item todoi"><a class="main" href="${e(x.href)}" style="text-decoration:none;color:inherit"><div class="t"><span class="chip ${x.tone}">${e(x.tag)}</span> ${e(x.title)}</div><div class="s">${e(x.sub)}</div></a>${x.rel ? `<div class="r"><button type="button" class="btn sm" data-rel="${e(x.rel)}">${e(x.label)}</button></div>` : x.label ? `<div class="r"><a class="btn sm" href="${e(x.href)}">${e(x.label)}</a></div>` : ''}</div>`;
-  const todoHtml = `<div class="card todo" id="todo"><h3 style="margin:0 0 4px">À faire aujourd'hui${todo.length ? ` <span class="muted" style="font-size:12px;font-weight:400">· ${todo.length} action${todo.length > 1 ? 's' : ''}</span>` : ''}</h3>${todo.length ? todo.slice(0, 8).map(todoRow).join('') + (todo.length > 8 ? `<details><summary class="muted" style="cursor:pointer;margin:6px 0">+ ${todo.length - 8} autre${todo.length - 8 > 1 ? 's' : ''}</summary>${todo.slice(8).map(todoRow).join('')}</details>` : '') : '<p class="muted" style="margin:4px 0 0">✅ Rien d\'urgent : aucune relance, aucun chantier en retard, stock et habilitations à jour.</p>'}</div>`;
+  const todoHtml = `<div class="card todo" id="todo"><div class="row" style="margin:0 0 4px"><h3 style="margin:0;flex:1">À faire aujourd'hui${todo.length ? ` <span class="muted" style="font-size:12px;font-weight:400">· ${todo.length} action${todo.length > 1 ? 's' : ''}</span>` : ''}</h3>${secPerSel('todo', pTodo)}</div>${secPerExtra('todo', pTodo)}${pTodo.range ? `<p class="muted" style="margin:0 0 6px;font-size:12px">Actions datées du ${dateFr(pTodo.range.from)} au ${dateFr(pTodo.range.to)} (échéances, expirations, fins de chantier) ; les autres actions restent affichées.${todoHidden ? ` ${todoHidden} action${todoHidden > 1 ? 's' : ''} hors période ${todoHidden > 1 ? 'masquées' : 'masquée'}.` : ''}</p>` : ''}${todo.length ? todo.slice(0, 8).map(todoRow).join('') + (todo.length > 8 ? `<details><summary class="muted" style="cursor:pointer;margin:6px 0">+ ${todo.length - 8} autre${todo.length - 8 > 1 ? 's' : ''}</summary>${todo.slice(8).map(todoRow).join('')}</details>` : '') : pTodo.range && todoHidden ? '<p class="muted" style="margin:4px 0 0">Aucune action datée sur cette période.</p>' : '<p class="muted" style="margin:4px 0 0">✅ Rien d\'urgent : aucune relance, aucun chantier en retard, stock et habilitations à jour.</p>'}</div>`;
 
   const meU = auth.currentUser(), first = meU ? (meU.first || meU.name.split(' ')[0]) : '';
   el.innerHTML = `<h2>Bonjour${first ? ' ' + e(first) : ''} 👋</h2>
@@ -247,7 +260,7 @@ async function renderDashboard(el) {
       ${open.length ? `<section><h3>Chantiers en cours &amp; marge</h3>${siteRows}<a class="btn sm" href="#/sites">Tous les chantiers</a></section>` : ''}
       <section><h3>Planning des 7 prochains jours</h3>${planRows || '<p class="muted">Rien de planifié.</p>'}<a class="btn sm" href="#/planning/week">Ouvrir le planning</a></section>
     </div>
-    ${unpaidList.length ? `<h3>Factures à encaisser <span class="muted" style="font-size:12px;font-weight:400">· toutes périodes : ${eur(unpaid)} (${unpaidList.length})</span></h3>${unpaidList.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('')}` : ''}
+    ${unpaidList.length ? `<div class="row" style="margin-top:14px"><h3 style="margin:0;flex:1">Factures à encaisser <span class="muted" style="font-size:12px;font-weight:400">· ${pInv.range ? `période : ${eur(invShownSum)} (${invShown.length}) · ` : ''}toutes périodes : ${eur(unpaid)} (${unpaidList.length})</span></h3>${secPerSel('inv', pInv)}</div>${secPerExtra('inv', pInv)}${pInv.range ? `<p class="muted" style="margin:0 0 6px;font-size:12px">Factures émises du ${dateFr(pInv.range.from)} au ${dateFr(pInv.range.to)}, restant dû à ce jour.</p>` : ''}${invShown.slice(0, 6).map(({ d, left }) => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number)} · ${e(C[d.clientId]?.name || '')}</div><div class="s">émise le ${dateFr(d.date)} · ${lateDays(d.date)} j</div></div><div class="r"><b>${eur(left)}</b></div></a>`).join('') || '<p class="muted" style="margin:4px 0">Aucune facture à encaisser sur cette période.</p>'}${invShown.length > 6 ? `<a class="btn sm" href="#/docs/invoice">+ ${invShown.length - 6} autre${invShown.length - 6 > 1 ? 's' : ''} : toutes les factures</a>` : ''}` : ''}
     ${startCard}
     <h3>En un coup d'œil</h3><div class="grid">
       <a class="kpi ${quotesPending.length ? 'warn' : ''}" href="#/docs/quote"><small>Devis en attente</small><b>${quotesPending.length}</b><small>${eur(quotesPending.reduce((a, d) => a + totals(d).ttc, 0))} TTC · 90 derniers jours${nExpired ? ` · dont ${nExpired} expiré${nExpired > 1 ? 's' : ''}` : ''}</small></a>
@@ -257,6 +270,12 @@ async function renderDashboard(el) {
   const sv = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
   $('#pfrom', el)?.addEventListener('change', ev => { sv('gp_pfrom', ev.target.value); refresh(); });
   $('#pto', el)?.addEventListener('change', ev => { sv('gp_pto', ev.target.value); refresh(); });
+  el.addEventListener('change', ev => {
+    const t = ev.target, sv2 = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
+    if (t.matches('[data-sper]')) { sv2('gp_p_' + t.dataset.sper, t.value); refresh(); }
+    else if (t.matches('[data-sfrom]')) { sv2('gp_p_' + t.dataset.sfrom + '_from', t.value); refresh(); }
+    else if (t.matches('[data-sto]')) { sv2('gp_p_' + t.dataset.sto + '_to', t.value); refresh(); }
+  });
   $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
   $('#bknow', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alertBox('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
   $('#newdos', el)?.addEventListener('click', () => import('./dossier.js').then(m => m.dossierModal()));

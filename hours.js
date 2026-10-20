@@ -1,21 +1,26 @@
 // Heures réalisées, saisies jour par jour (magasin « times », onglet Google Sheets « Pointages »).
 // Fonctions pures (testables hors navigateur). Une saisie = { id, memberId, date: 'aaaa-mm-jj', kind, siteId, hours, note }.
-// kind : 'site' (chantier, avec siteId : le chantier prévu OU un autre), 'atelier', 'trajet' (déplacement / approvisionnement), 'absence' (congés, absence).
+// kind : 'site' (chantier, avec siteId : le chantier prévu OU un autre), 'atelier', 'bureau', 'trajet' (déplacement / approvisionnement), 'absence' (congés, absence).
 // L'ancien total « Heures réalisées » d'une affectation (task.done) reste valable tant qu'aucune saisie par jour n'existe pour ce membre sur ce chantier pendant les dates de l'affectation.
-import { ABS_TYPES, ABS_LABEL } from './lists.js';
+import { ABS_TYPES, ABS_LABEL, KINDS, KIND_LABEL } from './lists.js';
 import { LIM } from './limits.js';
-export { ABS_TYPES, ABS_LABEL };
+export { ABS_TYPES, ABS_LABEL, KINDS, KIND_LABEL };
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 export const round2 = v => Math.round(v * 100) / 100;
 
-export const KINDS = [['site', 'Chantier'], ['atelier', 'Atelier'], ['trajet', 'Déplacement / approvisionnement'], ['absence', 'Congés / absence']];
-export const KIND_LABEL = Object.fromEntries(KINDS);
+/* Activités : KINDS (proposées, dans l'ordre choisi) et KIND_LABEL (toutes) viennent des listes de choix (Réglages › Listes de choix › Activités des heures).
+   Activité proposée par défaut pour un membre : celle de sa fiche si elle est encore proposée, sinon la première de la liste (jamais « Congés / absence »). */
+export const defaultKind = m => {
+  const ok = k => k && k !== 'absence' && KINDS.some(x => x[0] === k);
+  if (m && ok(m.defKind)) return m.defKind;
+  return (KINDS.find(x => x[0] !== 'absence') || ['site'])[0];
+};
 /* Types d'absence (M8) : une saisie « Congés / absence » peut être classée ; sans type, elle reste « non précisée » */
 export const absLabel = t => ABS_LABEL[t] || 'Absence';
 export const WEEK_BASE = 35; // base d'origine (réglable : Réglages › Seuils et délais ; modifiable sur la fiche du membre) — la valeur en vigueur est LIM.weekHours
 export const baseOf = m => (num(m && m.weekHours) > 0 ? num(m.weekHours) : LIM.weekHours);
 export const dayHoursOf = m => Math.round(baseOf(m) / 5 * 4) / 4; // journée type : un cinquième de la semaine (35 h → 7 h), au quart d'heure
-export const WORKED = ['site', 'atelier', 'trajet']; // heures travaillées (l'absence se compte à part)
+export const WORKED = ['site', 'atelier', 'bureau', 'trajet']; // heures travaillées (l'absence se compte à part)
 export const DAY_LIMIT = 24;
 
 const inRange = (d, a, b) => !!d && !!a && d >= a && d <= (b || a);
@@ -113,7 +118,7 @@ export function monthRecap({ month, members = [], sites = [], tasks = [], times 
   const S = Object.fromEntries(sites.map(s => [s.id, s]));
   const inMonth = (times || []).filter(x => (x.date || '').slice(0, 7) === month);
   const idx = {}; inMonth.forEach(x => (idx[`${x.memberId}|${x.date}`] ||= []).push(x));
-  const sitesAgg = {}, kinds = { atelier: {}, trajet: {}, absence: { byType: {} } };
+  const sitesAgg = {}, kinds = { atelier: {}, bureau: {}, trajet: {}, absence: { byType: {} } };
   const addSite = (sid, mid, h) => { const r = sitesAgg[sid] ||= { siteId: sid, name: S[sid]?.name || 'Chantier supprimé', color: S[sid]?.color || '', total: 0, byMember: {} }; r.total = round2(r.total + h); r.byMember[mid] = round2((r.byMember[mid] || 0) + h); };
   const addKind = (k, mid, h) => { const r = kinds[k]; r.total = round2((r.total || 0) + h); (r.byMember ||= {})[mid] = round2((r.byMember[mid] || 0) + h); };
   const rows = [];
@@ -121,7 +126,7 @@ export function monthRecap({ month, members = [], sites = [], tasks = [], times 
     const myTasks = (tasks || []).filter(t => t.memberId === m.id);
     const has = inMonth.some(x => x.memberId === m.id) || myTasks.some(t => (t.start || '').slice(0, 7) === month && legacyDone(t, times) > 0);
     if (m.active === false && !has) continue; // un membre devenu inactif reste listé s'il a des heures ce mois-là
-    const row = { member: m, days: {}, site: {}, atelier: 0, trajet: 0, absence: 0, absByType: {}, legacy: 0, worked: 0, missing: 0, missingDays: [] };
+    const row = { member: m, days: {}, site: {}, atelier: 0, bureau: 0, trajet: 0, absence: 0, absByType: {}, legacy: 0, worked: 0, missing: 0, missingDays: [] };
     const legacyCovered = new Set();
     myTasks.filter(t => (t.start || '').slice(0, 7) === month || days.some(d => covers(t, d))).forEach(t => {
       const ld = legacyDone(t, times); if (!ld) return;
@@ -137,7 +142,7 @@ export function monthRecap({ month, members = [], sites = [], tasks = [], times 
       for (const x of lines) {
         const h = num(x.hours);
         if (x.kind === 'site') { row.site[x.siteId] = round2((row.site[x.siteId] || 0) + h); addSite(x.siteId, m.id, h); }
-        else if (x.kind === 'atelier' || x.kind === 'trajet' || x.kind === 'absence') {
+        else if (x.kind === 'atelier' || x.kind === 'bureau' || x.kind === 'trajet' || x.kind === 'absence') {
           row[x.kind] = round2(row[x.kind] + h); addKind(x.kind, m.id, h);
           if (x.kind === 'absence') { const t = ABS_LABEL[x.absType] ? x.absType : ''; row.absByType[t] = round2((row.absByType[t] || 0) + h); kinds.absence.byType[t] = round2((kinds.absence.byType[t] || 0) + h); }
         }
@@ -145,7 +150,7 @@ export function monthRecap({ month, members = [], sites = [], tasks = [], times 
       row.days[d] = day;
     }
     row.siteTotal = round2(Object.values(row.site).reduce((a, v) => a + v, 0));
-    row.worked = round2(row.siteTotal + row.atelier + row.trajet);
+    row.worked = round2(row.siteTotal + row.atelier + row.bureau + row.trajet);
     row.counter = weekCounters({ month, member: m, times, today });
     /* semaines du mois (lundi → dimanche, limitées au mois) pour les sous-totaux */
     row.weeks = [];
@@ -162,7 +167,7 @@ export function monthRecap({ month, members = [], sites = [], tasks = [], times 
   const sum = f => round2(rows.reduce((a, r) => a + f(r), 0));
   return {
     month, days, rows, sites: sitesOut, kinds,
-    totals: { worked: sum(r => r.worked), site: sum(r => r.siteTotal), atelier: sum(r => r.atelier), trajet: sum(r => r.trajet), absence: sum(r => r.absence), missing: sum(r => r.missing), over: sum(r => r.counter.over), short: sum(r => r.counter.short), absByType: kinds.absence.byType }
+    totals: { worked: sum(r => r.worked), site: sum(r => r.siteTotal), atelier: sum(r => r.atelier), bureau: sum(r => r.bureau), trajet: sum(r => r.trajet), absence: sum(r => r.absence), missing: sum(r => r.missing), over: sum(r => r.counter.over), short: sum(r => r.counter.short), absByType: kinds.absence.byType }
   };
 }
 
