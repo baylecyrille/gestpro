@@ -23,6 +23,7 @@ import { findSimilar, statsByClient } from './clients.js';
 import { simBoxHtml, bindSimilar, dupQuestion } from './clients-ui.js';
 import { nextSteps, todoItems } from './nextstep.js';
 import { isStocked, stockOf, estimateMargin, siteCompare, reservations, shortages } from './plan.js';
+import { alertBox, confirmBox, promptBox } from './dialogs.js';
 
 /* ---------- Fond d'écran (logo) ---------- */
 export function applyWallpaper(S) {
@@ -61,7 +62,7 @@ export function contactModal(c, kind, onSaved) {
   modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : c.kind === 'moe' ? 'architecte / maître d\'œuvre' : 'client'}`, body, async o => {
     if (isNew) { // B3 : même e-mail, téléphone, SIRET ou même nom qu'une fiche existante → confirmation avant de créer le doublon
       const strong = findSimilar(await db.all('contacts'), o, { kind: c.kind }).filter(x => x.strong);
-      if (strong.length && !confirm(dupQuestion(strong, c.kind))) return false;
+      if (strong.length && !(await confirmBox(dupQuestion(strong, c.kind)))) return false;
     }
     Object.assign(c, o); const s = await db.put('contacts', c);
     if (onSaved) onSaved(s); else refresh();
@@ -70,10 +71,10 @@ export function contactModal(c, kind, onSaved) {
       onUse: ex => { document.querySelector('#modal').close(); if (onSaved) onSaved(ex); else contactModal(ex); } }));
     addressAutocomplete(f.querySelector('[name=address]'), it => { f.querySelector('[name=address]').value = it.street; f.querySelector('[name=zip]').value = it.zip; f.querySelector('[name=city]').value = it.city; }); if (!isNew && c.kind === 'client') fillRel(f, c); }, del: isNew ? null : async () => {
     const [docs, sites] = await Promise.all([db.all('documents'), db.all('sites')]);
-    if (docs.some(d => d.clientId === c.id)) return alert('Ce contact a des devis/factures : suppression impossible.');
+    if (docs.some(d => d.clientId === c.id)) return alertBox('Ce contact a des devis/factures : suppression impossible.');
     const used = sites.filter(x => x.clientId === c.id || x.moeId === c.id);
-    if (used.length && c.kind === 'client') return alert(`Ce client a ${used.length} chantier(s) (${used.slice(0, 3).map(x => x.name).join(', ')}${used.length > 3 ? '…' : ''}) : supprimez-les ou changez leur client d'abord.`);
-    if (used.length && !confirm(`Ce contact est rattaché à ${used.length} chantier(s). Le supprimer quand même (les chantiers perdent seulement ce lien) ?`)) return;
+    if (used.length && c.kind === 'client') return alertBox(`Ce client a ${used.length} chantier(s) (${used.slice(0, 3).map(x => x.name).join(', ')}${used.length > 3 ? '…' : ''}) : supprimez-les ou changez leur client d'abord.`);
+    if (used.length && !(await confirmBox(`Ce contact est rattaché à ${used.length} chantier(s). Le supprimer quand même (les chantiers perdent seulement ce lien) ?`))) return;
     await db.del('contacts', c.id); refresh(); } });
 }
 
@@ -257,7 +258,7 @@ async function renderDashboard(el) {
   $('#pfrom', el)?.addEventListener('change', ev => { sv('gp_pfrom', ev.target.value); refresh(); });
   $('#pto', el)?.addEventListener('change', ev => { sv('gp_pto', ev.target.value); refresh(); });
   $('#per', el).onchange = ev => { try { localStorage.setItem('gp_period', ev.target.value); } catch { /* ignore */ } refresh(); };
-  $('#bknow', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
+  $('#bknow', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alertBox('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
   $('#newdos', el)?.addEventListener('click', () => import('./dossier.js').then(m => m.dossierModal()));
   $('#acc', el)?.addEventListener('click', () => import('./export.js').then(m => m.exportModal()));
   $('#hidestart', el)?.addEventListener('click', () => { localStorage.setItem('gp_hide_start', '1'); refresh(); });
@@ -399,14 +400,14 @@ async function renderSettings(el) {
       out.textContent = `✔ E-mail de test envoyé à ${to}${r.from ? ' depuis ' + r.from : ''}${r.left != null ? ` (${r.left} envois restants aujourd'hui)` : ''}.`;
     } catch (err) { out.textContent = '✖ ' + mailError(err).split('\n')[0]; }
   });
-  $('#gedit', el).onclick = () => {
+  $('#gedit', el).onclick = async () => {
     const fs = $('#gfs', el), lockedNow = fs.disabled;
-    if (lockedNow && !confirm('Modifier la connexion Google Sheets ? Une erreur ici peut interrompre la synchronisation de vos données.')) return;
+    if (lockedNow && !(await confirmBox('Modifier la connexion Google Sheets ? Une erreur ici peut interrompre la synchronisation de vos données.'))) return;
     fs.disabled = !lockedNow; fs.style.opacity = lockedNow ? '1' : '.75'; $('#gedit', el).textContent = lockedNow ? '🔓 Verrouiller' : '🔒 Modifier';
   };
-  $('#gsyncq', el)?.addEventListener('click', async () => { try { const r = await sheets.sync({ interactive: true }); toast(r?.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); refresh(); } catch (err) { alert(err.message); } });
+  $('#gsyncq', el)?.addEventListener('click', async () => { try { const r = await sheets.sync({ interactive: true }); toast(r?.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); refresh(); } catch (err) { alertBox(err.message); } });
   $('#gf', el).onsubmit = async ev => { ev.preventDefault(); const o = Object.fromEntries(new FormData(ev.target)); await db.saveSettings({ ...(await getS()), googleClientId: o.googleClientId.trim() }); toast('Identifiant enregistré'); };
-  const guard = fn => async () => { try { await fn(); } catch (err) { alert(err.message); } refresh(); };
+  const guard = fn => async () => { try { await fn(); } catch (err) { alertBox(err.message); } refresh(); };
   $('#gs', el).onsubmit = async ev => {
     ev.preventDefault();
     const o = Object.fromEntries(new FormData(ev.target));
@@ -414,16 +415,16 @@ async function renderSettings(el) {
       sheets.setScript(o.scriptUrl.trim(), o.scriptKey.trim() || localStorage.getItem('gp_script_key') || '');
       const r = await sheets.sync({ interactive: true });
       toast(r.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé avec Google Sheets');
-    } catch (err) { sheets.clearScript(); alert(err.message); }
+    } catch (err) { sheets.clearScript(); alertBox(err.message); }
     refresh();
   };
-  $('#gsync2', el)?.addEventListener('click', async () => { try { const r = await sheets.sync({ interactive: true }); toast(r.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); } catch (err) { alert(err.message); } refresh(); });
-  $('#gsoff', el)?.addEventListener('click', () => { if (confirm('Déconnecter ? Les données locales sont conservées.')) { sheets.clearScript(); refresh(); } });
+  $('#gsync2', el)?.addEventListener('click', async () => { try { const r = await sheets.sync({ interactive: true }); toast(r.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); } catch (err) { alertBox(err.message); } refresh(); });
+  $('#gsoff', el)?.addEventListener('click', async () => { if ((await confirmBox('Déconnecter ? Les données locales sont conservées.'))) { sheets.clearScript(); refresh(); } });
   $('#gnew', el)?.addEventListener('click', guard(async () => { await sheets.createSheet(); await sheets.sync({ interactive: true }); toast('Classeur créé et synchronisé'); }));
-  $('#gold', el)?.addEventListener('click', guard(async () => { const v = prompt('Adresse (URL) ou identifiant du classeur Google Sheets :'); if (!v) return; await sheets.useSheet(v); await sheets.sync({ interactive: true }); toast('Classeur connecté'); }));
+  $('#gold', el)?.addEventListener('click', guard(async () => { const v = (await promptBox('Adresse (URL) ou identifiant du classeur Google Sheets :')); if (!v) return; await sheets.useSheet(v); await sheets.sync({ interactive: true }); toast('Classeur connecté'); }));
   $('#gsync', el)?.addEventListener('click', guard(async () => { const r = await sheets.sync({ interactive: true }); toast(r.pulled ? `${r.pulled} élément(s) reçus` : 'Synchronisé'); }));
   $('#gout', el)?.addEventListener('click', () => { sheets.disconnect(); refresh(); });
-  $('#gforget', el)?.addEventListener('click', () => { if (confirm('Dissocier ce classeur ? Les données locales sont conservées.')) { sheets.disconnect(true); refresh(); } });
+  $('#gforget', el)?.addEventListener('click', async () => { if ((await confirmBox('Dissocier ce classeur ? Les données locales sont conservées.'))) { sheets.disconnect(true); refresh(); } });
   const camInfo = () => ($('#camstat', el).textContent = savedCamera() ? 'Caméra enregistrée sur cet appareil.' : 'Caméra automatique (arrière par défaut).');
   camInfo();
   $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
@@ -438,7 +439,7 @@ async function renderSettings(el) {
       if (logo.length > 260000) throw new Error('Logo trop lourd : utilisez une image plus petite.');
       $('#logoprev', el).src = logo;
       toast(`Logo prêt (${Math.round(logo.length * 0.75 / 1024)} Ko, qualité conservée) – enregistrez la zone`);
-    } catch (err) { logo = S.logo; alert(err.message); }
+    } catch (err) { logo = S.logo; alertBox(err.message); }
   };
   $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez la zone'); });
   /* Réglages protégés par zones : chaque zone se déverrouille (« Modifier ») puis s'enregistre seule ; une zone n'écrit que ses propres champs */
@@ -477,13 +478,13 @@ async function renderSettings(el) {
     };
   });
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
-  $('#bknow2', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
-  $$('[data-bkdl]', el).forEach(b => b.onclick = async () => { const it = (bk.list || []).find(x => x.id === b.dataset.bkdl); if (!it) return; b.disabled = true; try { await backup.downloadCopy(it); } catch (err) { alert('Téléchargement impossible : ' + (err.message || err)); } b.disabled = false; });
+  $('#bknow2', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alertBox('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
+  $$('[data-bkdl]', el).forEach(b => b.onclick = async () => { const it = (bk.list || []).find(x => x.id === b.dataset.bkdl); if (!it) return; b.disabled = true; try { await backup.downloadCopy(it); } catch (err) { alertBox('Téléchargement impossible : ' + (err.message || err)); } b.disabled = false; });
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
   $('#imp', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
-    if (!confirm('La restauration REMPLACE toutes les données actuelles. Continuer ?')) return;
-    try { await db.importAll(JSON.parse(await readFileText(f))); toast('Données restaurées'); refresh(); } catch (err) { alert(err.message); }
+    if (!(await confirmBox('La restauration REMPLACE toutes les données actuelles. Continuer ?'))) return;
+    try { await db.importAll(JSON.parse(await readFileText(f))); toast('Données restaurées'); refresh(); } catch (err) { alertBox(err.message); }
   };
   $('#snip', el).onclick = () => import('./blocks.js').then(m => m.snippetsModal(null));
   $('#addimp', el).onchange = async ev => {
@@ -494,20 +495,20 @@ async function renderSettings(el) {
         const sp = await imp.planStatuts(data), nq = sp.changes.length, ns = sp.sites.changes.length;
         const lq = Object.entries(sp.to).map(([k, n]) => `${n} → ${imp.QSTAT[k]}`).join(', '), ls = Object.entries(sp.sites.to).map(([k, n]) => `${n} → ${imp.SSTAT[k]}`).join(', ');
         const keep = [sp.edited + sp.sites.kept ? `${sp.edited + sp.sites.kept} modifiés depuis l'import sont conservés` : '', sp.missing + sp.sites.missing ? `${sp.missing + sp.sites.missing} introuvables` : ''].filter(Boolean).join(', ');
-        if (!nq && !ns) { alert(`Rien à modifier : ${sp.same + sp.sites.same} ont déjà le bon statut${keep ? `, ${keep}` : ''}.`); return; }
+        if (!nq && !ns) { alertBox(`Rien à modifier : ${sp.same + sp.sites.same} ont déjà le bon statut${keep ? `, ${keep}` : ''}.`); return; }
         const what = [nq ? `${nq} devis importés (${lq})` : '', ns ? `${ns} chantiers (${ls})` : ''].filter(Boolean).join(' et ');
-        if (!confirm(`Corriger le statut de ${what} ?\n\n${sp.same + sp.sites.same} ont déjà le bon statut${keep ? `, ${keep}` : ''}. Aucun autre document n'est touché.`)) return;
+        if (!(await confirmBox(`Corriger le statut de ${what} ?\n\n${sp.same + sp.sites.same} ont déjà le bon statut${keep ? `, ${keep}` : ''}. Aucun autre document n'est touché.`))) return;
         const sr = await imp.runStatuts(data); toast(`${[sr.changed ? `${sr.changed} devis` : '', sr.sites ? `${sr.sites} chantiers` : ''].filter(Boolean).join(' et ')} corrigés`); refresh(); return;
       }
       const p = await imp.planImport(data);
-      if (!confirm(`Importer : ${p.contacts} nouveaux clients, ${p.sites} chantiers, ${p.products} produits, ${p.docs} documents (${p.skippedDocs} déjà présents ignorés) et ${p.payments} règlements ?\n\nVos données actuelles ne seront ni modifiées ni supprimées.`)) return;
+      if (!(await confirmBox(`Importer : ${p.contacts} nouveaux clients, ${p.sites} chantiers, ${p.products} produits, ${p.docs} documents (${p.skippedDocs} déjà présents ignorés) et ${p.payments} règlements ?\n\nVos données actuelles ne seront ni modifiées ni supprimées.`))) return;
       const r = await imp.runImport(data); toast(`Import terminé : ${r.documents} documents, ${r.contacts} clients`); refresh();
-    } catch (err) { alert(err.message); }
+    } catch (err) { alertBox(err.message); }
   };
   $('#inst', el)?.addEventListener('click', () => installEvt.prompt());
   $('#logout', el)?.addEventListener('click', () => { auth.logout(); location.hash = '#/dashboard'; route(); });
   $('#noauth', el)?.addEventListener('click', async () => {
-    if (!confirm('Désactiver les profils et codes PIN pour tous les membres ? Les fiches sont conservées.')) return;
+    if (!(await confirmBox('Désactiver les profils et codes PIN pour tous les membres ? Les fiches sont conservées.'))) return;
     for (const m of await db.all('members')) { delete m.pinHash; m.access = ''; await db.put('members', m); }
     toast('Protection désactivée'); route();
   });
@@ -526,7 +527,7 @@ function showLogin() {
   const initials = n => n.split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase();
   el.innerHTML = `<div class="card" style="max-width:420px;margin:30px auto"><h2 style="margin-top:0">Qui êtes-vous ?</h2>
     <div id="who">${cands.map(m => `<button class="item" data-id="${m.id}" style="width:100%;text-align:left;font:inherit"><span class="avatar" style="background:${e(m.color || '#2f7ad6')}">${e(initials(m.name))}</span><div class="main"><div class="t">${e(m.name)}</div><div class="s">${e(auth.PROFILES[m.access]?.label || '')}</div></div></button>`).join('')}</div>
-    <form id="pinf" hidden><p><b id="pname"></b></p><label class="f"><span>Code PIN</span><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" required></label>
+    <form id="pinf" hidden novalidate><p><b id="pname"></b></p><label class="f"><span>Code PIN</span><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" required></label>
       <div class="row"><button class="btn primary">Entrer</button><button type="button" class="btn ghost" id="back">Changer</button></div><p id="perr" class="muted" style="color:var(--bad)"></p></form>
     <p class="muted" style="margin-bottom:0"><a href="#" id="forgot">Code oublié ?</a></p></div>`;
   let sel = null;
@@ -542,7 +543,7 @@ function showLogin() {
   };
   $('#forgot', el).onclick = async ev => {
     ev.preventDefault();
-    if (prompt('Cela désactive TOUS les accès par profil et codes PIN (les fiches membres sont conservées). Tapez REINITIALISER pour confirmer :') !== 'REINITIALISER') return;
+    if ((await promptBox('Cela désactive TOUS les accès par profil et codes PIN (les fiches membres sont conservées). Tapez REINITIALISER pour confirmer :')) !== 'REINITIALISER') return;
     for (const m of await db.all('members')) { delete m.pinHash; m.access = ''; await db.put('members', m); }
     toast('Accès réinitialisés'); route();
   };
@@ -576,7 +577,7 @@ function applyAccess() {
   u.hidden = !me;
   if (me) { const fn = me.first || me.name.split(' ')[0]; u.innerHTML = (me.photo ? `<img class="av" src="${e(me.photo)}" alt="">` : `<span class="av ini">${e(fn.slice(0, 1).toUpperCase())}</span>`) + e(fn); }
 }
-$('#user').onclick = () => { if (confirm('Changer d\'utilisateur ?')) { auth.logout(); route(); } };
+$('#user').onclick = async () => { if ((await confirmBox('Changer d\'utilisateur ?'))) { auth.logout(); route(); } };
 $('#help').onclick = () => import('./help.js').then(m => m.openHelp()).catch(err => toast(err.message || 'Aide indisponible'));
 
 /* Une seule fois : sort la civilité (Mr, Mme, SARL…) du champ « Nom » des fiches existantes */
@@ -665,7 +666,7 @@ sheets.setOnPulled(() => {
     if (!d.length) return;
     try { localStorage.setItem('gp_dups', JSON.stringify([...seen, ...d.map(g => g.type + g.number)].slice(-50))); } catch { /* ignore */ }
     const who = x => `${cts.find(c => c.id === x.clientId)?.name || 'sans client'} (${dateFr(x.date)}, ${eur(totals(x).ttc)})`;
-    alert(`⚠ Numéro en double après la synchronisation :\n\n${d.map(g => `${g.number} : ${g.docs.map(who).join(' et ')}`).join('\n')}\n\nDeux appareils ont émis un document hors ligne avec le même numéro. Corrigez le numéro de l'un des deux avant tout envoi (détail sur le tableau de bord).`);
+    alertBox(`⚠ Numéro en double après la synchronisation :\n\n${d.map(g => `${g.number} : ${g.docs.map(who).join(' et ')}`).join('\n')}\n\nDeux appareils ont émis un document hors ligne avec le même numéro. Corrigez le numéro de l'un des deux avant tout envoi (détail sur le tableau de bord).`);
   }).catch(() => {});
 });
 

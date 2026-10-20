@@ -7,6 +7,7 @@ import { unitOpts } from './lists.js';
 import { hasCompo } from './ouvrage.js';
 import { ouvrageInsertModal } from './ouvrage-ui.js';
 import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt, hasCost, lineMargin, refOn } from './vat.js';
+import { alertBox, confirmBox, promptBox } from './dialogs.js';
 
 let SEQ = 0;
 export const bid = () => 'b' + Date.now().toString(36) + (SEQ++).toString(36);
@@ -138,7 +139,7 @@ export async function snippetsModal(onInsert) {
         const row = ev.target.closest('.item'); if (!row) return; const i = +row.dataset.i;
         if (ev.target.closest('[data-ins]')) { onInsert(list[i]); document.querySelector('#modal').close(); }
         else if (ev.target.closest('[data-edit]')) edit(i);
-        else if (ev.target.closest('[data-rm]') && confirm('Supprimer ce modèle ?')) { list.splice(i, 1); await save(); open(); }
+        else if (ev.target.closest('[data-rm]') && (await confirmBox('Supprimer ce modèle ?'))) { list.splice(i, 1); await save(); open(); }
       };
     }
   });
@@ -305,7 +306,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     change(); if (b.type === 'line') paintMeta();
   });
   host.addEventListener('focusin', ev => { if (ev.target.classList.contains('rte')) active = ev.target; });
-  host.addEventListener('click', ev => {
+  host.addEventListener('click', async ev => {
     const row = ev.target.closest('.blk'); if (!row) return; const i = idx(row.dataset.id), b = d.blocks[i];
     const mv = (a, z) => { if (z < 0 || z >= d.blocks.length) return; [d.blocks[a], d.blocks[z]] = [d.blocks[z], d.blocks[a]]; draw(); change(); };
     if (ev.target.closest('[data-up]')) mv(i, i - 1);
@@ -314,10 +315,10 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     else if (ev.target.closest('[data-prod]')) {
       readHeader();
       Promise.all([db.get('products', b.pid), db.all('locations'), db.all('contacts'), db.all('products')]).then(([p, locs, ctc, prods]) => {
-        if (!p) { alert('Ce produit n\'existe plus dans le catalogue.'); b.pid = ''; draw(); change(); return; }
-        productModal(p, locs, ctc, prods, {}, saved => {
+        if (!p) { alertBox('Ce produit n\'existe plus dans le catalogue.'); b.pid = ''; draw(); change(); return; }
+        productModal(p, locs, ctc, prods, {}, async saved => {
           if (!saved) { b.pid = ''; draw(); change(); return; }
-          if (confirm('Reprendre sur cette ligne le nom, l\'unité et le prix de vente de la fiche produit ?')) { b.desig = saved.name; delete b.dhtml; b.unit = saved.unit || b.unit; b.pu = saved.sell || 0; }
+          if ((await confirmBox('Reprendre sur cette ligne le nom, l\'unité et le prix de vente de la fiche produit ?'))) { b.desig = saved.name; delete b.dhtml; b.unit = saved.unit || b.unit; b.pu = saved.sell || 0; }
           draw(); change(); toast('Produit enregistré');
         });
       });
@@ -325,14 +326,14 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
     else if (ev.target.closest('[data-detail]')) {
       readHeader();
       db.get('products', b.pid).then(p => {
-        if (!p || !hasCompo(p)) { alert('Cet ouvrage n\'a plus de composition dans le catalogue.'); return; }
+        if (!p || !hasCompo(p)) { alertBox('Cet ouvrage n\'a plus de composition dans le catalogue.'); return; }
         ouvrageInsertModal(p, { qty: num(b.qty) || 1, mode: 'detail', sell: num(b.pu), title: `Détailler l'ouvrage « ${p.name} »` }, res => applyOuvrage(b.id, res, p));
       });
     }
     else if (ev.target.closest('[data-tb]')) { if (tbOpen.has(b.id)) { tbOpen.delete(b.id); closeTb(row); } else { tbOpen.add(b.id); openTb(row, true); } }
     else if (ev.target.closest('[data-rm]')) { tbOpen.delete(b.id); d.blocks.splice(i, 1); active = null; draw(); change(); }
     else if (ev.target.closest('[data-tpl]')) {
-      const name = prompt('Nom du modèle de texte :'); if (!name) return;
+      const name = (await promptBox('Nom du modèle de texte :')); if (!name) return;
       getS().then(async S => { await db.saveSettings({ ...S, snippets: [...(S.snippets || []), { name: name.trim(), html: sanitize(b.html) }] }); toast('Modèle enregistré'); });
     } else if (ev.target.closest('[data-tg]')) {
       const t = ev.target.closest('[data-tg]').dataset.tg;

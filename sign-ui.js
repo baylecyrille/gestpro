@@ -3,6 +3,7 @@ import { e, eur, F, modal, cname, today, $ } from './util.js';
 import { WHERE } from './retract.js';
 import { docSums } from './vat.js';
 import { isBlank, toPath } from './sign.js';
+import { alertBox } from './dialogs.js';
 
 const nowIso = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${today()}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 
@@ -20,10 +21,10 @@ export function signModal(doc, client, onDone) {
     <div class="row" style="margin:4px 0"><button type="button" class="btn sm" id="sigclr">Effacer</button><span class="sp"></span><span class="muted" id="sigmsg"></span></div>
     <label class="f full"><span><input type="checkbox" name="agree"> Le signataire déclare avoir pris connaissance du devis (travaux, prix, TVA, conditions) et le signe « Bon pour accord ».</span></label>`,
     async o => {
-      if (isBlank(strokes)) { alert('Le client doit signer dans le cadre avant de valider.'); return false; }
-      if (!String(o.signer || '').trim()) { alert('Indiquez le nom du signataire.'); return false; }
-      if (!o.where) { alert('Indiquez où le devis est signé : cela détermine les délais de rétractation et de paiement.'); return false; }
-      if (!o.agree) { alert('Cochez la déclaration du signataire.'); return false; }
+      if (isBlank(strokes)) { alertBox('Le client doit signer dans le cadre avant de valider.'); return false; }
+      if (!String(o.signer || '').trim()) { alertBox('Indiquez le nom du signataire.'); return false; }
+      if (!o.where) { alertBox('Indiquez où le devis est signé : cela détermine les délais de rétractation et de paiement.'); return false; }
+      if (!o.agree) { alertBox('Cochez la déclaration du signataire.'); return false; }
       const path = toPath(strokes);
       await onDone({ path, name: o.signer, where: o.where, place: o.place || '', at: nowIso() });
     },

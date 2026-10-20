@@ -64,6 +64,11 @@ export const TOPICS = {
     intro: `L'accueil résume l'activité et signale ce qui demande une action.`,
     sections: [
       S('Les raccourcis du haut', `<p>Les boutons du haut ouvrent directement le scan de codes-barres, un <b>nouveau dossier</b>, un nouveau devis, une nouvelle facture, un nouveau chantier et la partie Facebook.</p>`),
+      S('Avertissements et confirmations', `<p>Tous les messages d'erreur, avertissements, demandes de confirmation et petites questions (« Supprimer ce chantier ? », « Nom du modèle ? »…) sont des <b>fenêtres de l'application</b> : ni le navigateur ni GitHub n'en affichent aucune. Elles portent le nom de votre application et s'affichent l'une après l'autre, par-dessus ce que vous étiez en train de faire (la fiche ouverte n'est pas perdue).</p>${ul([
+        '<b>OK</b> valide ; <b>Annuler</b> ou la touche <b>Échap</b> renonce',
+        'Dans une fenêtre de saisie, la touche <b>Entrée</b> valide',
+        'Un champ obligatoire ou une valeur impossible dans un formulaire est signalé par une fenêtre qui nomme le champ concerné, puis le curseur se place dessus',
+        'Une adresse inexistante affiche une page « Page introuvable » aux couleurs de GestPro, avec un lien pour revenir à l\'accueil'])}<p class="muted">Seules restent à l'écran du système les fenêtres que le téléphone ou l'ordinateur impose : choix d\'un fichier, impression, autorisation de la caméra ou de la position, partage et installation de l\'appli.</p>`),
       S('Nouveau dossier', `<p>Le bouton <b>+ Nouveau dossier</b> enchaîne en une seule fenêtre ce qu'on fait pour chaque nouvelle affaire :</p>${ul([
         '<b>1 · Client</b> : choisissez un client existant (la recherche filtre la liste), ou saisissez un nouveau client (nom, téléphone, e-mail, adresse). Si une fiche ressemble déjà à ce que vous tapez — même nom écrit autrement, même téléphone, même e-mail —, un bandeau la propose : « Choisir ce client » évite le doublon',
         '<b>2 · Chantier</b> : nom (sinon « Chantier » + nom du client), adresse des travaux (reprise de celle du client), dates prévues. Le chantier est créé au statut « Nouveau »',

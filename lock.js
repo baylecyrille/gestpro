@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const TTL = 6 * 60e3, BEAT = 90e3;
 const rid = id => 'lock_' + id;
@@ -43,8 +44,8 @@ export async function begin(id, { prefix = '', force = false } = {}) {
 export async function withLock(id, open) {
   let r = await begin(id);
   if (r.blocked) {
-    if (!r.canForce) { alert(lockMsg(r.blocked) + '\nRéessayez dans un moment.'); return; }
-    if (!confirm(lockMsg(r.blocked) + '\n\nOuvrir quand même ? (risque d\'écraser ses modifications)')) return;
+    if (!r.canForce) { alertBox(lockMsg(r.blocked) + '\nRéessayez dans un moment.'); return; }
+    if (!(await confirmBox(lockMsg(r.blocked) + '\n\nOuvrir quand même ? (risque d\'écraser ses modifications)'))) return;
     r = await begin(id, { force: true });
   }
   open();

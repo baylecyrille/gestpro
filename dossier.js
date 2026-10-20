@@ -4,6 +4,7 @@ import { e, cname, F, modal, toast, go, addressAutocomplete } from './util.js';
 import { findSimilar } from './clients.js';
 import { simBoxHtml, bindSimilar, dupQuestion } from './clients-ui.js';
 import { pickSiteColor } from './sites.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const addrOf = c => [c.address, [c.zip, c.city].filter(Boolean).join(' ')].filter(Boolean).join('\n');
 const cLabel = c => cname(c) + (c.city ? ' — ' + c.city : '') + (c.zip ? ' (' + c.zip + ')' : '');
@@ -26,9 +27,9 @@ export async function dossierModal() {
   async o => {
     let client = clients.find(c => c.id === o.clientId);
     if (!client) {
-      if (!String(o.name || '').trim()) { alert('Choisissez un client existant ou saisissez le nom du nouveau client.'); return false; }
+      if (!String(o.name || '').trim()) { alertBox('Choisissez un client existant ou saisissez le nom du nouveau client.'); return false; }
       const strong = findSimilar(contacts, o, { kind: 'client' }).filter(x => x.strong);
-      if (strong.length && !confirm(dupQuestion(strong, 'client'))) return false;
+      if (strong.length && !(await confirmBox(dupQuestion(strong, 'client')))) return false;
       client = await db.put('contacts', { kind: 'client', name: o.name.trim(), company: o.company, phone: o.phone, email: o.email, address: o.address, zip: o.zip, city: o.city });
     }
     const name = String(o.siteName || '').trim() || ('Chantier ' + (client.name || cname(client)));

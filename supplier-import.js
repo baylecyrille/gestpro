@@ -9,6 +9,7 @@ import { unitOpts } from './lists.js';
 import { isHike, deltaPct, fmtDelta } from './pricing.js';
 import * as fl from './files.js';
 import { parseEInvoice, pickXml, decodeXml } from './efact-in.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 let pdfReady = null;
 function loadPdfJs() {
@@ -245,7 +246,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
   if (ap) ap.onclick = () => $$('tr[data-i]', out).forEach(tr => { if ($('[data-on]', tr).checked) $('[data-k=dest]', tr).value = $('#spsite', out).value; });
   upd();
   f._go = async () => {
-    if (!doc) { dupOf = await findImported(S, DT, inv).catch(() => null); if (dupOf && !confirm('⚠ ' + dupText(dupOf, DT) + '\n\nL\'importer quand même ?')) return false; }
+    if (!doc) { dupOf = await findImported(S, DT, inv).catch(() => null); if (dupOf && !(await confirmBox('⚠ ' + dupText(dupOf, DT) + '\n\nL\'importer quand même ?'))) return false; }
     const sel = $$('tr[data-i]', out).filter(tr => $('[data-on]', tr).checked).map(tr => {
       const g = k => $(`[data-k=${k}]`, tr).value;
       return { ref: g('ref').trim(), name: g('name').trim(), qty: num(g('qty')), unit: g('unit'), price: num(g('price')), tva: r.items[+tr.dataset.i]?.tva, dest: doc ? '' : g('dest').trim() };
@@ -315,7 +316,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
         for (const [store, rec] of targets) { rec.files = [...(rec.files || []), { ...att }]; await db.put(store, rec); }
         kept = att.pending ? 'PDF en attente d\'envoi' : 'PDF conservé';
         if (!targets.length) kept += ' (non rattaché : cochez le fournisseur)';
-      } catch (err) { alert('PDF non enregistré : ' + (err.message || err)); }
+      } catch (err) { alertBox('PDF non enregistré : ' + (err.message || err)); }
     }
     if (doc) {
       opts.onLines(sel.map(x => ({ type: 'line', pid: x.pid || '', desig: x.name, qty: x.qty || 1, unit: x.unit || 'u', pu: x.sell > 0 ? x.sell : Math.round(x.price * (1 + mg / 100) * 100) / 100 })));

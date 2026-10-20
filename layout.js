@@ -2,6 +2,7 @@
 // Un modèle (tpl) = deux zones (en-tête, pied) de coordonnées en millimètres ; le tableau des lignes s'écoule entre les deux.
 import * as db from './db.js';
 import { e, toast, compressImage, $, $$ } from './util.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 export const MM = 96 / 25.4;           // pixels CSS par millimètre
 export const PAGE_W = 186;             // largeur utile (A4 - 2 × 12 mm)
@@ -254,7 +255,7 @@ export async function openLayoutEditor(o) {
   const act = async a => {
     const it = sel && sel !== ':tbl' ? item(sel) : null;
     if (a === 'close') {
-      if (snapshot() !== start && !confirm('Abandonner les modifications de mise en page ?')) return;
+      if (snapshot() !== start && !(await confirmBox('Abandonner les modifications de mise en page ?'))) return;
       return close();
     }
     if (a === 'save') { await o.onSave(ws); close(); return; }
@@ -262,7 +263,7 @@ export async function openLayoutEditor(o) {
     else if (a === 'redo' && redo.length) { undo.push(snapshot()); restore(redo.pop()); sel = null; await redraw(); showPanel(); }
     else if (a === 'zin') { zoom = Math.min(3, zoom * 1.25); fit(); }
     else if (a === 'zout') { zoom = Math.max(0.4, zoom / 1.25); fit(); }
-    else if (a === 'base') { if (!confirm('Revenir à la mise en page d\'origine de ce modèle ? (vos modifications non enregistrées seront perdues)')) return; push(); const b = JSON.parse(JSON.stringify(o.base())); ws.tpl = normTpl(b.tpl, o.type); ws.zones = b.zones || {}; ws.layout = b.layout || {}; sel = null; await redraw(); showPanel(); }
+    else if (a === 'base') { if (!(await confirmBox('Revenir à la mise en page d\'origine de ce modèle ? (vos modifications non enregistrées seront perdues)'))) return; push(); const b = JSON.parse(JSON.stringify(o.base())); ws.tpl = normTpl(b.tpl, o.type); ws.zones = b.zones || {}; ws.layout = b.layout || {}; sel = null; await redraw(); showPanel(); }
     else if (a === 'add') { menuOpen = !menuOpen; renderMenu(); }
     else if (a === 'txreset' && it && ZK[it.k]) { push(); delete ws.zones[ZK[it.k]]; showPanel(); redraw(); }
     else if (a === 'del' && it) { push(); ws.tpl.items = ws.tpl.items.filter(i => i !== it); sel = null; await redraw(); showPanel(); }
@@ -296,12 +297,12 @@ export async function openLayoutEditor(o) {
       const ratio = await new Promise(res => { const im = new Image(); im.onload = () => res(im.naturalHeight / (im.naturalWidth || 1)); im.onerror = () => res(0.75); im.src = data; });
       if (mode === 'replace') { const it = sel && item(sel); if (it) { push(); it.img = id; await redraw(); } }
       else await addItem('image', mode.split(':')[1] || 'h', { img: id, w: 40, h: r1(40 * (ratio || 0.75)) });
-    } catch (err) { alert(err.message || err); }
+    } catch (err) { alertBox(err.message || err); }
   });
 
   const keyH = ev => {
     if (!ov.isConnected) return document.removeEventListener('keydown', keyH);
-    if (/INPUT|TEXTAREA|SELECT/.test(ev.target.tagName)) return;
+    if (/INPUT|TEXTAREA|SELECT/.test(ev.target.tagName) || ev.target.closest?.('.adlg')) return; // saisie ou fenêtre d'avertissement ouverte : les touches ne touchent pas à la page
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); return act(ev.shiftKey ? 'redo' : 'undo'); }
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') { ev.preventDefault(); return act('redo'); }
     const it = sel && sel !== ':tbl' ? item(sel) : null; if (!it) return;

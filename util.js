@@ -1,5 +1,6 @@
 // Utilitaires partagés : format, formulaires, fenêtres modales, scanner de codes-barres.
 import { CIVS } from './lists.js';
+import { alertBox, confirmBox, checkForm } from './dialogs.js';
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const e = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,24 +41,24 @@ export function F(label, name, val = '', o = {}) {
 export function modal(title, body, onSubmit, o = {}) {
   const d = $('#modal');
   d.className = o.wide ? 'wide' : '';
-  d.innerHTML = `<form method="dialog" class="mform">
+  d.innerHTML = `<form method="dialog" class="mform" novalidate>
     <header><h3>${e(title)}</h3><button type="button" class="x" data-close>✕</button></header>
     <div class="mbody">${body}</div>
     <footer>${o.del ? '<button type="button" class="btn danger" data-del>Supprimer</button>' : ''}<span class="sp"></span>
     <button type="button" class="btn ghost" data-close>${onSubmit ? 'Annuler' : 'Fermer'}</button>
     ${onSubmit ? `<button class="btn primary">${o.submitLabel || 'Enregistrer'}</button>` : ''}</footer></form>`;
   const f = d.querySelector('form');
-  f.addEventListener('click', ev => {
+  f.addEventListener('click', async ev => {
     if (ev.target.closest('[data-close]')) d.close();
-    if (ev.target.closest('[data-del]') && confirm('Supprimer définitivement ?')) { d.close(); o.del(); }
+    if (ev.target.closest('[data-del]') && (await confirmBox('Supprimer définitivement ?'))) { d.close(); o.del(); }
   });
   f.addEventListener('submit', async ev => {
     ev.preventDefault();
-    if (!onSubmit) return;
+    if (!onSubmit || !checkForm(f)) return;
     try {
       const keep = await onSubmit(Object.fromEntries(new FormData(f)), f);
       if (keep !== false) d.close();
-    } catch (err) { alert(err.message || err); }
+    } catch (err) { alertBox(err.message || err); }
   });
   if (o.onOpen) o.onOpen(f, d);
   if (!d.open) d.showModal();
@@ -179,7 +180,7 @@ export async function scan(onCode) {
       <button class="btn sm" data-torch hidden>🔦</button>
       <input type="range" data-zoom hidden title="Zoom"></div>
     <div class="sbar"><input data-code placeholder="ou saisir / douchette…" inputmode="text" autocomplete="off"><button class="btn primary" data-ok>OK</button><button class="btn" data-x>Fermer</button></div>`;
-  (document.querySelector('dialog[open]') || document.body).append(ov); // dans la fenêtre ouverte, sinon elle masquerait le scanner
+  (document.querySelector('dialog[open]:not(.adlg)') || document.body).append(ov); // dans la fenêtre ouverte, sinon elle masquerait le scanner
   let stream, stopped = false, reader, caps = {}, torchOn = false, detectorStarted = false;
   const video = $('video', ov), hint = $('.hint', ov), sel = $('[data-cam]', ov);
   const stopStream = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };

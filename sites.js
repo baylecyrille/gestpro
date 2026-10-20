@@ -11,6 +11,7 @@ import * as fl from './files.js';
 import { getS } from './defaults.js';
 import { nextSteps } from './nextstep.js';
 import { estimateMargin, siteCompare, siteNeeds, reservations, stockOf } from './plan.js';
+import { alertBox, confirmBox, promptBox } from './dialogs.js';
 
 /* Compagnon / intervenant : seuls les chantiers où il est affecté */
 const onlyMine = () => auth.can('planning') && !auth.can('planning.all');
@@ -219,7 +220,7 @@ export async function renderSite(el, id) {
   $('#shbtn', el)?.addEventListener('click', async () => {
     const url = mapsDir(site.address), data = { title: site.name, text: `${site.name} – ${addr1}`, url };
     try { if (navigator.share) { await navigator.share(data); return; } } catch (err) { if (err && err.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(`${data.text}\n${url}`); toast('Adresse et lien d\'itinéraire copiés'); } catch { prompt('Copiez ce lien :', url); }
+    try { await navigator.clipboard.writeText(`${data.text}\n${url}`); toast('Adresse et lien d\'itinéraire copiés'); } catch { (await promptBox('Copiez ce lien :', url)); }
   });
   $('#prog', el)?.addEventListener('input', ev => { $('#pv', el).textContent = ev.target.value + ' %'; });
   $('#prog', el)?.addEventListener('change', async ev => { site.progress = +ev.target.value; await db.put('sites', site); refresh(); });
@@ -228,7 +229,7 @@ export async function renderSite(el, id) {
   $('#nsfinish', el)?.addEventListener('click', () => $('#finish', el)?.click());
   $$('#nextstep [data-rel]', el).forEach(b => b.addEventListener('click', () => import('./docmail.js').then(m => m.relanceModal(b.dataset.rel, () => refresh()))));
   $$('[data-mem]', el).forEach(n => n.onclick = () => go('#/planning/week'));
-  $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Supprimer cette charge ?')) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
+  $$('[data-chrm]', el).forEach(b => b.onclick = async () => { if (!(await confirmBox('Supprimer cette charge ?'))) return; site.charges.splice(+b.dataset.chrm, 1); await db.put('sites', site); refresh(); });
   $('#addch', el)?.addEventListener('click', () => chargeModal(site, prods));
   { const S0 = await getS(), rich = auth.can('sites.money');
     fl.filesCard({ host: $('#sfiles', el), title: 'Photos & fichiers', canEdit: canEdit || auth.can('sites'), px: S0.photoPx || 2560, kinds: rich ? ['photos', 'autres', 'devis', 'factures', 'achats'] : ['photos', 'autres'],
@@ -237,12 +238,12 @@ export async function renderSite(el, id) {
       remove: async a => { site.files = (site.files || []).filter(x => x.id !== a.id); await db.put('sites', site); } }); }
   $('#lnkadd', el)?.addEventListener('click', () => linkModal(site, -1));
   $$('[data-lnkedit]', el).forEach(b => b.onclick = () => linkModal(site, +b.dataset.lnkedit));
-  $$('[data-lnkrm]', el).forEach(b => b.onclick = async () => { if (!confirm('Retirer ce lien ?')) return; site.links.splice(+b.dataset.lnkrm, 1); await db.put('sites', site); refresh(); });
+  $$('[data-lnkrm]', el).forEach(b => b.onclick = async () => { if (!(await confirmBox('Retirer ce lien ?'))) return; site.links.splice(+b.dataset.lnkrm, 1); await db.put('sites', site); refresh(); });
   if (!canEdit) return;
   $('#edit', el).onclick = () => lock.withLock(site.id, () => siteModal(site, clients, false, { moes: contacts.filter(c => c.kind === 'moe') }));
   $('#finish', el).onclick = async () => {
     const closed = site.status === 'paid' || site.status === 'lost';
-    if (!closed && st.resteAPayer > 0.005 && !confirm(`Il reste ${eur(st.resteAPayer)} à encaisser sur ce chantier. Le terminer quand même ?`)) return;
+    if (!closed && st.resteAPayer > 0.005 && !(await confirmBox(`Il reste ${eur(st.resteAPayer)} à encaisser sur ce chantier. Le terminer quand même ?`))) return;
     site.status = closed ? (mine.some(d => d.type === 'invoice') ? 'progress' : 'signed') : 'paid';
     if (!closed && !site.end) site.end = today();
     await db.put('sites', site); toast(closed ? 'Chantier rouvert' : 'Chantier terminé'); refresh();
@@ -252,8 +253,8 @@ export async function renderSite(el, id) {
     const hasHours = times.some(x => x.kind === 'site' && x.siteId === site.id) || Object.values(doneBySite(site.id, tasks, times)).some(h => h > 0);
     const used = [mine.length && `${mine.length} document${mine.length > 1 ? 's' : ''} (devis, factures, avoirs)`, (site.charges || []).length && `${site.charges.length} charge${site.charges.length > 1 ? 's' : ''} ou achat${site.charges.length > 1 ? 's' : ''}`,
       moves.some(m => m.siteId === site.id) && 'du matériel sorti du stock', hasHours && 'des heures saisies'].filter(Boolean);
-    if (used.length) { alert(`Ce chantier ne peut pas être supprimé : il comporte ${used.join(', ')}.\n\nTerminez-le (« ✓ Terminer le chantier ») ou passez-le en « Perdu » via « Modifier » : il sort des chantiers en cours sans rien perdre.`); return; }
-    if (!confirm('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien) ; le planning de ce chantier est supprimé.')) return;
+    if (used.length) { alertBox(`Ce chantier ne peut pas être supprimé : il comporte ${used.join(', ')}.\n\nTerminez-le (« ✓ Terminer le chantier ») ou passez-le en « Perdu » via « Modifier » : il sort des chantiers en cours sans rien perdre.`); return; }
+    if (!(await confirmBox('Supprimer ce chantier ? Les devis et factures sont conservés (ils perdent seulement le lien) ; le planning de ce chantier est supprimé.'))) return;
     for (const d of mine) { d.siteId = ''; await db.put('documents', d); }
     for (const t of tasks.filter(x => x.siteId === site.id)) await db.del('tasks', t.id);
     await db.del('sites', site.id); go('#/sites');

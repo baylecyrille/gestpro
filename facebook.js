@@ -2,6 +2,7 @@
 import * as db from './db.js';
 import { getS } from './defaults.js';
 import { e, eur, num, dateFr, today, F, modal, closeModal, toast, tabs, refresh, shrinkImage, $, $$ } from './util.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const TEMPLATES = {
   'Réalisation': "✅ Chantier terminé !\n\n{{produit}} réalisé pour un client à {{lieu}}.\nFabrication et pose par nos soins, finitions soignées.\n\n📞 Un projet ? Contactez-nous pour un devis gratuit.",
@@ -79,12 +80,12 @@ async function postTab(body, S, editId) {
     post.image = await shrinkImage(file, 1400);
     $('#prev', body).src = post.image; $('#prev', body).style.display = ''; $('#imgname', body).textContent = file.name;
   };
-  const warnLeft = () => /\{\{/.test(txt.value) && !confirm('Des champs {{…}} ne sont pas remplis. Continuer quand même ?');
+  const warnLeft = async () => /\{\{/.test(txt.value) && !(await confirmBox('Des champs {{…}} ne sont pas remplis. Continuer quand même ?'));
   const imgFile = async () => post.image ? new File([await (await fetch(post.image)).blob()], 'photo.png', { type: 'image/png' }) : null;
   $('#copy', body).onclick = async () => { await navigator.clipboard.writeText(txt.value); toast('Texte copié'); };
   $('#open', body).onclick = async () => { try { await navigator.clipboard.writeText(txt.value); toast('Texte copié – collez-le dans Facebook'); } catch { /* ignore */ } window.open(S.fbPage || 'https://www.facebook.com/', '_blank'); };
   $('#share', body).onclick = async () => {
-    if (warnLeft()) return;
+    if (await warnLeft()) return;
     const f = await imgFile();
     const data = { text: txt.value, ...(f && navigator.canShare?.({ files: [f] }) ? { files: [f] } : {}) };
     if (navigator.share) { try { await navigator.share(data); } catch { /* annulé */ } }
@@ -98,7 +99,7 @@ async function postTab(body, S, editId) {
   $('#done', body).onclick = async () => { await persist('published'); post.published = today(); await db.put('fbposts', post); toast('Marqué publié'); location.hash = '#/facebook/calendar'; };
   $('#api', body).onclick = async () => {
     if (!txt.value.trim()) return toast('Texte vide');
-    if (warnLeft() || !confirm('Publier maintenant sur la page Facebook ?')) return;
+    if ((await warnLeft()) || !(await confirmBox('Publier maintenant sur la page Facebook ?'))) return;
     try {
       let r;
       if (post.image) {
@@ -112,7 +113,7 @@ async function postTab(body, S, editId) {
       if (j.error) throw new Error(j.error.message);
       await persist('published'); post.published = today(); post.fbId = j.post_id || j.id; await db.put('fbposts', post);
       toast('Publié sur Facebook ✔'); location.hash = '#/facebook/calendar';
-    } catch (err) { alert('Échec de la publication : ' + err.message); }
+    } catch (err) { alertBox('Échec de la publication : ' + err.message); }
   };
 }
 
@@ -167,7 +168,7 @@ async function statsTab(body, S) {
       const r = await fetch(`https://graph.facebook.com/v21.0/${S.fbId}?fields=followers_count,fan_count&access_token=${encodeURIComponent(S.fbToken)}`);
       const j = await r.json(); if (j.error) throw new Error(j.error.message);
       entry({ followers: j.followers_count ?? j.fan_count, reach: last?.reach, engage: last?.engage });
-    } catch (err) { alert('Échec : ' + err.message); }
+    } catch (err) { alertBox('Échec : ' + err.message); }
   });
 }
 

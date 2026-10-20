@@ -4,6 +4,7 @@ import { e, toast, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import { LIST_DEFS, LIST_ORDER, fullList, checkList, isCustom, applyLists } from './lists.js';
 import { LIM_FIELDS, LIM_DEFAULTS, checkLimits, applyLimits } from './limits.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const lineArr = d => (Array.isArray(d.blocks) ? d.blocks : Array.isArray(d.lines) ? d.lines : []);
 const inc = (m, k) => { if (k !== undefined && k !== null && k !== '') m.set(k, (m.get(k) || 0) + 1); };
@@ -70,7 +71,7 @@ export async function mountLists(host) {
     return out;
   };
   const redraw = (k, open) => { const sec = $(`details[data-k="${k}"]`, host); sec.outerHTML = secHtml(k, open === undefined ? sec.open : open); };
-  host.addEventListener('click', ev => {
+  host.addEventListener('click', async ev => {
     const sec = ev.target.closest('details.lst'); if (!sec) return;
     const k = sec.dataset.k, def = LIST_DEFS[k], row = ev.target.closest('.lr2'), i = row ? +row.dataset.i : -1;
     const b = ev.target.closest('button'); if (!b) return;
@@ -79,7 +80,7 @@ export async function mountLists(host) {
       work[k].push(def.kind === 'id' ? { v: rid(), label: '' } : def.kind === 'cat' ? { v: '', icon: '🏷', svc: false } : { v: '' });
       redraw(k); const rows = $$('.lr2 .lr2-v', $(`details[data-k="${k}"]`, host)); rows[rows.length - 1]?.focus(); return;
     }
-    if (b.hasAttribute('data-reset')) { if (!confirm(`Revenir à la liste d'origine « ${def.title} » ? Vos ajouts, renommages et masquages de cette liste seront perdus (les fiches déjà enregistrées ne changent pas).`)) return; work[k] = fullList(k, null); redraw(k); return; }
+    if (b.hasAttribute('data-reset')) { if (!(await confirmBox(`Revenir à la liste d'origine « ${def.title} » ? Vos ajouts, renommages et masquages de cette liste seront perdus (les fiches déjà enregistrées ne changent pas).`))) return; work[k] = fullList(k, null); redraw(k); return; }
     if (i < 0) return;
     work[k] = read(k);
     if (b.hasAttribute('data-up') && i > 0) { [work[k][i - 1], work[k][i]] = [work[k][i], work[k][i - 1]]; redraw(k); }
@@ -92,7 +93,7 @@ export async function mountLists(host) {
     for (const k of LIST_ORDER) {
       const items = read(k).filter(x => String(LIST_DEFS[k].kind === 'id' ? x.label : x.v).trim() !== ''); // les lignes laissées vides sont ignorées
       const r = checkList(k, items);
-      if (r.error) { $(`details[data-k="${k}"]`, host).open = true; alert(r.error); return; }
+      if (r.error) { $(`details[data-k="${k}"]`, host).open = true; alertBox(r.error); return; }
       work[k] = r.items;
       if (isCustom(k, r.items)) lists[k] = r.items;
     }
@@ -113,7 +114,7 @@ export async function mountLimits(host) {
     <div class="row zshow"><button type="button" class="btn primary" id="limsave" data-zsubmit>Enregistrer les seuils</button><button type="button" class="btn" id="limreset">Valeurs d'origine</button><span class="muted" id="limmsg"></span></div>`;
   const val = () => Object.fromEntries(LIM_FIELDS.map(f => [f[0], $(`[name=${f[0]}]`, host).value]));
   $('#limsave', host).onclick = async () => {
-    const r = checkLimits(val()); if (r.error) { alert(r.error); return; }
+    const r = checkLimits(val()); if (r.error) { alertBox(r.error); return; }
     const cur = await getS(), next = { ...cur }; if (Object.keys(r.limits).length) next.limits = r.limits; else delete next.limits;
     await db.saveSettings(next); applyLimits(next);
     $('#limmsg', host).textContent = 'Enregistré ✔'; toast('Seuils et délais enregistrés');

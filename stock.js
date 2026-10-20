@@ -12,6 +12,7 @@ import { labelsModal } from './labels.js';
 import { internalCode } from './barcode.js';
 import { UNITS, CATS, CAT_NAMES, catIcon, unitOpts, catOpts as catPick } from './lists.js';
 import { LIM } from './limits.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -187,7 +188,7 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     if (isNew && num(o.initQty) > 0) await recordMove(saved, { type: 'in', to: o.initLoc, qty: num(o.initQty), note: 'Stock initial' });
     if (onDone) onDone(saved); else refresh();
   }, {
-    del: isNew ? null : async () => { if (total(p) !== 0 && !confirm(`Ce produit a encore ${total(p)} ${p.unit || ''} en stock. Le supprimer quand même ?`)) return; await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
+    del: isNew ? null : async () => { if (total(p) !== 0 && !(await confirmBox(`Ce produit a encore ${total(p)} ${p.unit || ''} en stock. Le supprimer quand même ?`))) return; await db.del('products', p.id); if (onDone) onDone(null); else refresh(); },
     onOpen: f => {
       compoReady = bindCompo(f, p, products);
       const showPhoto = data => {
@@ -204,18 +205,18 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
           if (data.length > 45000) throw new Error('Photo trop détaillée : essayez une autre prise de vue.');
           newPhoto = data; showPhoto(data);
           $('#pinfo', f).textContent = `${Math.round(file.size / 1024)} Ko → ${Math.round(data.length * 0.75 / 1024)} Ko après compression`;
-        } catch (err) { alert(err.message); }
+        } catch (err) { alertBox(err.message); }
       };
       $('#pdel', f).onclick = () => { newPhoto = ''; showPhoto(''); $('#pinfo', f).textContent = 'Photo retirée à l\'enregistrement'; };
       f.querySelector('[data-scan]').onclick = () => scan(c => { f.elements.barcode.value = c; });
-      f.querySelector('[data-gen]').onclick = () => {
+      f.querySelector('[data-gen]').onclick = async () => {
         const cur = f.elements.barcode.value.trim();
-        if (cur && !confirm(`Remplacer le code « ${cur} » par un nouveau code interne ?`)) return;
+        if (cur && !(await confirmBox(`Remplacer le code « ${cur} » par un nouveau code interne ?`))) return;
         f.elements.barcode.value = internalCode(products.filter(x => x.id !== p.id).map(x => x.barcode));
       };
       const lb = f.querySelector('[data-lbl]');
       if (lb) lb.onclick = () => {
-        if (f.elements.barcode.value.trim() !== String(p.barcode || '').trim()) return alert('Le code-barres a été modifié : enregistrez d\'abord le produit, puis imprimez les étiquettes.');
+        if (f.elements.barcode.value.trim() !== String(p.barcode || '').trim()) return alertBox('Le code-barres a été modifié : enregistrez d\'abord le produit, puis imprimez les étiquettes.');
         closeModal(); labelsModal(products.filter(isStocked), { preset: [{ id: p.id, qty: 1 }] });
       };
       f.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => { closeModal(); moveModal(products, locs, { product: p.id, type: b.dataset.mv }); });
@@ -227,10 +228,10 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
 export function lookupScan() {
   return new Promise(async resolve => {
     const [products, locs, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('contacts')]);
-    scan(code => {
+    scan(async code => {
       const p = products.find(x => x.barcode === code || x.ref === code);
       if (p) productModal(p, locs, contacts, products);
-      else if (confirm(`Code ${code} inconnu. Créer un produit ?`)) productModal(null, locs, contacts, products, { barcode: code });
+      else if ((await confirmBox(`Code ${code} inconnu. Créer un produit ?`))) productModal(null, locs, contacts, products, { barcode: code });
       resolve();
     });
     setTimeout(resolve, 0);
@@ -262,7 +263,7 @@ export async function moveModal(products, locs, preset = {}) {
   const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const lopt = locs.map(l => [l.id, locLabel(l)]);
   const popt = products.filter(p => isStocked(p) || p.id === preset.product).sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(p => [p.id, `${p.name}${p.ref ? ' (' + p.ref + ')' : ''}`]);
-  if (!popt.length) return alert('Créez d\'abord un produit.');
+  if (!popt.length) return alertBox('Créez d\'abord un produit.');
   const body = `<label class="f"><span>Produit</span><div style="display:flex;gap:6px"><select name="productId">${popt.map(([v, l]) => `<option value="${v}" ${v === preset.product ? 'selected' : ''}>${e(l)}</option>`).join('')}</select><button type="button" class="btn" data-scan>▦</button></div></label>
   ${F('Type', 'type', preset.type || 'in', { type: 'select', options: [['in', 'Entrée (réception)'], ['out', 'Sortie'], ['transfer', 'Transfert entre emplacements'], ['adjust', 'Inventaire (fixer la quantité)']] })}
   ${F('Quantité', 'qty', '', { type: 'number', step: 'any', req: true })}
@@ -321,7 +322,7 @@ function locationsTab(body, products, locs) {
     modal(isNew ? 'Nouvel emplacement' : 'Emplacement', F('Zone', 'zone', l.zone, { req: true, ph: 'Atelier, Dépôt, Camion…' }) + F('Lieu précis', 'place', l.place, { req: true, ph: 'Rack A – étagère 2' }) + F('Note', 'note', l.note),
       async o => { Object.assign(l, o); await db.put('locations', l); refresh(); },
       { del: isNew ? null : async () => {
-        if (products.some(p => (p.stock?.[l.id] || 0) > 0)) return alert('Cet emplacement contient du stock : transférez-le d\'abord.');
+        if (products.some(p => (p.stock?.[l.id] || 0) > 0)) return alertBox('Cet emplacement contient du stock : transférez-le d\'abord.');
         await db.del('locations', l.id); refresh(); } });
   };
   $('#nl', body).onclick = () => edit();
@@ -495,7 +496,7 @@ export function importModal(products) {
             rows = [];
             wb.SheetNames.forEach(n => rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })));
           } else rows = parseCSV(await readFileText(file));
-        } catch (err) { return alert(err.message); }
+        } catch (err) { return alertBox(err.message); }
         rows = rows.filter(r => r.some(c => String(c).trim() !== ''));
         const hi = Math.max(0, rows.slice(0, 40).findIndex(r => r.some(c => /d[ée]signation|libell|produit|article/i.test(String(c)))));
         const header = rows[hi].map(String);
@@ -579,7 +580,7 @@ export function lineEditor(f, products, lines, { price = false, hint = true } = 
 /* opts (réception d'une commande fournisseur) : { lines: [{ pid, qty, price }] préremplies, bl: texte du bon, title, onReceived(items, bl) appelé après le rangement en stock } */
 export async function receptionModal(products, locs, opts = {}) {
   products = products.filter(isStocked); // la main d'œuvre, la sous-traitance et les ouvrages ne se stockent pas
-  if (!products.length) return alert('Créez d\'abord des produits (ou importez-les).');
+  if (!products.length) return alertBox('Créez d\'abord des produits (ou importez-les).');
   const lines = (opts.lines || []).map(l => ({ ...l }));
   const lopt = locs.map(l => [l.id, locLabel(l)]);
   modal(opts.title || '📦 Réception de colis',
@@ -591,7 +592,7 @@ export async function receptionModal(products, locs, opts = {}) {
     <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible). À la validation, le prix d'achat de la fiche passe au <b>prix moyen</b> du stock en place et de la quantité reçue ; une hausse de ${String(LIM.hikePct).replace('.', ',')} % ou plus est signalée.</p>`,
     async o => {
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
-      if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
+      if (!ok.length) { alertBox('Ajoutez au moins une ligne avec une quantité.'); return false; }
       const hikes = [], got = [];
       for (const l of ok) {
         const p = products.find(x => x.id === l.pid), before = num(p.buy), price = l.price === '' || l.price === undefined ? before : num(l.price);
@@ -609,7 +610,7 @@ export async function siteOutModal(products, locs, preset = {}) {
   products = products.filter(isStocked);
   const sites = (await db.all('sites')).filter(s => !['paid', 'lost'].includes(s.status)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   if (!sites.length) { toast('Créez d\'abord un chantier'); return go('#/sites'); }
-  if (!products.length) return alert('Aucun produit en stock.');
+  if (!products.length) return alertBox('Aucun produit en stock.');
   const [docs, moves] = await Promise.all([db.all('documents'), db.all('moves')]);
   const lines = [];
   modal('🏗 Sortie pour un chantier',
@@ -620,11 +621,11 @@ export async function siteOutModal(products, locs, preset = {}) {
     <p class="muted">La sortie est prélevée automatiquement sur les emplacements les mieux fournis.</p>`,
     async (o, f) => {
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
-      if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
+      if (!ok.length) { alertBox('Ajoutez au moins une ligne avec une quantité.'); return false; }
       const need = {}; ok.forEach(l => (need[l.pid] = (need[l.pid] || 0) + num(l.qty)));
       for (const [pid, q] of Object.entries(need)) {
         const p = products.find(x => x.id === pid);
-        if (total(p) < q - 1e-9) { alert(`Stock insuffisant pour « ${p.name} » : ${total(p)} en stock, ${q} demandé(s).`); return false; }
+        if (total(p) < q - 1e-9) { alertBox(`Stock insuffisant pour « ${p.name} » : ${total(p)} en stock, ${q} demandé(s).`); return false; }
       }
       const sname = sites.find(s => s.id === o.siteId)?.name || '';
       let n = 0;

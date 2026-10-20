@@ -1,6 +1,7 @@
 // Réglages protégés par zones : chaque carte est verrouillée (lecture seule) tant qu'on n'a pas touché « Modifier ».
 // Une seule zone est modifiable à la fois ; « Enregistrer » enregistre la zone et la reverrouille, « Annuler » abandonne les saisies.
 import { e, $, $$ } from './util.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const BTNS = '<button type="button" class="btn sm" data-zcancel>Annuler</button><button type="button" class="btn sm primary" data-zsave>Enregistrer</button>';
 
@@ -43,16 +44,16 @@ export function mountZones(root, opts = {}) {
   const title = z => z.dataset.t || 'cette zone';
 
   $$('.zone', root).forEach(z => {
-    z.addEventListener('click', ev => {
+    z.addEventListener('click', async ev => {
       const b = ev.target.closest('button'); if (!b || !z.contains(b)) return;
       if (b.hasAttribute('data-zedit')) {
         if (cur && cur.z !== z) {
-          if (isDirty(cur)) { alert(`Les modifications de « ${title(cur.z)} » ne sont pas enregistrées : enregistrez-les ou annulez-les avant de modifier une autre zone.`); return; }
+          if (isDirty(cur)) { alertBox(`Les modifications de « ${title(cur.z)} » ne sont pas enregistrées : enregistrez-les ou annulez-les avant de modifier une autre zone.`); return; }
           lock(cur.z);
         }
         unlock(z);
       } else if (b.hasAttribute('data-zcancel')) {
-        if (isDirty(cur) && !confirm(`Abandonner les modifications de « ${title(z)} » ?`)) return;
+        if (isDirty(cur) && !(await confirmBox(`Abandonner les modifications de « ${title(z)} » ?`))) return;
         if (opts.rerender) opts.rerender(); else lock(z);
       } else if (b.hasAttribute('data-zsave')) {
         // zone à champs : on soumet le formulaire ; zone à enregistrement propre : on touche son bouton d'enregistrement

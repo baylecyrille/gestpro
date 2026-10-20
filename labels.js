@@ -3,6 +3,7 @@
 import * as db from './db.js';
 import { e, num, modal, toast, F, refresh, $ } from './util.js';
 import * as BC from './barcode.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 /* Planches courantes (A4, étiquettes rectangulaires). Dimensions en mm : w × h = étiquette, top / left = marges de la planche,
    gx / gy = espaces entre étiquettes. À vérifier par un essai sur papier ordinaire avant d'imprimer sur les étiquettes. */
@@ -105,9 +106,9 @@ export function labelsModal(products, { preset = [] } = {}) {
     <p id="lsum" class="muted" style="margin-bottom:4px"></p><div id="lprev" class="lprev"></div>`,
     async o => {
       const sel = products.filter(p => (qty.get(p.id) || 0) > 0);
-      if (!sel.length) { alert('Indiquez le nombre d\'étiquettes d\'au moins un produit.'); return false; }
+      if (!sel.length) { alertBox('Indiquez le nombre d\'étiquettes d\'au moins un produit.'); return false; }
       const s = sheetOf(o); const err = sheetError(s);
-      if (err) { alert(err); return false; }
+      if (err) { alertBox(err); return false; }
       const used = new Set(products.map(p => String(p.barcode || '').trim()).filter(Boolean));
       const skipped = [], made = [], items = [];
       for (const p of sel) {
@@ -121,8 +122,8 @@ export function labelsModal(products, { preset = [] } = {}) {
         if (r.error) { skipped.push(`${p.name} (${r.error === 'pas de code-barres' ? 'pas de code-barres' : r.error})`); continue; }
         for (let i = 0; i < q; i++) items.push(r.item);
       }
-      if (skipped.length && !confirm(`${skipped.length} produit(s) ne seront pas imprimés :\n${skipped.slice(0, 6).join('\n')}${skipped.length > 6 ? '\n…' : ''}\n\nImprimer les autres ?`)) return false;
-      if (!items.length) { alert('Aucune étiquette à imprimer.'); return false; }
+      if (skipped.length && !(await confirmBox(`${skipped.length} produit(s) ne seront pas imprimés :\n${skipped.slice(0, 6).join('\n')}${skipped.length > 6 ? '\n…' : ''}\n\nImprimer les autres ?`))) return false;
+      if (!items.length) { alertBox('Aucune étiquette à imprimer.'); return false; }
       for (const { p, code } of made) await db.put('products', { ...p, barcode: code });
       keep({ sheet: s.id, ...(s.id === 'custom' ? { cols: s.cols, rows: s.rows, w: s.w, h: s.h, top: s.top, left: s.left, gx: s.gx, gy: s.gy } : {}), gen: !!o.gen, price: !!o.price });
       $('#printarea').innerHTML = labelsPrintHtml(items, s, { start: o.start, contour: !!o.contour });

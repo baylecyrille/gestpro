@@ -5,6 +5,7 @@ import { getS, logoSrc } from './defaults.js';
 import { total, lineEditor, receptionModal } from './stock.js';
 import { reservations, isStocked } from './plan.js';
 import * as O from './orders.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const qtyTxt = q => String(Math.round(num(q) * 1000) / 1000).replace('.', ',');
 const chipOf = o => ({ draft: '', sent: 'warn', partial: 'warn', received: 'ok', cancelled: '' })[o.status] || '';
@@ -110,10 +111,10 @@ export function orderModal(o, ctx) {
         f.addEventListener('click', async ev => {
           const b = ev.target.closest('[data-oact]'); if (!b) return;
           const act = b.dataset.oact, v = Object.fromEntries(new FormData(f));
-          if (act === 'cancel' && !confirm(`Annuler la commande ${o.number || ''} ? Elle ne sera plus attendue.`)) return;
-          if (act === 'close' && !confirm('Solder la commande ? Les quantités non reçues ne sont plus attendues.')) return;
+          if (act === 'cancel' && !(await confirmBox(`Annuler la commande ${o.number || ''} ? Elle ne sera plus attendue.`))) return;
+          if (act === 'close' && !(await confirmBox('Solder la commande ? Les quantités non reçues ne sont plus attendues.'))) return;
           const status = act === 'sent' ? 'sent' : act === 'cancel' ? 'cancelled' : act === 'close' ? 'received' : o.status;
-          if (act === 'sent' && !v.supplierId) { alert('Choisissez d\'abord le fournisseur.'); return; }
+          if (act === 'sent' && !v.supplierId) { alertBox('Choisissez d\'abord le fournisseur.'); return; }
           const rec = await persist(v, f, status, act === 'sent');
           if (!rec) return;
           closeModal(); refresh();
@@ -128,8 +129,8 @@ export function orderModal(o, ctx) {
   /* enregistre les champs du formulaire (et les lignes) ; renvoie la commande enregistrée ou null (message affiché) */
   async function persist(v, f, status, markSent = false) {
     const chk = editable ? O.checkLines(lines) : { lines: o.lines, error: '' };
-    if (chk.error) { alert(chk.error); return null; }
-    if (!v.date) { alert('Indiquez la date de la commande.'); return null; }
+    if (chk.error) { alertBox(chk.error); return null; }
+    if (!v.date) { alertBox('Indiquez la date de la commande.'); return null; }
     const date = v.date, cur = isNew ? null : await db.get('orders', o.id);
     const rec = { ...(cur || o), supplierId: v.supplierId || '', date, expected: v.expected || '', siteId: v.siteId || '', note: String(v.note || '').trim(), lines: chk.lines, status: status || o.status };
     if (markSent && !rec.sentAt) rec.sentAt = today();

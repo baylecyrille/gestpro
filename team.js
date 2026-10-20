@@ -8,6 +8,7 @@ import { CONTRACTS, ROLES, ROLE_LABEL, HABS, ABS_TYPES, roleOpts, contractOpts, 
 import { LIM } from './limits.js';
 import { absOn, absentDays } from './absence.js';
 import { absenceModal } from './absence-ui.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 export { CONTRACTS, ROLES }; // listes modifiables : Réglages › Listes de choix (lists.js)
 const ROLE = ROLE_LABEL;
@@ -80,11 +81,11 @@ export function memberModal(m) {
     ${F('Note', 'note', m.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>`,
     async (o, f) => {
       const pin = (o.pin || '').trim(); delete o.pin;
-      if (o.access && !m.pinHash && !pin) { alert('Définissez un code PIN pour donner un accès à ce membre.'); return false; }
-      if (pin && !/^\d{4,6}$/.test(pin)) { alert('Le code PIN doit comporter 4 à 6 chiffres.'); return false; }
+      if (o.access && !m.pinHash && !pin) { alertBox('Définissez un code PIN pour donner un accès à ce membre.'); return false; }
+      if (pin && !/^\d{4,6}$/.test(pin)) { alertBox('Le code PIN doit comporter 4 à 6 chiffres.'); return false; }
       m.id = m.id || db.uid();
       const others = (await db.all('members')).filter(x => x.id !== m.id);
-      if (auth.isActive() && !others.some(x => x.access === 'admin' && x.pinHash && x.active !== false) && !(o.access === 'admin' && o.active !== '0')) { alert('Il doit rester au moins un administrateur actif avec un code PIN.'); return false; }
+      if (auth.isActive() && !others.some(x => x.access === 'admin' && x.pinHash && x.active !== false) && !(o.access === 'admin' && o.active !== '0')) { alertBox('Il doit rester au moins un administrateur actif avec un code PIN.'); return false; }
       const firstAdmin = !auth.isActive() && o.access === 'admin';
       if (o.access && pin) m.pinHash = await auth.hashPin(pin, m.id);
       if (!o.access) delete m.pinHash;
@@ -96,15 +97,15 @@ export function memberModal(m) {
     },
     {
       del: isNew ? null : async () => {
-        if (auth.isActive() && m.access === 'admin' && !(await db.all('members')).some(x => x.id !== m.id && x.access === 'admin' && x.pinHash && x.active !== false)) { alert('Impossible : c\'est le seul administrateur.'); return; }
+        if (auth.isActive() && m.access === 'admin' && !(await db.all('members')).some(x => x.id !== m.id && x.access === 'admin' && x.pinHash && x.active !== false)) { alertBox('Impossible : c\'est le seul administrateur.'); return; }
         const tasks = await db.all('tasks');
-        if (tasks.some(t => t.memberId === m.id)) { m.active = false; await db.put('members', m); alert('Ce membre a des affectations : il est passé en « inactif » au lieu d\'être supprimé.'); }
+        if (tasks.some(t => t.memberId === m.id)) { m.active = false; await db.put('members', m); alertBox('Ce membre a des affectations : il est passé en « inactif » au lieu d\'être supprimé.'); }
         else await db.del('members', m.id);
         refresh();
       },
       onOpen: f => {
         bindColors(f);
-        $('#mphoto', f).onchange = async ev => { const file = ev.target.files[0]; if (!file) return; try { photo = await compressImage(file, { mode: 'photo', maxChars: 6000 }); $('#mav', f).innerHTML = avatar(); } catch (err) { alert(err.message); } };
+        $('#mphoto', f).onchange = async ev => { const file = ev.target.files[0]; if (!file) return; try { photo = await compressImage(file, { mode: 'photo', maxChars: 6000 }); $('#mav', f).innerHTML = avatar(); } catch (err) { alertBox(err.message); } };
         $('#mphdel', f).onclick = () => { photo = ''; $('#mav', f).innerHTML = avatar(); };
         const ad = () => { const k = f.querySelector('[name=access]').value; $('#accdesc', f).textContent = k ? auth.PROFILES[k].desc : 'Ce membre n\'a pas d\'accès : il apparaît seulement dans le planning.'; };
         f.querySelector('[name=access]').onchange = ad; ad();
@@ -139,14 +140,14 @@ export async function assignModal(t, preset = {}) {
     ${moes.length ? `<label class="f full"><span>Intervenant extérieur présent (architecte, maître d'œuvre…) — facultatif</span><select name="extId"><option value="">— aucun —</option>${moes.map(c => `<option value="${c.id}" ${c.id === t.extId ? 'selected' : ''}>${e(c.name)}${c.fonction ? ' (' + e(c.fonction) + ')' : ''}</option>`).join('')}</select></label>` : ''}
     <p class="muted full" id="calc"></p></div>`,
     async (o, f) => {
-      if (o.end < o.start) { alert('La date de fin est avant la date de début.'); return false; }
+      if (o.end < o.start) { alertBox('La date de fin est avant la date de début.'); return false; }
       /* l'ancien total « réalisées » compte dans le mois du début : s'il est clôturé, on n'y touche plus */
       const hadDone = !isNew && t.done !== '' && t.done != null, doneNow = o.done === '' ? '' : num(o.done);
       const lockedMonth = [!isNew ? t.start : '', o.start].find(d => d && H.isClosedDate(closed, d));
-      if (lockedMonth && ((hadDone && (o.start.slice(0, 7) !== t.start.slice(0, 7) || doneNow !== num(t.done))) || (!hadDone && doneNow !== ''))) { alert(`Les heures de ${monthName(lockedMonth)} sont clôturées : le total « réalisées » ne peut plus être modifié. Rouvrez le mois dans Planning › Heures si besoin.`); return false; }
+      if (lockedMonth && ((hadDone && (o.start.slice(0, 7) !== t.start.slice(0, 7) || doneNow !== num(t.done))) || (!hadDone && doneNow !== ''))) { alertBox(`Les heures de ${monthName(lockedMonth)} sont clôturées : le total « réalisées » ne peut plus être modifié. Rouvrez le mois dans Planning › Heures si besoin.`); return false; }
       const base = { siteId: o.siteId, start: o.start, end: o.end, hours: num(o.hours), weekend: !!o.weekend, done: o.done === '' ? '' : num(o.done), note: o.note, extId: o.extId || '' };
       const ids = isNew ? $$('[name=mem]:checked', f).map(i => i.value) : [o.memberId];
-      if (!ids.length) { alert('Cochez au moins un membre.'); return false; }
+      if (!ids.length) { alertBox('Cochez au moins un membre.'); return false; }
       const warn = [];
       for (const mid of ids) {
         const rec = isNew ? { ...base, memberId: mid } : Object.assign(t, base, { memberId: mid });
@@ -160,7 +161,7 @@ export async function assignModal(t, preset = {}) {
     },
     {
       del: isNew ? null : async () => {
-        if (t.done !== '' && t.done != null && H.isClosedDate(closed, t.start)) { alert(`Cette affectation porte des heures de ${monthName(t.start)}, mois clôturé : elle ne peut pas être supprimée. Rouvrez le mois dans Planning › Heures si besoin.`); return; }
+        if (t.done !== '' && t.done != null && H.isClosedDate(closed, t.start)) { alertBox(`Cette affectation porte des heures de ${monthName(t.start)}, mois clôturé : elle ne peut pas être supprimée. Rouvrez le mois dans Planning › Heures si besoin.`); return; }
         await db.del('tasks', t.id); refresh();
       },
       onOpen: f => {
@@ -216,9 +217,9 @@ export function timeModal(m, date, env) {
       const val = (r, k) => $(`[data-f=${k}]`, r).value;
       const hv = t => (t.trim() === '' ? '' : (H.parseHM(t) ?? NaN));
       const rows = $$('.tl', f).map(r => ({ id: r.dataset.id, kind: val(r, 'kind'), siteId: val(r, 'site'), hours: hv(val(r, 'hours')), note: val(r, 'note'), absType: val(r, 'abs') }));
-      if (rows.some(r => Number.isNaN(r.hours))) { alert('Une durée est illisible : écrivez par exemple 7,5 ou 7h30.'); return false; }
+      if (rows.some(r => Number.isNaN(r.hours))) { alertBox('Une durée est illisible : écrivez par exemple 7,5 ou 7h30.'); return false; }
       const chk = H.checkDay(rows);
-      if (chk.error) { alert(chk.error); return false; }
+      if (chk.error) { alertBox(chk.error); return false; }
       const keep = new Set(chk.lines.map(l => l.id).filter(Boolean));
       for (const x of mine) if (!keep.has(x.id)) await db.del('times', x.id);
       for (const l of chk.lines) {
@@ -258,13 +259,13 @@ export function timeModal(m, date, env) {
    Stockage : enregistrement de réglages « hoursClosed » (synchronisé comme le reste, sans toucher aux réglages principaux). */
 const stamp = () => { const d = new Date(); return `${today()}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 export const closeMonthFn = me => async (month, R, { confirmed = false } = {}) => {
-  if (!confirmed && !confirm(`${month >= today().slice(0, 7) ? 'Ce mois n\'est pas terminé.\n\n' : ''}Clôturer ${monthName(month + '-01')} ?\n\nPlus aucune heure ne pourra être saisie ni modifiée pour ce mois, par personne, tant que vous ne le rouvrez pas : le récapitulatif remis au comptable restera ainsi identique.`)) return;
+  if (!confirmed && !(await confirmBox(`${month >= today().slice(0, 7) ? 'Ce mois n\'est pas terminé.\n\n' : ''}Clôturer ${monthName(month + '-01')} ?\n\nPlus aucune heure ne pourra être saisie ni modifiée pour ce mois, par personne, tant que vous ne le rouvrez pas : le récapitulatif remis au comptable restera ainsi identique.`))) return;
   const rec = await db.get('settings', 'hoursClosed');
   await db.put('settings', { id: 'hoursClosed', value: H.closeMonthValue(rec?.value, month, { by: me?.name || '', at: stamp(), snap: H.snapshotOf(R) }) });
   toast('Mois clôturé'); refresh();
 };
 export const reopenMonthFn = me => async month => {
-  if (!confirm(`Rouvrir ${monthName(month + '-01')} ?\n\nLes heures pourront de nouveau être modifiées. La réouverture est notée dans l'historique.`)) return;
+  if (!(await confirmBox(`Rouvrir ${monthName(month + '-01')} ?\n\nLes heures pourront de nouveau être modifiées. La réouverture est notée dans l'historique.`))) return;
   const rec = await db.get('settings', 'hoursClosed');
   await db.put('settings', { id: 'hoursClosed', value: H.reopenMonthValue(rec?.value, month, { by: me?.name || '', at: stamp() }) });
   toast('Mois rouvert'); refresh();

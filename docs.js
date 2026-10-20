@@ -18,6 +18,7 @@ import * as lock from './lock.js';
 import * as fl from './files.js';
 import { defaultTpl, normTpl, canvasHtml, loadTplStore, saveTplStore, imagesOf, fitPaper, openLayoutEditor } from './layout.js';
 import { ensureBlocks, pruneBlocks, copyBlocks, mountBlocks, lineStats, clearLineOpt, printRows, setStyles, richField, bindRichFields, readRich, richHtml } from './blocks.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const TYPE_RIGHT = { quote: 'quotes', invoice: 'invoices', credit: 'credits' };
@@ -258,7 +259,7 @@ export async function renderDoc(el, id, arg) {
     const lk = await lock.begin(cur.id, { prefix: '#/doc/' + cur.id });
     if (lk.blocked) {
       el.innerHTML = `<div class="row"><a class="btn ghost" href="#/docs/${cur.type}">← Retour</a></div><div class="card"><h3 style="margin-top:0">${e(lock.lockMsg(lk.blocked))}</h3><p class="muted">Ce document est grisé le temps de sa modification par cette personne. Réessayez dans un moment.</p>${lk.canForce ? '<button class="btn danger" id="lkforce">Ouvrir quand même</button>' : ''}</div>`;
-      $('#lkforce', el)?.addEventListener('click', async () => { if (confirm('Risque d\'écraser ses modifications. Ouvrir quand même ?')) { await lock.begin(cur.id, { prefix: '#/doc/' + cur.id, force: true }); refresh(); } });
+      $('#lkforce', el)?.addEventListener('click', async () => { if ((await confirmBox('Risque d\'écraser ses modifications. Ouvrir quand même ?'))) { await lock.begin(cur.id, { prefix: '#/doc/' + cur.id, force: true }); refresh(); } });
       return;
     }
   }
@@ -584,8 +585,8 @@ export async function renderDoc(el, id, arg) {
       <p class="muted" style="margin-bottom:0">Le montant est réparti entre les taux de TVA du devis. Cette facture suit la numérotation des factures ; elle sera déduite automatiquement de la facture finale.</p>`,
       async o => {
         const sp = depositSplit(cur.lines, cur.tva, cur.disc, o.mode, o.value);
-        if (!(sp.ttc > 0)) { alert('Montant d\'acompte invalide.'); return false; }
-        if (tooBig(o.mode, num(o.value), sp)) { alert(`L'acompte demandé dépasse le reste à facturer (${eur(left)} TTC).`); return false; }
+        if (!(sp.ttc > 0)) { alertBox('Montant d\'acompte invalide.'); return false; }
+        if (tooBig(o.mode, num(o.value), sp)) { alertBox(`L'acompte demandé dépasse le reste à facturer (${eur(left)} TTC).`); return false; }
         const inv = await makeDeposit(cur, sp, { mode: o.mode, value: o.value, date: o.date, dueDate: o.dueDate, accept: !!o.accept, attach: !!o.attach });
         toast(`Facture d'acompte ${inv.number} créée`); go('#/doc/' + inv.id);
       }, { submitLabel: 'Créer la facture d\'acompte', onOpen: f => {
@@ -610,7 +611,7 @@ export async function renderDoc(el, id, arg) {
     const cap = lineCapacity(cur, allDocs), fm = v => String(v).replace('.', ',');
     const modes = [...(prevCr.length ? [] : [['total', 'Avoir total (reprend toutes les lignes)']]), ['lines', 'Avoir sur certaines lignes (je choisis les quantités)'], ['amount', 'Avoir d\'un montant libre (remise, geste commercial)']];
     const rows = cap.map(c => `<div class="crl" data-idx="${c.idx}" data-left="${c.left}"><label class="crk"><input type="checkbox" data-pick ${c.left <= 0 ? 'disabled' : ''}> <span><b>${e(c.line.desig || 'Ligne sans désignation')}</b><small class="muted">facturé ${fm(c.qty)} ${e(c.line.unit || '')} à ${eur(c.line.pu)} HT${c.credited ? ` · déjà crédité ${fm(c.credited)}` : ''}${c.line.tva !== undefined && c.line.tva !== '' ? ` · TVA ${fmtRate(num(c.line.tva))}` : ''}</small></span></label>
-      <input type="number" step="any" min="0" max="${c.left}" inputmode="decimal" data-q placeholder="0" ${c.left <= 0 ? 'disabled' : ''} aria-label="Quantité à créditer"><small class="muted">/ ${fm(c.left)} ${e(c.line.unit || '')}</small></div>`).join('');
+      <input type="number" step="any" min="0" max="${c.left}" inputmode="decimal" data-q data-nocheck placeholder="0" ${c.left <= 0 ? 'disabled' : ''} aria-label="Quantité à créditer"><small class="muted">/ ${fm(c.left)} ${e(c.line.unit || '')}</small></div>`).join('');
     modal('Créer un avoir',
       `<p class="muted" style="margin-top:0">Avoir sur la facture <b>${e(cur.number)}</b> (${eur(t0.ttc)} TTC)${prevCr.length ? ` · déjà crédité ${eur(creditedSum(allDocs, cur.id))} · reste créditable <b>${eur(room)}</b>` : ''}.</p>
       ${F('Type', 'mode', modes[0][0], { type: 'select', options: modes })}
@@ -630,11 +631,11 @@ export async function renderDoc(el, id, arg) {
           const r = o.mode === 'lines'
             ? linesCredit(cur, $$('.crl', f).filter(n => n.querySelector('[data-q]').value !== '').map(n => ({ idx: +n.dataset.idx, qty: num(n.querySelector('[data-q]').value) })), allDocs)
             : amountCredit(cur, o.amount, o.basis, allDocs);
-          if (r.error) { alert(r.error); return false; }
+          if (r.error) { alertBox(r.error); return false; }
           cr = await newDoc('credit', { ...base, intro: (o.mode === 'lines' ? 'Avoir partiel sur facture ' : 'Avoir sur facture ') + cur.number, nature: o.nature || 'discount', blocks: r.lines.map(l => ({ ...l, type: 'line' })), lines: [], ...(r.disc ? { disc: r.disc } : {}), ...(cur.opts ? { opts: { ...cur.opts } } : {}) });
         }
         ensureBlocks(cr);
-        if (totals(cr).ttc > room + 0.005) { alert(`Cet avoir (${eur(totals(cr).ttc)} TTC) dépasse ce qu'il reste à créditer (${eur(room)} TTC).`); return false; }
+        if (totals(cr).ttc > room + 0.005) { alertBox(`Cet avoir (${eur(totals(cr).ttc)} TTC) dépasse ce qu'il reste à créditer (${eur(room)} TTC).`); return false; }
         cr.number = await nextNumber('credit'); await db.put('documents', cr);
         const ded = o.ded ? Math.min(totals(cr).ttc, rest0) : 0;
         if (ded > 0.005) { await db.put('payments', { docId: cur.id, creditId: cr.id, amount: ded, date: today(), method: 'avoir', kind: 'avoir', note: 'Avoir ' + cr.number }); await syncInvStatus(cur.id); }
@@ -666,7 +667,7 @@ export async function renderDoc(el, id, arg) {
   const bindCredit = t => {
     const used = creditUsed(allPay, cur.id), left = Math.max(0, round2(t.ttc - used));
     const delUse = async id => { const p = allPay.find(x => x.id === id); await db.del('payments', id); if (p.kind === 'avoir') await syncInvStatus(p.docId); refresh(); };
-    $$('[data-use]', el).forEach(n => n.onclick = () => { if (confirm('Annuler cette utilisation de l\'avoir ?')) delUse(n.dataset.use); });
+    $$('[data-use]', el).forEach(n => n.onclick = async () => { if ((await confirmBox('Annuler cette utilisation de l\'avoir ?'))) delUse(n.dataset.use); });
     $('#deduct', el).onclick = () => {
       if (cur.status === 'draft') return toast('Passez d\'abord l\'avoir en « Émis »');
       const restOf = d => round2(totals(d).ttc - paidOf(allPay, d.id));
@@ -679,8 +680,8 @@ export async function renderDoc(el, id, arg) {
         ${F('Montant (€)', 'amount', Math.min(left, restOf(first)), { type: 'number', step: '0.01', req: true })}${F('Date', 'date', today(), { type: 'date' })}</div>`,
         async o => {
           const inv = DN[o.docId], amount = num(o.amount);
-          if (amount <= 0 || amount > left + 0.005) { alert(`Montant invalide (reste ${eur(left)} sur l'avoir).`); return false; }
-          if (amount > restOf(inv) + 0.005) { alert(`Ce montant dépasse le reste à payer de la facture (${eur(restOf(inv))}).`); return false; }
+          if (amount <= 0 || amount > left + 0.005) { alertBox(`Montant invalide (reste ${eur(left)} sur l'avoir).`); return false; }
+          if (amount > restOf(inv) + 0.005) { alertBox(`Ce montant dépasse le reste à payer de la facture (${eur(restOf(inv))}).`); return false; }
           await db.put('payments', { docId: inv.id, creditId: cur.id, amount, date: o.date, method: 'avoir', kind: 'avoir', note: 'Avoir ' + cur.number });
           await syncInvStatus(inv.id); toast('Avoir déduit de la facture'); refresh();
         }, { onOpen: f => { f.querySelector('[name=docId]').onchange = ev => { f.querySelector('[name=amount]').value = Math.min(left, restOf(DN[ev.target.value])); }; } });
@@ -695,7 +696,7 @@ export async function renderDoc(el, id, arg) {
         ${F('Note', 'note', '', { cls: 'full' })}</div>`,
         async o => {
           const amount = num(o.amount);
-          if (amount <= 0 || amount > left + 0.005) { alert(`Montant invalide (reste ${eur(left)} sur l'avoir).`); return false; }
+          if (amount <= 0 || amount > left + 0.005) { alertBox(`Montant invalide (reste ${eur(left)} sur l'avoir).`); return false; }
           if (o.method !== 'cheque') { o.chequeNo = ''; o.bank = ''; }
           await db.put('payments', { ...o, docId: cur.id, creditId: cur.id, amount, kind: 'remboursement' });
           toast('Remboursement enregistré'); refresh();
@@ -781,14 +782,14 @@ export async function renderDoc(el, id, arg) {
     $('[name=tva]', el).addEventListener('change', ev => { cur.tva = num(ev.target.value); blk.redraw(); refreshTotals(); }); // le taux par défaut suit aussi les lignes sans taux propre
     /* Bouton « Options » (en haut, à côté d'Éditeur) */
     $('#optbtn', el).onclick = () => { optOpen = !optOpen; $('#optpanel', el).hidden = !optOpen; $('#optbtn', el).classList.toggle('on', optOpen); $('#optbtn', el).setAttribute('aria-expanded', String(optOpen)); };
-    $$('[data-opt]', el).forEach(c => { c.onchange = () => {
+    $$('[data-opt]', el).forEach(c => { c.onchange = async () => {
       const k = c.dataset.opt, on = c.checked; readHeader(); readDisc();
       if (!on) {
-        const st = lineStats(cur), pl = n => (n > 1 ? 's' : ''), ask = m => confirm(m + ' Continuer ?');
-        if (k === 'tvaLine' && st.diff && !ask(`${st.diff} ligne${pl(st.diff)} ${st.diff > 1 ? 'ont' : 'a'} un taux de TVA différent de celui du document (${fmtRate(num(cur.tva))}). ${st.diff > 1 ? 'Elles passeront' : 'Elle passera'} au taux du document.`)) { c.checked = true; return; }
-        if (k === 'remLine' && st.rem && !ask(`${st.rem} ligne${pl(st.rem)} ${st.rem > 1 ? 'ont' : 'a'} une remise. ${st.rem > 1 ? 'Ces remises seront supprimées' : 'Cette remise sera supprimée'}.`)) { c.checked = true; return; }
-        if (k === 'remTot' && optHas(k) && !ask('La remise sur le total sera supprimée.')) { c.checked = true; return; }
-        if (k === 'optLine' && st.opt && !ask(`${st.opt} ligne${pl(st.opt)} ${st.opt > 1 ? 'sont' : 'est'} en option. ${st.opt > 1 ? 'Elles seront comptées' : 'Elle sera comptée'} dans le total.`)) { c.checked = true; return; }
+        const st = lineStats(cur), pl = n => (n > 1 ? 's' : ''), ask = async m => (await confirmBox(m + ' Continuer ?'));
+        if (k === 'tvaLine' && st.diff && !(await ask(`${st.diff} ligne${pl(st.diff)} ${st.diff > 1 ? 'ont' : 'a'} un taux de TVA différent de celui du document (${fmtRate(num(cur.tva))}). ${st.diff > 1 ? 'Elles passeront' : 'Elle passera'} au taux du document.`))) { c.checked = true; return; }
+        if (k === 'remLine' && st.rem && !(await ask(`${st.rem} ligne${pl(st.rem)} ${st.rem > 1 ? 'ont' : 'a'} une remise. ${st.rem > 1 ? 'Ces remises seront supprimées' : 'Cette remise sera supprimée'}.`))) { c.checked = true; return; }
+        if (k === 'remTot' && optHas(k) && !(await ask('La remise sur le total sera supprimée.'))) { c.checked = true; return; }
+        if (k === 'optLine' && st.opt && !(await ask(`${st.opt} ligne${pl(st.opt)} ${st.opt > 1 ? 'sont' : 'est'} en option. ${st.opt > 1 ? 'Elles seront comptées' : 'Elle sera comptée'} dans le total.`))) { c.checked = true; return; }
         if (k === 'remTot') delete cur.disc; else clearLineOpt(cur, k);
       }
       cur.opts = { ...(cur.opts || {}), [k]: on ? 1 : 0 }; setPref('ed_' + k, on ? '1' : '0');
@@ -837,7 +838,7 @@ export async function renderDoc(el, id, arg) {
     const mentionsOk = async () => {
       const miss = checkMentions(S, { client: curClient() }).filter(r => !(cur.ack || []).includes(r.code));
       if (!miss.length) return true;
-      if (!confirm('Mentions légales manquantes sur ce document :\n\n' + miss.map(r => '• ' + r.msg).join('\n') + '\n\nContinuer quand même ?')) return false;
+      if (!(await confirmBox('Mentions légales manquantes sur ce document :\n\n' + miss.map(r => '• ' + r.msg).join('\n') + '\n\nContinuer quand même ?'))) return false;
       cur.ack = [...new Set([...(cur.ack || []), ...miss.map(r => r.code)])]; return true;
     };
     $('#print', el).onclick = async () => { readHeader(); pruneBlocks(cur); if (!(await mentionsOk())) return; await db.put('documents', cur); printDoc(cur); };
@@ -868,7 +869,7 @@ export async function renderDoc(el, id, arg) {
             try {
               const pdf = await (await import('./docmail.js')).facturxBytes(cur, S, cli, o);
               downloadFile(base + '-facturx.pdf', pdf, 'application/pdf'); toast('Facture Factur-X créée');
-            } catch (err) { alert('Création impossible : ' + (err.message || err)); }
+            } catch (err) { alertBox('Création impossible : ' + (err.message || err)); }
             b.disabled = false; b.textContent = 'Télécharger la facture Factur-X (PDF)';
           };
         }
@@ -880,7 +881,7 @@ export async function renderDoc(el, id, arg) {
       const msg = creditLast
         ? `Supprimer l'avoir ${cur.number} ? Son numéro sera réutilisé, et ses déductions sur des factures seront annulées.`
         : 'Supprimer ce document et ses règlements ?';
-      if (!confirm(msg)) return;
+      if (!(await confirmBox(msg))) return;
       if (isC) {
         for (const p of allPay.filter(x => x.creditId === cur.id)) { await db.del('payments', p.id); if (p.kind === 'avoir') await syncInvStatus(p.docId); }
         if (creditLast) { // le numéro redevient libre ; un avoir d'annulation remet la facture et le devis dans leur état d'avant
@@ -897,7 +898,7 @@ export async function renderDoc(el, id, arg) {
     if (cancelBtn) cancelBtn.onclick = async () => {
       const t0 = totals(cur), paid0 = paidOf(payments, cur.id), q0 = cur.fromQuote && !cur.deposit ? DN[cur.fromQuote] : null;
       const reopen = q0 && q0.status === 'invoiced' && !allDocs.some(d => d.id !== cur.id && d.type === 'invoice' && !d.deposit && d.fromQuote === q0.id && counts(d));
-      if (!confirm(`Annuler la facture ${cur.number} (${eur(t0.ttc)} TTC) par un avoir total ?\n\nUn avoir est créé et numéroté tout de suite : c'est définitif.${reopen ? `\nLe devis ${q0.number} repasse en « Accepté » et pourra être refacturé.` : ''}${paid0 > 0.005 ? `\n${eur(paid0)} déjà encaissé : cette somme reste à rembourser au client ou à déduire de la prochaine facture.` : ''}${cur.stockOut ? '\nLa sortie de stock déjà faite pour cette facture n\'est pas annulée.' : ''}`)) return;
+      if (!(await confirmBox(`Annuler la facture ${cur.number} (${eur(t0.ttc)} TTC) par un avoir total ?\n\nUn avoir est créé et numéroté tout de suite : c'est définitif.${reopen ? `\nLe devis ${q0.number} repasse en « Accepté » et pourra être refacturé.` : ''}${paid0 > 0.005 ? `\n${eur(paid0)} déjà encaissé : cette somme reste à rembourser au client ou à déduire de la prochaine facture.` : ''}${cur.stockOut ? '\nLa sortie de stock déjà faite pour cette facture n\'est pas annulée.' : ''}`))) return;
       cancelBtn.disabled = true;
       const cr = await newDoc('credit', { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', intro: 'Avoir sur facture ' + cur.number, note: 'Annulation de la facture ' + cur.number, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number,
         lines: JSON.parse(JSON.stringify(cur.lines)), ...(cur.blocks ? { blocks: copyBlocks(cur.blocks) } : {}), ...(cur.disc ? { disc: { ...cur.disc } } : {}), ...(depsOf(cur).length ? { deps: JSON.parse(JSON.stringify(cur.deps)) } : {}), ...(cur.opts ? { opts: { ...cur.opts } } : {}) });
@@ -918,7 +919,7 @@ export async function renderDoc(el, id, arg) {
         ${F('Note (ticket CB, remarque…)', 'note', p.note, { cls: 'full' })}</div>`,
         async o => {
           if (isNewP) { const q0 = isQ ? cur : DN[cur.fromQuote], inf = q0 && retractInfo(q0, curClient()); // M5 : pas de paiement dans les 7 jours qui suivent une signature hors établissement
-            if (earlyPayment(inf, o.date) && !confirm(`Le devis ${q0.number} a été signé hors de vos locaux le ${dateFr(inf.signed)} : aucun paiement ne devrait être reçu avant le ${dateFr(inf.payFrom)} (délai de 7 jours).\n\nEnregistrer ce règlement quand même ?`)) return false; }
+            if (earlyPayment(inf, o.date) && !(await confirmBox(`Le devis ${q0.number} a été signé hors de vos locaux le ${dateFr(inf.signed)} : aucun paiement ne devrait être reçu avant le ${dateFr(inf.payFrom)} (délai de 7 jours).\n\nEnregistrer ce règlement quand même ?`))) return false; }
           if (o.method !== 'cheque') { o.chequeNo = ''; o.bank = ''; } Object.assign(p, o, { amount: num(o.amount) }); await db.put('payments', p); await syncInvStatus(cur.id); refresh(); },
         { del: isNewP ? null : async () => { await db.del('payments', p.id); await syncInvStatus(cur.id); refresh(); },
           onOpen: f => { const m = f.querySelector('[name=method]'), c = f.querySelector('.chq'); m.onchange = () => { c.hidden = m.value !== 'cheque'; }; } });
@@ -940,7 +941,7 @@ export async function renderDoc(el, id, arg) {
       $('#signbtn', el)?.addEventListener('click', async () => { // N6 : signature du client sur tablette
         readHeader();
         if (!(totals(cur).ttc > 0)) return toast('Ce devis n\'a pas de montant à signer');
-        if (quoteExpired(cur) && !confirm('La validité de ce devis est dépassée. Le faire signer quand même ?')) return;
+        if (quoteExpired(cur) && !(await confirmBox('La validité de ce devis est dépassée. Le faire signer quand même ?'))) return;
         const { signModal } = await import('./sign-ui.js');
         signModal(cur, curClient(), async r => {
           ensureBlocks(cur);
@@ -950,23 +951,23 @@ export async function renderDoc(el, id, arg) {
           await db.put('documents', cur); await bumpSite(cur); toast('Devis signé et accepté'); refresh(); offerSite(); warnShortage(cur);
         });
       });
-      $('#unsign', el)?.addEventListener('click', async () => { if (!confirm('Retirer la signature enregistrée sur ce devis ? Le devis reste « accepté » ; vous pourrez le faire signer à nouveau.')) return; delete cur.sign; await db.put('documents', cur); toast('Signature retirée'); refresh(); });
+      $('#unsign', el)?.addEventListener('click', async () => { if (!(await confirmBox('Retirer la signature enregistrée sur ce devis ? Le devis reste « accepté » ; vous pourrez le faire signer à nouveau.'))) return; delete cur.sign; await db.put('documents', cur); toast('Signature retirée'); refresh(); });
       $('#accept', el)?.addEventListener('click', async () => { readHeader(); cur.status = 'accepted'; if (!cur.signDate) cur.signDate = today(); await db.put('documents', cur); await bumpSite(cur); toast('Devis accepté'); refresh(); offerSite(); warnShortage(cur); });
       if (canInv) $('#toinv', el).onclick = async () => {
-        if (cur.status !== 'accepted' && !confirm('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?')) return;
+        if (cur.status !== 'accepted' && !(await confirmBox('Ce devis n\'est pas marqué « accepté ». Créer la facture quand même ?'))) return;
         readHeader();
         const nopt = (cur.lines || []).filter(isOpt).length;
-        if (nopt && !confirm(`${nopt === 1 ? 'Une ligne est en option et ne sera pas reprise' : nopt + ' lignes sont en option et ne seront pas reprises'} dans la facture (décochez « Option » sur le devis pour celles que le client a acceptées). Créer la facture ?`)) return;
+        if (nopt && !(await confirmBox(`${nopt === 1 ? 'Une ligne est en option et ne sera pas reprise' : nopt + ' lignes sont en option et ne seront pas reprises'} dans la facture (décochez « Option » sur le devis pour celles que le client a acceptées). Créer la facture ?`))) return;
         const dps = quoteDeposits(allDocs, cur.id);
-        if (dps.length && !confirm(`${dps.length === 1 ? 'La facture d\'acompte' : 'Les ' + dps.length + ' factures d\'acompte'} ${dps.map(d => d.number).join(', ')} (${eur(dps.reduce((a, d) => a + netTtc(d, allDocs), 0))} TTC) ser${dps.length === 1 ? 'a' : 'ont'} déduite${dps.length === 1 ? '' : 's'} de la facture finale. Continuer ?`)) return;
-        if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
+        if (dps.length && !(await confirmBox(`${dps.length === 1 ? 'La facture d\'acompte' : 'Les ' + dps.length + ' factures d\'acompte'} ${dps.map(d => d.number).join(', ')} (${eur(dps.reduce((a, d) => a + netTtc(d, allDocs), 0))} TTC) ser${dps.length === 1 ? 'a' : 'ont'} déduite${dps.length === 1 ? '' : 's'} de la facture finale. Continuer ?`))) return;
+        if (cur.invoiceId && !(await confirmBox('Une facture existe déjà pour ce devis. En créer une autre ?'))) return;
         const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);
       };
       if (cur.invoiceId && canInv) $('#toinv', el).insertAdjacentHTML('afterend', `<a class="btn" href="#/doc/${cur.invoiceId}">Voir la facture</a>`);
     } else {
       $('#stockout', el)?.addEventListener('click', async () => {
-        if (!confirm('Déduire du stock les produits de cette facture ?')) return;
+        if (!(await confirmBox('Déduire du stock les produits de cette facture ?'))) return;
         let lines = cur.lines;
         if (cur.siteId) { // matériel déjà sorti pour ce chantier (sortie chantier, autre facture) : on propose de ne déduire que le reste
           const out = {}; (await db.all('moves')).filter(m => m.type === 'out' && m.siteId === cur.siteId).forEach(m => { out[m.productId] = (out[m.productId] || 0) + num(m.qty); });
@@ -976,7 +977,7 @@ export async function renderDoc(el, id, arg) {
             const take = Math.min(num(l.qty), out[l.pid]); out[l.pid] -= take; if (take > 0) done.push(`${l.desig || 'ligne'} (${take})`);
             adj.push({ ...l, qty: num(l.qty) - take });
           }
-          if (done.length && confirm(`Pour ce chantier, du matériel est déjà sorti du stock : ${done.join(', ')}.\n\nOK : ne déduire que le reste.\nAnnuler : tout déduire quand même.`)) lines = adj;
+          if (done.length && (await confirmBox(`Pour ce chantier, du matériel est déjà sorti du stock : ${done.join(', ')}.\n\nOK : ne déduire que le reste.\nAnnuler : tout déduire quand même.`))) lines = adj;
         }
         const n = await autoOut(lines, cur.number, cur.siteId || ''); cur.stockOut = true; await db.put('documents', cur);
         toast(n ? 'Stock mis à jour' : 'Aucune ligne liée au stock'); refresh();

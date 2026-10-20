@@ -8,6 +8,7 @@ import * as efact from './efact.js';
 import * as auth from './auth.js';
 import { totals, sheetHtml, vatNoteOf, paidOf } from './docs.js';
 import { remindersOf, addReminder, dueOf, daysBetween, RELANCE_DEFAULTS } from './reminders.js';
+import { alertBox, promptBox } from './dialogs.js';
 
 export const MAIL_DEFAULTS = {
   subject: '{type} {numero} – {company}',
@@ -77,7 +78,7 @@ export const histHtml = doc => { const h = remindersOf(doc); return h.length ? `
 export async function mailModal(ctx) {
   const { doc, S, client = {}, payments = [], DN = {} } = ctx;
   const R = ctx.relance || null; // relance : message et historique propres, le document n'est pas « renvoyé »
-  if (!doc.number) { alert('Ce document n\'a pas encore de numéro : enregistrez-le d\'abord (hors brouillon pour une facture).'); return; }
+  if (!doc.number) { alertBox('Ce document n\'a pas encore de numéro : enregistrez-le d\'abord (hors brouillon pour une facture).'); return; }
   const V = mailVars(doc, S, client);
   const subject = R ? R.subject : fillTpl(S.mailSubject || MAIL_DEFAULTS.subject, V), body = R ? R.body : fillTpl(S.mailBody || MAIL_DEFAULTS.body, V);
   const isInv = doc.type !== 'quote';
@@ -119,9 +120,9 @@ export async function mailModal(ctx) {
     const m = read(f);
     if (!via) { f.querySelector('#mshare').click(); return false; }
     const bad = [...m.to, ...m.cc].find(a => !ADDR.test(a));
-    if (!m.to.length) { alert('Indiquez l\'adresse e-mail du destinataire.'); return false; }
-    if (bad) { alert('Adresse e-mail invalide : ' + bad); return false; }
-    if (!m.subject) { alert('L\'objet est vide.'); return false; }
+    if (!m.to.length) { alertBox('Indiquez l\'adresse e-mail du destinataire.'); return false; }
+    if (bad) { alertBox('Adresse e-mail invalide : ' + bad); return false; }
+    if (!m.subject) { alertBox('L\'objet est vide.'); return false; }
     const btn = f.querySelector('footer .btn.primary'), lbl = btn.textContent; btn.disabled = true; btn.textContent = 'Envoi…';
     try {
       const bytes = await ensure(f);
@@ -135,7 +136,7 @@ export async function mailModal(ctx) {
       ctx.onSent?.();
     } catch (err) {
       btn.disabled = false; btn.textContent = lbl;
-      alert(mailError(err));
+      alertBox(mailError(err));
       return false;
     }
   }, {
@@ -145,13 +146,13 @@ export async function mailModal(ctx) {
       noteShared = async m => { if (R) { addReminder(doc, { to: m.to.join(', '), via: 'messagerie', by: auth.currentUser()?.name || '' }); await db.put('documents', doc); ctx.onSent?.(); } };
       const ph = $('#mphone', f);
       if (ph) ph.onclick = async () => {
-        const how = prompt('Comment la relance a-t-elle été faite ? (téléphone, courrier, sur place…)', 'téléphone'); if (how === null) return;
+        const how = (await promptBox('Comment la relance a-t-elle été faite ? (téléphone, courrier, sur place…)', 'téléphone')); if (how === null) return;
         addReminder(doc, { via: how.trim() || 'autre', by: auth.currentUser()?.name || '' }); await db.put('documents', doc);
         toast('Relance enregistrée dans l\'historique'); ctx.onSent?.(); closeModal();
       };
       ensure(f).catch(() => {});
       f.querySelector('[name=fmt]')?.addEventListener('change', () => ensure(f).catch(() => {}));
-      $('#mdl', f).onclick = async () => { try { const b = await ensure(f); downloadFile(fname(read(f).fmt), b, 'application/pdf'); } catch (err) { alert(err.message || err); } };
+      $('#mdl', f).onclick = async () => { try { const b = await ensure(f); downloadFile(fname(read(f).fmt), b, 'application/pdf'); } catch (err) { alertBox(err.message || err); } };
       $('#mshare', f).onclick = async () => {
         const m = read(f);
         try {
@@ -164,7 +165,7 @@ export async function mailModal(ctx) {
           const q = [m.cc.length ? 'cc=' + encodeURIComponent(m.cc.join(',')) : '', 'subject=' + encodeURIComponent(m.subject), 'body=' + encodeURIComponent(m.body + '\n\n[Joignez le fichier « ' + name + ' » qui vient d\'être téléchargé]')].filter(Boolean).join('&');
           toast('PDF téléchargé : joignez-le au message'); await noteShared(m);
           location.href = `mailto:${encodeURIComponent(m.to.join(','))}?${q}`;
-        } catch (err) { alert(err.message || err); }
+        } catch (err) { alertBox(err.message || err); }
       };
     }
   });

@@ -5,6 +5,7 @@ import * as H from './hours.js';
 import { absOpts } from './lists.js';
 import { planAbsence, absHours, absDays, describeGroup, groupOf, skippedText } from './absence.js';
 import * as auth from './auth.js';
+import { alertBox } from './dialogs.js';
 
 const fmtLong = d => dateFr(d);
 
@@ -37,18 +38,18 @@ export async function absenceModal(grp, preset = {}) {
   modal(isNew ? 'Poser une absence' : 'Absence', body,
     async (o, f) => {
       const ids = isNew ? $$('[name=mem]:checked', f).map(i => i.value) : [member0.id];
-      if (!ids.length) { alert('Cochez au moins un membre.'); return false; }
+      if (!ids.length) { alertBox('Cochez au moins un membre.'); return false; }
       const custom = o.part === 'custom' ? H.parseHM(o.custom) : null;
-      if (o.part === 'custom' && !(custom > 0)) { alert('Durée illisible : écrivez par exemple 3,5 ou 3h30.'); return false; }
+      if (o.part === 'custom' && !(custom > 0)) { alertBox('Durée illisible : écrivez par exemple 3,5 ou 3h30.'); return false; }
       const same = !isNew && o.part === info.part && (o.part !== 'custom' || H.round2(custom) === H.round2(info.hours));
       const plans = [];
       for (const id of ids) {
         const m = members.find(x => x.id === id);
         const p = planAbsence({ member: m, start: o.start, end: o.end, weekend: !!o.weekend, absType: o.absType, part: o.part, custom, note: o.note, grp: isNew ? '' : grp, keepHours: same, times, closed, by: me?.id || '' });
-        if (p.error) { alert((ids.length > 1 ? m.name + ' : ' : '') + p.error); return false; }
+        if (p.error) { alertBox((ids.length > 1 ? m.name + ' : ' : '') + p.error); return false; }
         plans.push({ m, p });
       }
-      if (!plans.some(x => x.p.days)) { alert(`Rien à enregistrer :\n${skippedText(plans.flatMap(x => x.p.skipped), fmtLong)}`); return false; }
+      if (!plans.some(x => x.p.days)) { alertBox(`Rien à enregistrer :\n${skippedText(plans.flatMap(x => x.p.skipped), fmtLong)}`); return false; }
       let n = 0;
       for (const { p } of plans) {
         for (const id of p.remove) await db.del('times', id);
@@ -57,13 +58,13 @@ export async function absenceModal(grp, preset = {}) {
       }
       const skipped = plans.flatMap(x => x.p.skipped.map(s => ({ ...s, who: x.m.name })));
       toast(`Absence enregistrée · ${n} jour${n > 1 ? 's' : ''}`);
-      if (skipped.length) alert(skippedText(skipped, fmtLong) + '\n\nCes jours n\'ont pas été modifiés (corrigez-les depuis la case du jour si besoin).');
+      if (skipped.length) alertBox(skippedText(skipped, fmtLong) + '\n\nCes jours n\'ont pas été modifiés (corrigez-les depuis la case du jour si besoin).');
       refresh();
     },
     {
       submitLabel: 'Enregistrer',
       del: isNew ? null : async () => {
-        if (lockedRows.length) { alert('Cette absence porte sur un mois clôturé : elle ne peut pas être supprimée. Rouvrez le mois dans Planning › Heures si besoin.'); return; }
+        if (lockedRows.length) { alertBox('Cette absence porte sur un mois clôturé : elle ne peut pas être supprimée. Rouvrez le mois dans Planning › Heures si besoin.'); return; }
         for (const x of cur) await db.del('times', x.id);
         toast('Absence supprimée'); refresh();
       },

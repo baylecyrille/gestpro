@@ -4,6 +4,7 @@ import * as db from './db.js';
 import { e, today, modal, toast, refresh, $, $$ } from './util.js';
 import { scriptCall, scriptMode } from './sheets.js';
 import * as auth from './auth.js';
+import { alertBox, confirmBox } from './dialogs.js';
 
 export const available = () => scriptMode();
 const CACHE = 'gp-files';
@@ -117,7 +118,7 @@ const ICON = a => (isImg(a) ? '🖼' : /pdf/.test(a.mime || '') ? '📄' : '📎
 
 async function openAtt(att) {
   let b;
-  try { b = await blobOf(att); } catch (err) { return alert(err.message || err); }
+  try { b = await blobOf(att); } catch (err) { return alertBox(err.message || err); }
   const url = URL.createObjectURL(b);
   if (isImg(att)) {
     modal(att.name, `<div style="text-align:center"><img src="${url}" alt="${e(att.name)}" style="max-width:100%;max-height:70vh"></div><p class="muted" style="text-align:center">${e(att.date || '')}${att.by ? ' · ' + e(att.by) : ''}</p>`, null, { wide: true });
@@ -150,9 +151,9 @@ export function filesCard(o) {
       try { const u = URL.createObjectURL(await blobOf(a)); n.innerHTML = `<img src="${u}" alt="">`; } catch { /* reste l'icône */ }
     });
   };
-  host.onclick = ev => {
+  host.onclick = async ev => {
     const rm = ev.target.closest('[data-rm]');
-    if (rm) { ev.stopPropagation(); const a = o.list().find(x => x.id === rm.dataset.rm); if (a && confirm(`Retirer « ${a.name} » ? Le fichier est mis à la corbeille (Drive ou OneDrive).`)) { remove(a, { trash: !a.shared }).then(() => o.remove(a)).then(draw); } return; }
+    if (rm) { ev.stopPropagation(); const a = o.list().find(x => x.id === rm.dataset.rm); if (a && (await confirmBox(`Retirer « ${a.name} » ? Le fichier est mis à la corbeille (Drive ou OneDrive).`))) { remove(a, { trash: !a.shared }).then(() => o.remove(a)).then(draw); } return; }
     const it = ev.target.closest('.fitem'); if (it) { const a = o.list().find(x => x.id === it.dataset.a); if (a) openAtt(a); }
   };
   host.onchange = async ev => {
@@ -163,7 +164,7 @@ export function filesCard(o) {
     let ok = 0;
     for (const f of files) {
       try { const att = await upload(f, { path: o.path(kind), kind, px: o.px }); await o.add(att); ok++; }
-      catch (err) { alert(`${f.name} : ${err.message || err}`); }
+      catch (err) { alertBox(`${f.name} : ${err.message || err}`); }
     }
     if (ok) toast(`${ok} fichier(s) ajouté(s)`);
     draw();
