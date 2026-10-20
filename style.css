@@ -791,3 +791,23 @@ details.lst>.row:last-child{margin-bottom:10px}
 .sheet .sgz{position:relative;height:100%;overflow:hidden}
 .sheet .sgz .sgs{position:absolute;left:0;right:0;top:1.7em;bottom:3.2mm;width:100%;height:calc(100% - 1.7em - 3.2mm)}
 .sheet .sgz .sgc{position:absolute;left:0;right:0;bottom:0;font:9px/1.1 Arial,sans-serif;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- Réglages protégés par zones (Modifier / Enregistrer) ---- */
+.zintro{margin:0 0 10px}
+.zone .zhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}
+.zone .zhead h3{margin:0;flex:1 1 220px;min-width:0}
+.zone .zhead .sp{display:none}
+.zone .zlock{font-size:12px;white-space:nowrap}
+.zone .zacts{display:flex;gap:6px}
+.zone .zacts[hidden],.zone .zfoot[hidden],.zone .zlock[hidden],.zone [data-zedit][hidden]{display:none}
+.zone .zfs{border:0;padding:0;margin:0;min-width:0}
+.zone .zfs:disabled{opacity:.9}
+.zone .zfs:disabled input:not([type=checkbox]):not([type=radio]):not([type=color]),.zone .zfs:disabled select,.zone .zfs:disabled textarea{background:#f1f4f9;color:#2c3a4e;border-color:#e3e9f2;-webkit-text-fill-color:#2c3a4e;cursor:default}
+.zone .zfs:disabled .swatches,.zone .zfs:disabled .colorf{opacity:.75}
+.zone .zfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;padding-top:8px;border-top:1px solid var(--bd)}
+.zone.editing{border-color:var(--p);box-shadow:0 0 0 3px rgba(30,90,168,.14)}
+.zone.locked .zshow{display:none}
+.card.zone.zmini{background:#f7f9fc;box-shadow:none;margin:8px 0}
+.zone.zmini .zhead h3{font-size:14px}
+@media (max-width:600px){.zone .zhead h3{flex-basis:100%}}
+.zone [data-zsubmit]{display:none} /* le bouton Enregistrer de la zone (en-tête et bas) le déclenche */

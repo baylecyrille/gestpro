@@ -10,6 +10,7 @@ import { renderPlanning, covers, habState, siteHours } from './team.js';
 import { ROLE_LABEL, MOE_FN } from './lists.js';
 import { LIM } from './limits.js';
 import { mountLists, mountLimits } from './lists-ui.js';
+import { zoneHtml, mountZones, anyEditing } from './zones.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -269,8 +270,10 @@ window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); inst
 
 async function renderSettings(el) {
   const S = await getS(), nowY = +today().slice(0, 4), bk = await backup.getState();
-  el.innerHTML = `<h2>Réglages</h2><form id="sf" class="card"><div class="cols">
-    <h3 class="full">Entreprise (en-tête des documents)</h3>
+  const Z = zoneHtml;
+  el.innerHTML = `<h2>Réglages</h2>
+  <p class="muted zintro">🔒 Chaque zone est verrouillée pour éviter les modifications par erreur : touchez <b>Modifier</b> pour la déverrouiller, puis <b>Enregistrer</b> (ou <b>Annuler</b>).</p>
+  ${Z('company', 'Entreprise (en-tête des documents)', `<div class="cols">
     ${F('Nom de l\'application', 'appName', S.appName, { cls: 'full' })}
     ${F('Raison sociale', 'company', S.company)}${F('Dirigeant', 'owner', S.owner)}
     ${F('Activité (titre bleu)', 'sub', S.sub, { type: 'textarea', rows: 2, cls: 'full' })}
@@ -282,15 +285,19 @@ async function renderSettings(el) {
     ${F('Nature d\'opération par défaut (facture électronique)', 'opType', S.opType || 'mixed', { type: 'select', options: [['goods', 'Livraison de biens'], ['services', 'Prestation de services'], ['mixed', 'Biens et services (fourniture et pose)']] })}
     <label class="f full"><span><input type="checkbox" name="vatDebits" ${S.vatDebits ? 'checked' : ''}> Option pour le paiement de la TVA sur les débits (mention imprimée sur les factures)</span></label>
     <p class="muted full" style="margin-top:-6px">Décochée (cas général) : le tableau de bord compte la TVA des prestations de services, travaux compris, à l'encaissement des règlements, et celle des livraisons de biens à la facture. Cochée : toute la TVA est comptée à la date des factures.</p>
-    <h3 class="full">Mentions légales (imprimées en pied de page des documents)</h3>
+  </div>`)}
+  ${Z('legal', 'Mentions légales (imprimées en pied de page des documents)', `<div class="cols">
     ${F('N° TVA intracommunautaire', 'tvaNum', S.tvaNum, { ph: 'FR70511277287' })}${F('RCS', 'rcs', S.rcs, { ph: 'ex : 511 277 287 R.C.S. Limoges' })}
     ${F('Répertoire des métiers (RM)', 'rm', S.rm, { ph: 'si l\'entreprise y est inscrite' })}${F('Délai d\'exécution par défaut des devis', 'delay', S.delay, { ph: 'ex : 6 semaines après acceptation' })}
     ${F('Médiateur de la consommation (nom, adresse, site)', 'mediator', S.mediator, { type: 'textarea', rows: 2, cls: 'full', ph: 'Mention obligatoire pour les clients particuliers' })}
     <p class="muted full">Seules les mentions renseignées sont imprimées (le SIRET, la forme juridique, le capital, l'assurance et le RGE le sont déjà en en-tête). Un avertissement s'affiche avant l'impression ou l'envoi d'un document s'il en manque une.</p>
+  </div>`)}
+  ${Z('logo', 'Logo et fond d\'écran', `<div class="cols">
     <label class="f full"><span>Logo (PNG, JPG, WebP ou SVG – qualité conservée et partagé entre vos appareils ; sans choix, le logo de vos factures est utilisé)</span><input type="file" id="logo" accept="image/*"></label>
     <div class="full"><img id="logoprev" src="${logoSrc(S)}" alt="" style="max-height:70px;max-width:100%"> ${S.logo ? '<button type="button" class="btn sm" id="nologo">Revenir au logo par défaut</button>' : ''}</div>
     <label class="f full"><span><input type="checkbox" name="wallpaper" ${S.wallpaper !== false ? 'checked' : ''}> Afficher le logo en fond d'écran de l'application</span></label>
-    <h3 class="full">Ventes (devis, factures, avoirs)</h3>
+  </div>`)}
+  ${Z('sales', 'Ventes (devis, factures, avoirs)', `<div class="cols">
     ${F('Préfixe devis', 'quotePrefix', S.quotePrefix)}${F('Prochain n° de devis', 'quoteNext', seqOf(S, 'quote', nowY).n, { type: 'number' })}
     ${F('Préfixe facture', 'invPrefix', S.invPrefix)}${F('Prochain n° de facture', 'invNext', seqOf(S, 'invoice', nowY).n, { type: 'number' })}
     ${F('Préfixe avoir', 'creditPrefix', S.creditPrefix)}${F('Prochain n° d\'avoir', 'creditNext', seqOf(S, 'credit', nowY).n, { type: 'number' })}
@@ -300,26 +307,29 @@ async function renderSettings(el) {
     ${F('Coefficient des ouvrages (prix de vente = prix de revient × coefficient)', 'ouvCoef', S.ouvCoef ?? 1.3, { type: 'number', step: '0.01' })}<span></span>
     ${F('Intitulé par défaut', 'intro', S.intro)}${F('Remarque par défaut', 'note', S.note)}
     ${F('Conditions de règlement par défaut', 'terms', S.terms, { type: 'textarea', rows: 6, cls: 'full' })}
-    <h3 class="full">E-mails (envoi des devis, factures et avoirs)</h3>
+    <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
+  </div>`)}
+  ${Z('mail', 'E-mails (envoi des devis, factures et avoirs)', `<div class="cols">
     ${F('Objet par défaut', 'mailSubject', S.mailSubject || '', { cls: 'full', ph: MAIL_DEFAULTS.subject })}
     ${F('Message par défaut', 'mailBody', S.mailBody || '', { type: 'textarea', rows: 6, cls: 'full', ph: MAIL_DEFAULTS.body })}
     <p class="muted full">Laissez vide pour le texte conseillé (en gris). Jetons automatiques : <code>${e(MAIL_TOKENS)}</code>. L'envoi part de votre compte Google (script Apps Script) ; les réponses arrivent sur l'e-mail de l'entreprise ci-dessus.</p>
-    <h3 class="full">Relances (devis sans réponse, factures impayées)</h3>
+    <label class="f full"><span><input type="checkbox" name="mailBcc" ${S.mailBcc === false ? '' : 'checked'}> M'envoyer une copie cachée (Cci) de chaque e-mail envoyé</span></label>
+  </div>`, { after: `<div class="full row" style="margin:8px 0 0"><button type="button" class="btn" id="mtest" ${sheets.scriptMode() ? '' : 'disabled'}>✉ Envoyer un e-mail de test à l'adresse de l'entreprise</button><span id="mtstat" class="muted"></span></div>` })}
+  ${Z('relance', 'Relances (devis sans réponse, factures impayées)', `<div class="cols">
     ${F('Relancer un devis envoyé sans réponse après (jours)', 'remindQuoteDays', S.remindQuoteDays ?? 10, { type: 'number' })}${F('Relancer une facture après son échéance de (jours)', 'remindInvDays', S.remindInvDays ?? 3, { type: 'number' })}
     ${F('Délai entre deux relances (jours)', 'remindEvery', S.remindEvery ?? 7, { type: 'number' })}<span></span>
     ${F('Objet des relances', 'relanceSubject', S.relanceSubject || '', { cls: 'full', ph: RELANCE_DEFAULTS.subject })}
     ${F('Message de relance d\'un devis', 'relanceQuote', S.relanceQuote || '', { type: 'textarea', rows: 5, cls: 'full', ph: RELANCE_DEFAULTS.quote })}
     ${F('Message de relance d\'une facture', 'relanceInvoice', S.relanceInvoice || '', { type: 'textarea', rows: 6, cls: 'full', ph: RELANCE_DEFAULTS.invoice })}
     <p class="muted full">Le tableau de bord liste les relances à faire ; rien n'est envoyé sans votre validation. Un devis est relancé ${LIM.remindMax} fois au plus (réglable dans « Seuils et délais », plus bas). Laissez vide pour le texte conseillé (en gris). Jetons : <code>${e(RELANCE_TOKENS)}</code>.</p>
-    <label class="f full"><span><input type="checkbox" name="mailBcc" ${S.mailBcc === false ? '' : 'checked'}> M'envoyer une copie cachée (Cci) de chaque e-mail envoyé</span></label>
-    <div class="full row" style="margin:0"><button type="button" class="btn" id="mtest" ${sheets.scriptMode() ? '' : 'disabled'}>✉ Envoyer un e-mail de test à l'adresse de l'entreprise</button><span id="mtstat" class="muted"></span></div>
-    <h3 class="full">Couleurs des lignes de devis / factures</h3>
+  </div>`)}
+  ${Z('colors', 'Couleurs des lignes de devis / factures', `<div class="cols">
     ${colorField('Section : texte', 'stSecColor', S.stSecColor, 'full')}${colorField('Section : fond', 'stSecBg', S.stSecBg, 'full')}
     ${colorField('Ligne produit : fond', 'stLineBg', S.stLineBg, 'full')}${colorField('Texte / commentaire : fond', 'stTextBg', S.stTextBg, 'full')}
     <p class="muted full">Ces couleurs s'appliquent par défaut ; chaque section ou texte peut ensuite avoir sa propre couleur.</p>
-    <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
-  </div><button class="btn primary">Enregistrer</button></form>
-  <div class="card" id="listcard"></div><div class="card" id="limcard"></div>
+  </div>`)}
+  ${Z('lists', 'Listes de choix', '<div id="lbody"></div>', { tag: 'div', cardId: 'listcard' })}
+  ${Z('limits', 'Seuils et délais', '<div id="lmbody"></div>', { tag: 'div', cardId: 'limcard' })}
   <div class="card" id="zcard"><h3 style="margin-top:0">Mise en page des documents</h3>
     <p class="muted">Composez visuellement vos devis, factures et avoirs sur une page A4 : déplacez les blocs, agrandissez le logo, ajoutez des images ou des textes, modifiez tous les libellés. Le modèle s'applique à tous les documents du type choisi (un document peut ensuite faire exception depuis son aperçu).</p>
     <div class="row"><button type="button" class="btn primary" data-tpl="quote">🎨 Modifier les devis</button><button type="button" class="btn primary" data-tpl="invoice">🎨 Modifier les factures</button><button type="button" class="btn primary" data-tpl="credit">🎨 Modifier les avoirs</button></div></div>
@@ -364,7 +374,7 @@ async function renderSettings(el) {
     <p id="fstat" class="muted">${sheets.scriptMode() ? 'Connexion par script Apps Script : prêt.' : '⚠ Nécessite la connexion par script Apps Script (carte Google Sheets ci-dessus).'}</p>
     <div class="row"><button type="button" class="btn" id="ftest" ${sheets.scriptMode() ? '' : 'disabled'}>Tester le stockage</button><span class="muted">Indique si les fichiers partent vers Google Drive ou OneDrive.</span></div></div>
   <div class="card"><h3 style="margin-top:0">Sauvegarde</h3><p class="muted">${sheets.configured() ? 'Vos données sont synchronisées automatiquement avec Google Sheets (« GestPro – Données ») après chaque modification, et disponibles sur vos autres appareils connectés au même classeur. Une copie en fichier reste utile comme sauvegarde supplémentaire.' : 'Google Sheets n\'est pas configuré : les données sont stockées uniquement sur cet appareil. Configurez la synchronisation ci-dessus, ou faites une sauvegarde régulière et transférez-la pour changer de téléphone/ordinateur.'}</p>
-    <div style="margin:10px 0"><label class="f full"><span><input type="checkbox" id="autobk" ${S.autoBackup !== false ? 'checked' : ''}> Sauvegarde automatique chaque semaine dans votre espace de stockage (Google Drive ou OneDrive, dossier GestPro/Sauvegardes ; les 8 dernières copies sont conservées)</span></label>
+    <div style="margin:10px 0">${Z('backup', 'Sauvegarde automatique', `<label class="f full"><span><input type="checkbox" name="autoBackup" id="autobk" ${S.autoBackup !== false ? 'checked' : ''}> Sauvegarde automatique chaque semaine dans votre espace de stockage (Google Drive ou OneDrive, dossier GestPro/Sauvegardes ; les 8 dernières copies sont conservées)</span></label>`, { mini: true })}
       <p class="muted" id="bkstat" style="margin:4px 0">${!sheets.scriptMode() ? 'Disponible une fois le script Apps Script relié (voir la carte Google Sheets).' : bk.at ? `Dernière copie : ${new Date(bk.at).toLocaleDateString('fr-FR')}${bk.by ? ' (' + e(bk.by) + ')' : ''}.` : 'Aucune copie pour le moment : la première part à la prochaine ouverture.'}${bk.error && sheets.scriptMode() ? ` <span class="bad">Dernier essai échoué : ${e(bk.error)}.</span>` : ''} La copie est faite à l'ouverture de l'application, quand la dernière a plus de 7 jours ; elle ne contient ni les photos de produits ni les clés personnelles (Facebook, Google).</p>
       ${(bk.list || []).length ? `<div>${[...bk.list].reverse().map(x => `<div class="item" style="cursor:default"><div class="main"><div class="t">${e(x.name)}</div><div class="s">${Math.max(1, Math.round((x.size || 0) / 1024))} Ko</div></div><div class="r"><button type="button" class="btn sm" data-bkdl="${e(x.id)}" title="Télécharger cette copie, puis « Restaurer… »">⬇</button></div></div>`).join('')}</div>` : ''}
       <div class="row"><button type="button" class="btn" id="bknow2" ${sheets.scriptMode() ? '' : 'disabled'}>Sauvegarder maintenant</button></div></div>
@@ -418,8 +428,8 @@ async function renderSettings(el) {
   camInfo();
   $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
   $('#camreset', el).onclick = () => { resetCamera(); toast('Caméra automatique rétablie'); camInfo(); };
-  bindColors($('#sf', el));
-  await Promise.all([mountLists($('#listcard', el)), mountLimits($('#limcard', el))]);
+  bindColors($('#z-colors', el));
+  await Promise.all([mountLists($('#lbody', el)), mountLimits($('#lmbody', el))]);
   let logo = S.logo;
   $('#logo', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
@@ -427,27 +437,46 @@ async function renderSettings(el) {
       logo = await compressImage(f, { mode: 'logo', maxChars: 250000 });
       if (logo.length > 260000) throw new Error('Logo trop lourd : utilisez une image plus petite.');
       $('#logoprev', el).src = logo;
-      toast(`Logo prêt (${Math.round(logo.length * 0.75 / 1024)} Ko, qualité conservée) – enregistrez`);
+      toast(`Logo prêt (${Math.round(logo.length * 0.75 / 1024)} Ko, qualité conservée) – enregistrez la zone`);
     } catch (err) { logo = S.logo; alert(err.message); }
   };
-  $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez'); });
-  $('#sf', el).onsubmit = async ev => {
-    ev.preventDefault();
-    const o = Object.fromEntries(new FormData(ev.target));
-    ['quoteNext', 'invNext', 'creditNext', 'pad', 'tva', 'payDays', 'photoPx', 'ouvCoef', 'remindQuoteDays', 'remindInvDays', 'remindEvery'].forEach(k => (o[k] = num(o[k])));
-    delete o.undefined;
-    o.wallpaper = !!o.wallpaper; o.vatDebits = !!o.vatDebits; o.autoCloseSites = !!o.autoCloseSites; o.mailBcc = !!o.mailBcc;
-    let logoV = S.logoV;
-    if ((logo || '') !== (S.logo || '')) { // le logo vit dans sa propre feuille (onglet Photos) : il est synchronisé à part, sans limite de cellule
-      logoV = Date.now(); await db.put('photos', { id: 'logo', data: logo || '', v: logoV }); sheets.markPhotosDirty();
-    }
-    const nowY2 = +today().slice(0, 4); // année passée : le compteur affiché (déjà remis à 1) appartient à l'année en cours
-    for (const [pk, yk] of [['quotePrefix', 'quoteYear'], ['invPrefix', 'invYear'], ['creditPrefix', 'creditYear']]) if (yearTok(o[pk]) && nowY2 > (S[yk] ?? nowY2)) o[yk] = nowY2;
-    const cur = await getS(); // réglages à jour : les listes et les seuils enregistrés plus bas dans la page ne doivent pas être écrasés
-    await db.saveSettings(normNumbering({ ...cur, ...o, logo, logoV })); applyWallpaper({ ...cur, ...o, logo }); toast('Réglages enregistrés'); refresh();
+  $('#nologo', el)?.addEventListener('click', () => { logo = ''; toast('Logo retiré – enregistrez la zone'); });
+  /* Réglages protégés par zones : chaque zone se déverrouille (« Modifier ») puis s'enregistre seule ; une zone n'écrit que ses propres champs */
+  const rerender = () => { keepY = window.scrollY; refresh(); }; // la page se redessine verrouillée, au même endroit
+  mountZones(el, { rerender, extra: { logo: () => (logo || '').length + ':' + (logo || '').slice(-24) } });
+  const ZCFG = { // champs numériques et cases à cocher de chaque zone (une case décochée n'est pas envoyée par le formulaire)
+    company: { bool: ['vatDebits'] }, legal: {}, logo: { bool: ['wallpaper'] }, colors: {}, backup: { bool: ['autoBackup'] },
+    sales: { num: ['quoteNext', 'invNext', 'creditNext', 'payDays', 'photoPx', 'pad', 'tva', 'ouvCoef'], bool: ['autoCloseSites'] },
+    mail: { bool: ['mailBcc'] }, relance: { num: ['remindQuoteDays', 'remindInvDays', 'remindEvery'] }
   };
+  const ZDONE = { backup: o => (o.autoBackup ? 'Sauvegarde automatique activée' : 'Sauvegarde automatique désactivée') };
+  $$('form.zone', el).forEach(form => {
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const z = form.dataset.z, cfg = ZCFG[z]; if (!cfg || !form.classList.contains('editing')) return; // zone verrouillée : rien ne part
+      const o = Object.fromEntries(new FormData(form));
+      $$('input[type=number]', form).forEach(i => { o[i.name] = num(o[i.name]); }); // les champs numériques et les cases à cocher sont reconnus d'après leur type
+      $$('input[type=checkbox]', form).forEach(i => { o[i.name] = !!o[i.name]; });
+      (cfg.num || []).forEach(k => (o[k] = num(o[k]))); // listes déroulantes à valeur numérique (taille des photos, TVA par défaut…)
+      (cfg.bool || []).forEach(k => (o[k] = !!o[k]));
+      delete o.undefined;
+      const cur = await getS(); // réglages à jour : les autres zones, les listes et les seuils ne doivent pas être écrasés
+      if (z === 'logo') {
+        o.logo = logo; o.logoV = cur.logoV;
+        if ((logo || '') !== (cur.logo || '')) { // le logo vit dans sa propre feuille (onglet Photos) : il est synchronisé à part, sans limite de cellule
+          o.logoV = Date.now(); await db.put('photos', { id: 'logo', data: logo || '', v: o.logoV }); sheets.markPhotosDirty();
+        }
+      }
+      if (z === 'sales') {
+        const nowY2 = +today().slice(0, 4); // année passée : le compteur affiché (déjà remis à 1) appartient à l'année en cours
+        for (const [pk, yk] of [['quotePrefix', 'quoteYear'], ['invPrefix', 'invYear'], ['creditPrefix', 'creditYear']]) if (yearTok(o[pk]) && nowY2 > (cur[yk] ?? nowY2)) o[yk] = nowY2;
+      }
+      const next = normNumbering({ ...cur, ...o });
+      await db.saveSettings(next); applyWallpaper(next);
+      toast(ZDONE[z] ? ZDONE[z](o) : 'Zone enregistrée : ' + form.dataset.t); rerender();
+    };
+  });
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
-  $('#autobk', el)?.addEventListener('change', async ev => { await db.saveSettings({ ...(await getS()), autoBackup: ev.target.checked }); toast(ev.target.checked ? 'Sauvegarde automatique activée' : 'Sauvegarde automatique désactivée'); });
   $('#bknow2', el)?.addEventListener('click', async ev => { ev.target.disabled = true; ev.target.textContent = 'Envoi…'; try { const r = await backup.runBackup(); toast('Sauvegarde faite : ' + r.name); } catch (err) { alert('Sauvegarde impossible : ' + (err.message || err)); } refresh(); });
   $$('[data-bkdl]', el).forEach(b => b.onclick = async () => { const it = (bk.list || []).find(x => x.id === b.dataset.bkdl); if (!it) return; b.disabled = true; try { await backup.downloadCopy(it); } catch (err) { alert('Téléchargement impossible : ' + (err.message || err)); } b.disabled = false; });
   $('#exp', el).onclick = async () => downloadFile(`gestpro-sauvegarde-${today()}.json`, JSON.stringify(await db.exportAll()));
@@ -588,6 +617,7 @@ async function migrate58() {
   localStorage.setItem('gp_mig58', '1');
 }
 
+let keepY = null; // position de défilement à conserver au prochain affichage (enregistrement ou annulation d'une zone des Réglages)
 async function route() {
   await getS().catch(() => {}); // applique les listes de choix et les seuils réglés avant tout affichage
   await migrateCiv().catch(() => {});
@@ -605,7 +635,7 @@ async function route() {
   const el = $('#view'); el.classList.remove('wide');
   try { await (routes[name] || routes.dashboard)(el, a, b); }
   catch (err) { console.error(err); el.innerHTML = `<div class="card">Erreur : ${e(err.message)}</div>`; }
-  window.scrollTo(0, 0);
+  window.scrollTo(0, keepY ?? 0); keepY = null;
 }
 
 window.addEventListener('hashchange', route);
@@ -626,7 +656,7 @@ sheets.onStatus(st => {
 cloud.onclick = () => sheets.sync({ interactive: true }).then(r => r?.pulled && toast(`${r.pulled} élément(s) reçus`)).catch(err => toast(err.message));
 sheets.setOnPulled(() => {
   getS().catch(() => {}); // listes et seuils reçus d'un autre appareil
-  const editing = $('#modal').open || location.hash.startsWith('#/doc/') || location.hash.startsWith('#/site/') || $('.scanner') || $('#view :focus');
+  const editing = $('#modal').open || location.hash.startsWith('#/doc/') || location.hash.startsWith('#/site/') || $('.scanner') || $('#view :focus') || anyEditing();
   if (!editing) refresh(); else toast('Nouvelles données reçues');
   /* M14 : deux documents de même numéro après la synchronisation ? On prévient une fois par numéro. */
   Promise.all([db.all('documents'), db.all('contacts')]).then(([docs, cts]) => {

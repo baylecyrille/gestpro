@@ -51,10 +51,9 @@ export async function mountLists(host) {
       <div class="lrows">${items.map((it, i) => rowHtml(k, it, i)).join('')}</div>
       <div class="row" style="margin:6px 0 0"><button type="button" class="btn sm" data-add>＋ Ajouter</button><button type="button" class="btn sm" data-reset title="Revient à la liste fournie avec l'application">↺ Liste d'origine</button></div></details>`;
   };
-  host.innerHTML = `<h3 style="margin-top:0">Listes de choix</h3>
-    <p class="muted">Les listes déroulantes de l'application : unités, catégories de produits, modes de règlement, contrats, fonctions, types d'absence et listes de suggestions. <b>Masquer</b> une valeur la retire des menus sans toucher aux fiches qui l'utilisent ; une valeur déjà utilisée ne peut pas être supprimée, et un texte repris tel quel dans les fiches et les documents (unité, catégorie, contrat) ne peut plus être renommé : les documents déjà émis gardent leur texte. Les listes sont partagées entre vos appareils.</p>
+  host.innerHTML = `<p class="muted" style="margin-top:0">Les listes déroulantes de l'application : unités, catégories de produits, modes de règlement, contrats, fonctions, types d'absence et listes de suggestions. <b>Masquer</b> une valeur la retire des menus sans toucher aux fiches qui l'utilisent ; une valeur déjà utilisée ne peut pas être supprimée, et un texte repris tel quel dans les fiches et les documents (unité, catégorie, contrat) ne peut plus être renommé : les documents déjà émis gardent leur texte. Les listes sont partagées entre vos appareils.</p>
     <div id="lsecs">${LIST_ORDER.map(k => secHtml(k, false)).join('')}</div>
-    <div class="row"><button type="button" class="btn primary" id="lsave">Enregistrer les listes</button><span class="muted" id="lmsg"></span></div>`;
+    <div class="row zshow"><button type="button" class="btn primary" id="lsave" data-zsubmit>Enregistrer les listes</button><span class="muted" id="lmsg"></span></div>`;
 
   /* relit les lignes affichées d'une liste (saisies en cours comprises) */
   const read = k => {
@@ -102,22 +101,23 @@ export async function mountLists(host) {
     await db.saveSettings(next); applyLists(next);
     $('#lmsg', host).textContent = 'Enregistré ✔'; toast('Listes de choix enregistrées');
     for (const k of LIST_ORDER) redraw(k);
+    host.dispatchEvent(new Event('zsaved', { bubbles: true })); // la zone se reverrouille
   };
 }
 
 /* ---------- Seuils et délais ---------- */
 export async function mountLimits(host) {
   const S = await getS(), st = S.limits || {};
-  host.innerHTML = `<h3 style="margin-top:0">Seuils et délais</h3>
-    <p class="muted">Réglages de calcul utilisés dans tout l'application. Laissez la valeur d'origine si vous ne savez pas. Les délais légaux (rétractation de 14 jours, délai de 7 jours avant tout paiement) ne se changent pas.</p>
+  host.innerHTML = `<p class="muted" style="margin-top:0">Réglages de calcul utilisés dans tout l'application. Laissez la valeur d'origine si vous ne savez pas. Les délais légaux (rétractation de 14 jours, délai de 7 jours avant tout paiement) ne se changent pas.</p>
     <div class="cols">${LIM_FIELDS.map(f => `<label class="f"><span>${e(f[1])} <small class="muted">(origine : ${String(f[2]).replace('.', ',')} ${e(f[6])})</small></span><div style="display:flex;gap:6px;align-items:center"><input type="number" name="${f[0]}" min="${f[3]}" max="${f[4]}" step="${f[5]}" inputmode="decimal" value="${e(st[f[0]] ?? f[2])}" required style="flex:1"><span class="muted">${e(f[6])}</span></div><small class="muted">${e(f[7])}</small></label>`).join('')}</div>
-    <div class="row"><button type="button" class="btn primary" id="limsave">Enregistrer les seuils</button><button type="button" class="btn" id="limreset">Valeurs d'origine</button><span class="muted" id="limmsg"></span></div>`;
+    <div class="row zshow"><button type="button" class="btn primary" id="limsave" data-zsubmit>Enregistrer les seuils</button><button type="button" class="btn" id="limreset">Valeurs d'origine</button><span class="muted" id="limmsg"></span></div>`;
   const val = () => Object.fromEntries(LIM_FIELDS.map(f => [f[0], $(`[name=${f[0]}]`, host).value]));
   $('#limsave', host).onclick = async () => {
     const r = checkLimits(val()); if (r.error) { alert(r.error); return; }
     const cur = await getS(), next = { ...cur }; if (Object.keys(r.limits).length) next.limits = r.limits; else delete next.limits;
     await db.saveSettings(next); applyLimits(next);
     $('#limmsg', host).textContent = 'Enregistré ✔'; toast('Seuils et délais enregistrés');
+    host.dispatchEvent(new Event('zsaved', { bubbles: true })); // la zone se reverrouille
   };
   $('#limreset', host).onclick = () => { LIM_FIELDS.forEach(f => { $(`[name=${f[0]}]`, host).value = LIM_DEFAULTS[f[0]]; }); $('#limmsg', host).textContent = 'Valeurs d\'origine remises : enregistrez pour confirmer.'; };
 }
