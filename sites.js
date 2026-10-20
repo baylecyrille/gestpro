@@ -4,7 +4,7 @@ import { e, eur, num, round2, dateFr, cname, today, F, addressAutocomplete, filt
 import { totals, paidOf, invBadge } from './docs.js';
 import { siteTeamHtml, assignModal, siteHours } from './team.js';
 import { siteMargin } from './finance.js';
-import { doneBySite } from './hours.js';
+import { doneBySite, fmtHM } from './hours.js';
 import * as auth from './auth.js';
 import * as lock from './lock.js';
 import * as fl from './files.js';
@@ -29,7 +29,8 @@ export function siteStats(siteId, docs, payments) {
   const invoices = mine.filter(d => d.type === 'invoice' && d.status !== 'draft' && d.status !== 'cancelled');
   const credits = mine.filter(d => d.type === 'credit' && d.status !== 'draft');
   const sum = (l, f) => round2(l.reduce((a, d) => a + totals(d)[f], 0));
-  const marcheHT = sum(signed, 'ht'), marcheTTC = sum(signed, 'ttc');
+  const cut = credits.filter(d => d.nature === 'discount'); // avoir de remise accordée : le marché baisse d'autant (un avoir de correction se refacture)
+  const marcheHT = round2(sum(signed, 'ht') - sum(cut, 'ht')), marcheTTC = round2(sum(signed, 'ttc') - sum(cut, 'ttc'));
   const factureHT = round2(sum(invoices, 'ht') - sum(credits, 'ht'));
   const factureTTC = round2(sum(invoices, 'ttc') - sum(credits, 'ttc'));
   const invIds = new Set(invoices.map(d => d.id)), crIds = new Set(credits.map(d => d.id));
@@ -131,7 +132,7 @@ export async function renderSite(el, id) {
   const PM = new Map(prods.map(p => [p.id, p])), MM = new Map(members.map(m => [m.id, m])), tm = siteHours(site.id, tasks, members, times);
   const { budget: bud, cmp } = money ? siteCompare(site, docs, { products: PM, members: MM }, Sg, mg, tm.planned) : { budget: null, cmp: null };
   const estBase = mg.marche || mg.base, est = money && mg.noCosts ? estimateMargin(estBase, bud) : null; // le coût prévu couvre tout le marché : on le compare au marché signé, pas à un simple acompte facturé
-  const fh = h => String(Math.round(h * 100) / 100).replace('.', ',') + ' h', fq = n => String(Math.round(n * 100) / 100).replace('.', ',');
+  const fh = h => fmtHM(h), fq = n => String(Math.round(n * 100) / 100).replace('.', ',');
   const toneOf = pct => (pct === null || pct === undefined ? '' : pct > 100 ? 'bad' : pct >= 85 ? 'warn' : ''), pbar = (pct, tone) => `<div class="bar ${tone}"><i style="width:${Math.max(0, Math.min(100, pct || 0))}%"></i></div>`;
   const pcrHtml = !money || !bud ? '' : cmp ? `<h3>Prévu contre réalisé</h3><div class="card pcr" id="pcr">
       ${cmp.hours.planned > 0 ? `<div class="pcrr"><span>Heures</span><b>${fh(cmp.hours.done)} faites sur ${fh(cmp.hours.planned)} prévues${cmp.hours.pct !== null ? ` (${cmp.hours.pct} %)` : ''}</b></div>${pbar(cmp.hours.pct, toneOf(cmp.hours.pct))}` : ''}
@@ -195,7 +196,7 @@ export async function renderSite(el, id) {
         : `<div class="big"><span>Marge</span><span style="color:var(--warn)">coûts non saisis</span></div>`)
       : `<div><span>− Matières sorties du stock</span><b>${eur(mg.matieres)}</b></div>
       <div><span>− Charges non facturées</span><b>${eur(mg.charges)}</b></div>
-      <div><span>− Main-d'œuvre (${mg.hours} h × coût horaire)</span><b>${eur(mg.mo)}</b></div>
+      <div><span>− Main-d'œuvre (${fmtHM(mg.hours)} × coût horaire)</span><b>${eur(mg.mo)}</b></div>
       <div class="big"><span>Marge ${mg.previsionnel ? 'prévisionnelle' : ''}</span><span style="color:${mg.marge < 0 ? 'var(--bad)' : 'var(--ok)'}">${eur(mg.marge)}${mg.pct !== null ? ` (${mg.pct} %)` : ''}</span></div>`}</div>
       ${mg.partiel && !mg.noCosts ? `<p class="invbanner" id="partnote" style="margin:10px 0 0">Seule une partie du marché est facturée (${eur(mg.fact)} sur ${eur(mg.marche)} HT) : cette marge compare <b>tous les coûts déjà engagés</b> à cette part seulement.${bud && bud.ok && bud.total > 0 ? ` Marge prévue sur tout le marché, d'après le devis : <b>${eur(mg.marche - bud.total)}</b>${mg.marche ? ` (${Math.round((mg.marche - bud.total) / mg.marche * 100)} %)` : ''}.` : ''}</p>` : ''}
       <p class="muted" style="margin-bottom:0" id="rentnote">${mg.noCosts ? (est ? `Aucun coût réel n'est encore saisi (sortie de stock, charge, heures) : cette marge est une estimation tirée des prix d'achat du devis${est.partial ? ` — ${bud.unknown} ligne${bud.unknown > 1 ? 's' : ''} sans prix d'achat, la marge réelle sera plus basse` : ''}.` : 'Aucun coût n\'est saisi, la marge ne peut pas être calculée : saisissez des sorties de stock, des charges ou des heures, ou renseignez le prix d\'achat des lignes du devis.') : 'Les matières viennent des sorties de stock rattachées à ce chantier (« Déduire du stock » depuis une facture finale, ou sortie manuelle avec chantier).'}</p></div>` : ''}

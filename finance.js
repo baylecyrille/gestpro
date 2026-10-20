@@ -88,7 +88,7 @@ export function siteMargin(siteId, docs, moves, tasks, members, site, times = []
   const M = Object.fromEntries(members.map(m => [m.id, m]));
   const mine = docs.filter(d => d.siteId === siteId && d.status !== 'draft' && d.status !== 'cancelled');
   const fact = round2(mine.filter(d => d.type === 'invoice' || d.type === 'credit').reduce((a, d) => a + sign(d) * totals(d).ht, 0));
-  const marche = round2(mine.filter(d => d.type === 'quote' && (d.status === 'accepted' || d.status === 'invoiced')).reduce((a, d) => a + totals(d).ht, 0));
+  const marche = round2(mine.filter(d => d.type === 'quote' && (d.status === 'accepted' || d.status === 'invoiced')).reduce((a, d) => a + totals(d).ht, 0) - mine.filter(d => d.type === 'credit' && d.nature === 'discount').reduce((a, d) => a + totals(d).ht, 0)); // les avoirs de remise font baisser le marché
   const matieres = round2(moves.filter(m => m.siteId === siteId && m.type === 'out').reduce((a, m) => a + num(m.qty) * num(m.unit), 0));
   const charges = round2(((site && site.charges) || []).reduce((a, c) => a + num(c.qty) * num(c.cost), 0));
   const done = doneBySite(siteId, tasks, times); // heures saisies par jour (tous chantiers confondus pour un même salarié) + anciens totaux

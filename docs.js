@@ -4,6 +4,7 @@ import { getS, logoSrc, seqOf, yearTok, lastNumber } from './defaults.js';
 import * as efact from './efact.js';
 import { docSums, depsOf, depositSplit, fmtRate, reducedRates, listRates, RATES, isOpt, docMargin, refOn } from './vat.js';
 import { checkDoc, checkMentions } from './doccheck.js';
+import { creditsOf, creditedTtc as creditedSum, lineCapacity, linesCredit, amountCredit, remainingTtc, netRates } from './credit.js';
 import { remindersOf } from './reminders.js';
 import { retractInfo, earlyPayment, WHERE } from './retract.js';
 import { e, eur, num, round2, dateFr, today, cname, addressAutocomplete, filterBar, bindFilters, getPref, setPref, F, modal, closeModal, toast, tabs, refresh, go, downloadFile, $, $$ } from './util.js';
@@ -55,11 +56,14 @@ export function quoteDeposits(docs, qid) {
     .sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
 }
 /* Ligne « acompte déjà facturé » reprise sur la facture finale (montants HT par taux de TVA) */
-export const depEntry = inv => ({ id: inv.id, number: inv.number, date: inv.date, rates: totals(inv).rates.filter(x => x.ht !== 0).map(x => ({ rate: x.rate, ht: x.ht })) });
+/* Net des avoirs déjà émis sur cette facture d'acompte (B4) : si l'acompte a été en partie crédité, seule la part restante est déduite. */
+export const depEntry = (inv, docs = []) => ({ id: inv.id, number: inv.number, date: inv.date, rates: netRates(inv, docs) });
+const netTtc = (d, docs) => round2(totals(d).ttc - creditedSum(docs, d.id));
+const netHt = (d, docs) => round2(totals(d).ht - creditsOf(docs, d.id).reduce((a, c) => a + totals(c).ht, 0));
 const depSig = d => d.rates.map(x => x.rate + ':' + x.ht).join(',');
 /* Acomptes à déduire d'une facture finale d'après l'état actuel des factures d'acompte : { add, stale, changed } */
 export function depsDiff(inv, docs) {
-  const want = inv.fromQuote && !inv.deposit ? quoteDeposits(docs, inv.fromQuote).filter(d => d.id !== inv.id).map(depEntry) : [], have = depsOf(inv);
+  const want = inv.fromQuote && !inv.deposit ? quoteDeposits(docs, inv.fromQuote).filter(d => d.id !== inv.id).map(d => depEntry(d, docs)) : [], have = depsOf(inv);
   const add = want.filter(w => !have.some(h => h.id === w.id)), stale = have.filter(h => !want.some(w => w.id === h.id));
   const changed = want.filter(w => { const h = have.find(x => x.id === w.id); return h && depSig(h) !== depSig(w); });
   return { want, add, stale, changed, ok: !add.length && !stale.length && !changed.length };
@@ -119,8 +123,8 @@ async function autoCloseSite(siteId) {
 
 /* Crée la facture d'un devis (une seule fois) et reprend les règlements déjà encaissés */
 async function makeInvoice(q) {
-  const deposits = quoteDeposits(await db.all('documents'), q.id);
-  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending', ...(deposits.length ? { deps: deposits.map(depEntry) } : {}) });
+  const allD = await db.all('documents'), deposits = quoteDeposits(allD, q.id);
+  const inv = await newDoc('invoice', { clientId: q.clientId, siteRef: q.siteRef, siteAddr: q.siteAddr, intro: q.intro, note: q.note, tva: q.tva, terms: q.terms, lines: JSON.parse(JSON.stringify(q.lines)).filter(l => !isOpt(l)), blocks: q.blocks ? copyBlocks(q.blocks).filter(b => b.type !== 'line' || !isOpt(b)) : undefined, ...(q.disc ? { disc: { ...q.disc } } : {}), siteId: q.siteId || '', fromQuote: q.id, fromQuoteNumber: q.number, status: 'pending', ...(deposits.length ? { deps: deposits.map(d => depEntry(d, allD)) } : {}) });
   ensureBlocks(inv); if (q.opts) inv.opts = { ...q.opts };
   inv.number = await nextNumber('invoice');
   await db.put('documents', inv);
@@ -404,9 +408,9 @@ export async function renderDoc(el, id, arg) {
   const depositsCardHtml = () => {
     const all = allDocs.filter(d => d.type === 'invoice' && d.deposit && d.deposit.q === cur.id).sort((a, b) => (a.date + a.number).localeCompare(b.date + b.number));
     if (!all.length) return '';
-    const got = round2(quoteDeposits(allDocs, cur.id).reduce((a, d) => a + totals(d).ttc, 0)), tq = totals(cur);
+    const got = round2(quoteDeposits(allDocs, cur.id).reduce((a, d) => a + netTtc(d, allDocs), 0)), tq = totals(cur);
     return `<div class="card"><h3 style="margin-top:0">Factures d'acompte</h3>
-      ${all.map(d => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(brouillon)')}</div><div class="s">${dateFr(d.date)}</div></div><div class="r"><b>${eur(totals(d).ttc)}</b><div>${invBadge(d, allPay)}</div></div></a>`).join('')}
+      ${all.map(d => `<a class="item" href="#/doc/${d.id}" style="text-decoration:none;color:inherit"><div class="main"><div class="t">${e(d.number || '(brouillon)')}</div><div class="s">${dateFr(d.date)}</div></div><div class="r"><b>${eur(totals(d).ttc)}</b>${creditedSum(allDocs, d.id) > 0.005 ? `<div class="s">dont avoir ${eur(creditedSum(allDocs, d.id))}</div>` : ''}<div>${invBadge(d, allPay)}</div></div></a>`).join('')}
       <p style="margin-bottom:0">Facturé en acompte <b>${eur(got)}</b> sur ${eur(tq.ttc)} TTC · reste <b>${eur(Math.max(0, round2(tq.ttc - got)))}</b> à facturer. Les acomptes sont déduits automatiquement de la facture finale.</p></div>`;
   };
   const creditUseHtml = t => {
@@ -445,7 +449,7 @@ export async function renderDoc(el, id, arg) {
       ${cur.number ? '<button class="btn" id="mailbtn">✉ Envoyer par e-mail</button>' : ''}
       ${canRelance ? '<button class="btn" id="relbtn" title="Prépare un message de relance (e-mail, partage ou note) et l\'inscrit à l\'historique du dossier">↻ Relancer</button>' : ''}
       ${!isQ && cur.status !== 'draft' && cur.number ? '<button class="btn" id="efact">🧾 Facture électronique</button>' : ''}
-      ${deleteHtml()}</div>${lockedNote()}${remindHist()}${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}</p>` : ''}</div>`;
+      ${deleteHtml()}</div>${lockedNote()}${remindHist()}${(cur.mails || []).length ? `<p class="muted" style="margin-bottom:0">✉ ${cur.mails.slice(-3).map(m => `Envoyé le ${dateFr(String(m.at).slice(0, 10))} à ${e(m.to)}`).join(' · ')}</p>` : ''}${creditsOfInv.length ? `<p class="muted" style="margin-bottom:0">Avoirs : ${creditsOfInv.map(c => `<a href="#/doc/${c.id}">${e(c.number || '(brouillon)')}</a>`).join(', ')}${creditedTtc > 0.005 && !isC ? ` · crédité ${eur(creditedTtc)} TTC, net ${eur(Math.max(0, round2(totals(cur).ttc - creditedTtc)))}` : ''}</p>` : ''}</div>`;
 
   /* Totaux de l'éditeur : remise sur le total, une ligne de TVA par taux présent, acomptes déjà facturés, options à part */
   /* Marge du document (information interne, jamais imprimée) */
@@ -555,11 +559,11 @@ export async function renderDoc(el, id, arg) {
   /* Créer une facture d'acompte à partir du devis courant */
   const depositModal = async () => {
     readHeader(); pruneBlocks(cur); await db.put('documents', cur);
-    const prev = quoteDeposits(allDocs, cur.id), tq = totals(cur), prevTtc = round2(prev.reduce((a, d) => a + totals(d).ttc, 0)), left = round2(tq.ttc - prevTtc);
+    const prev = quoteDeposits(allDocs, cur.id), tq = totals(cur), prevTtc = round2(prev.reduce((a, d) => a + netTtc(d, allDocs), 0)), left = round2(tq.ttc - prevTtc);
     if (tq.ttc <= 0) return toast('Ce devis n\'a pas de montant à facturer');
     if (left <= 0.02) return toast('Ce devis est déjà facturé en totalité en acomptes');
     const qPaid = paidOf(allPay, cur.id), canAcc = !['accepted', 'invoiced'].includes(cur.status);
-    const leftHt = round2(tq.ht - prev.reduce((a, d) => a + totals(d).ht, 0));
+    const leftHt = round2(tq.ht - prev.reduce((a, d) => a + netHt(d, allDocs), 0));
     const tooBig = (mode, v, sp) => sp.ttc > left + 0.02 || (mode === 'ttc' && v > left + 0.02) || (mode === 'ht' && v > leftHt + 0.02) || (mode === '%' && v > 100); // le montant demandé ne doit pas être rabattu en silence
     const rinfo = retractInfo(cur, curClient());
     modal('Facture d\'acompte',
@@ -592,17 +596,64 @@ export async function renderDoc(el, id, arg) {
       } });
   };
 
-  /* Créer un avoir à partir de la facture courante */
-  const creditModal = () => modal('Créer un avoir',
-    `<p class="muted">Avoir sur la facture <b>${e(cur.number)}</b> (${eur(totals(cur).ttc)} TTC).</p>
-    ${F('Type', 'mode', 'total', { type: 'select', options: [['total', 'Avoir total (reprend toutes les lignes)'], ['partial', 'Avoir partiel (je saisis le montant)']] })}
-    ${F('Motif', 'reason', '', { ph: 'ex : malfaçon, remise accordée, erreur de facturation…' })}`,
-    async o => {
-      const cr = await newDoc('credit', { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', intro: 'Avoir sur facture ' + cur.number, note: o.reason, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number,
-        lines: o.mode === 'total' ? JSON.parse(JSON.stringify(cur.lines)) : [{ desig: 'Remise / geste commercial', qty: 1, unit: 'u', pu: 0 }], ...(o.mode === 'total' && cur.disc ? { disc: { ...cur.disc } } : {}), ...(o.mode === 'total' && depsOf(cur).length ? { deps: JSON.parse(JSON.stringify(cur.deps)) } : {}) });
-      cr.number = await nextNumber('credit'); await db.put('documents', cr);
-      toast(`Avoir ${cr.number} créé`); go('#/doc/' + cr.id);
-    }, { submitLabel: 'Créer l\'avoir' });
+  /* Créer un avoir à partir de la facture courante : total, sur certaines lignes (quantités au choix) ou d'un montant libre (remise, geste commercial) */
+  const creditModal = () => {
+    const room = remainingTtc(cur, allDocs), prevCr = creditsOf(allDocs, cur.id), t0 = totals(cur), rest0 = Math.max(0, round2(t0.ttc - paidOf(allPay, cur.id)));
+    if (room <= 0.005) return toast('Cette facture est déjà entièrement créditée');
+    const cap = lineCapacity(cur, allDocs), fm = v => String(v).replace('.', ',');
+    const modes = [...(prevCr.length ? [] : [['total', 'Avoir total (reprend toutes les lignes)']]), ['lines', 'Avoir sur certaines lignes (je choisis les quantités)'], ['amount', 'Avoir d\'un montant libre (remise, geste commercial)']];
+    const rows = cap.map(c => `<div class="crl" data-idx="${c.idx}" data-left="${c.left}"><label class="crk"><input type="checkbox" data-pick ${c.left <= 0 ? 'disabled' : ''}> <span><b>${e(c.line.desig || 'Ligne sans désignation')}</b><small class="muted">facturé ${fm(c.qty)} ${e(c.line.unit || '')} à ${eur(c.line.pu)} HT${c.credited ? ` · déjà crédité ${fm(c.credited)}` : ''}${c.line.tva !== undefined && c.line.tva !== '' ? ` · TVA ${fmtRate(num(c.line.tva))}` : ''}</small></span></label>
+      <input type="number" step="any" min="0" max="${c.left}" inputmode="decimal" data-q placeholder="0" ${c.left <= 0 ? 'disabled' : ''} aria-label="Quantité à créditer"><small class="muted">/ ${fm(c.left)} ${e(c.line.unit || '')}</small></div>`).join('');
+    modal('Créer un avoir',
+      `<p class="muted" style="margin-top:0">Avoir sur la facture <b>${e(cur.number)}</b> (${eur(t0.ttc)} TTC)${prevCr.length ? ` · déjà crédité ${eur(creditedSum(allDocs, cur.id))} · reste créditable <b>${eur(room)}</b>` : ''}.</p>
+      ${F('Type', 'mode', modes[0][0], { type: 'select', options: modes })}
+      <div id="crlines" hidden><div class="crwrap">${rows || '<p class="muted">Aucune ligne à créditer.</p>'}</div></div>
+      <div id="cramount" hidden class="cols">${F('Montant à créditer', 'amount', '', { type: 'number', step: '0.01', extra: 'min="0" inputmode="decimal"' })}${F('Ce montant est en', 'basis', 'ttc', { type: 'select', options: [['ttc', 'TTC (ce que le client économise)'], ['ht', 'HT']] })}</div>
+      <div id="crnature" hidden>${F('Nature de l\'avoir', 'nature', 'discount', { type: 'select', options: [['discount', 'Remise accordée : le montant du marché baisse'], ['correction', 'Correction : ce montant sera refacturé ensuite']] })}</div>
+      ${F('Motif', 'reason', '', { ph: 'ex : malfaçon, remise accordée, erreur de facturation…' })}
+      <div class="depprev" id="crsum"></div>
+      ${rest0 > 0.005 ? `<label class="dpck"><input type="checkbox" name="ded" checked> Déduire aussitôt de cette facture (reste à régler : ${eur(rest0)})</label>` : '<p class="muted" style="margin:6px 0 0">Cette facture est déjà réglée : l\'avoir pourra être remboursé au client ou déduit d\'une prochaine facture.</p>'}
+      ${cur.deposit ? '<p class="muted" style="margin:6px 0 0">Facture d\'acompte : la facture finale ne déduira plus que la part restante de l\'acompte.</p>' : ''}`,
+      async (o, f) => {
+        const base = { clientId: cur.clientId, siteId: cur.siteId || '', siteRef: cur.siteRef, siteAddr: cur.siteAddr, tva: cur.tva, terms: '', note: o.reason, status: 'issued', fromInvoice: cur.id, fromInvoiceNumber: cur.number };
+        let cr;
+        if (o.mode === 'total') {
+          cr = await newDoc('credit', { ...base, intro: 'Avoir sur facture ' + cur.number, lines: JSON.parse(JSON.stringify(cur.lines)), ...(cur.blocks ? { blocks: copyBlocks(cur.blocks) } : {}), ...(cur.disc ? { disc: { ...cur.disc } } : {}), ...(depsOf(cur).length ? { deps: JSON.parse(JSON.stringify(cur.deps)) } : {}), ...(cur.opts ? { opts: { ...cur.opts } } : {}) });
+        } else {
+          const r = o.mode === 'lines'
+            ? linesCredit(cur, $$('.crl', f).filter(n => n.querySelector('[data-q]').value !== '').map(n => ({ idx: +n.dataset.idx, qty: num(n.querySelector('[data-q]').value) })), allDocs)
+            : amountCredit(cur, o.amount, o.basis, allDocs);
+          if (r.error) { alert(r.error); return false; }
+          cr = await newDoc('credit', { ...base, intro: (o.mode === 'lines' ? 'Avoir partiel sur facture ' : 'Avoir sur facture ') + cur.number, nature: o.nature || 'discount', blocks: r.lines.map(l => ({ ...l, type: 'line' })), lines: [], ...(r.disc ? { disc: r.disc } : {}), ...(cur.opts ? { opts: { ...cur.opts } } : {}) });
+        }
+        ensureBlocks(cr);
+        if (totals(cr).ttc > room + 0.005) { alert(`Cet avoir (${eur(totals(cr).ttc)} TTC) dépasse ce qu'il reste à créditer (${eur(room)} TTC).`); return false; }
+        cr.number = await nextNumber('credit'); await db.put('documents', cr);
+        const ded = o.ded ? Math.min(totals(cr).ttc, rest0) : 0;
+        if (ded > 0.005) { await db.put('payments', { docId: cur.id, creditId: cr.id, amount: ded, date: today(), method: 'avoir', kind: 'avoir', note: 'Avoir ' + cr.number }); await syncInvStatus(cur.id); }
+        toast(`Avoir ${cr.number} créé${ded > 0.005 ? ' et déduit de la facture' : ''}`); go('#/doc/' + cr.id);
+      }, { submitLabel: 'Créer l\'avoir', wide: true, onOpen: f => {
+        const sum = () => {
+          const mode = f.elements.mode.value;
+          $('#crlines', f).hidden = mode !== 'lines'; $('#cramount', f).hidden = mode !== 'amount'; $('#crnature', f).hidden = mode === 'total';
+          let r;
+          if (mode === 'total') r = { ht: t0.ht, ttc: Math.min(t0.ttc, room) };
+          else if (mode === 'lines') { const picks = $$('.crl', f).filter(n => n.querySelector('[data-q]').value !== '').map(n => ({ idx: +n.dataset.idx, qty: num(n.querySelector('[data-q]').value) })); r = picks.length ? linesCredit(cur, picks, allDocs) : { none: true }; }
+          else r = f.elements.amount.value === '' ? { none: true } : amountCredit(cur, f.elements.amount.value, f.elements.basis.value, allDocs);
+          $('#crsum', f).classList.toggle('bad', !!r.error);
+          $('#crsum', f).innerHTML = r.error ? e(r.error) : r.none ? (mode === 'lines' ? 'Cochez les lignes à créditer (ou saisissez une quantité).' : 'Saisissez le montant de l\'avoir.') : `<b>Avoir : ${eur(r.ttc)} TTC</b> (${eur(r.ht)} HT)<br>Reste créditable ensuite : ${eur(Math.max(0, round2(room - r.ttc)))} TTC`;
+        };
+        f.addEventListener('input', ev => { const q = ev.target.closest('[data-q]'); if (q) q.closest('.crl').querySelector('[data-pick]').checked = num(q.value) > 0; sum(); });
+        f.addEventListener('change', ev => {
+          const pk = ev.target.closest('[data-pick]');
+          if (pk) { const row = pk.closest('.crl'); row.querySelector('[data-q]').value = pk.checked ? row.dataset.left : ''; }
+          if (ev.target.name === 'mode') f.elements.nature.value = ev.target.value === 'amount' ? 'discount' : 'correction';
+          sum();
+        });
+        f.elements.nature.value = f.elements.mode.value === 'amount' ? 'discount' : 'correction';
+        sum();
+      } });
+  };
 
   /* Utilisation d'un avoir : déduction d'une facture ou remboursement du client */
   const bindCredit = t => {
@@ -886,7 +937,7 @@ export async function renderDoc(el, id, arg) {
         const nopt = (cur.lines || []).filter(isOpt).length;
         if (nopt && !confirm(`${nopt === 1 ? 'Une ligne est en option et ne sera pas reprise' : nopt + ' lignes sont en option et ne seront pas reprises'} dans la facture (décochez « Option » sur le devis pour celles que le client a acceptées). Créer la facture ?`)) return;
         const dps = quoteDeposits(allDocs, cur.id);
-        if (dps.length && !confirm(`${dps.length === 1 ? 'La facture d\'acompte' : 'Les ' + dps.length + ' factures d\'acompte'} ${dps.map(d => d.number).join(', ')} (${eur(dps.reduce((a, d) => a + totals(d).ttc, 0))} TTC) ser${dps.length === 1 ? 'a' : 'ont'} déduite${dps.length === 1 ? '' : 's'} de la facture finale. Continuer ?`)) return;
+        if (dps.length && !confirm(`${dps.length === 1 ? 'La facture d\'acompte' : 'Les ' + dps.length + ' factures d\'acompte'} ${dps.map(d => d.number).join(', ')} (${eur(dps.reduce((a, d) => a + netTtc(d, allDocs), 0))} TTC) ser${dps.length === 1 ? 'a' : 'ont'} déduite${dps.length === 1 ? '' : 's'} de la facture finale. Continuer ?`)) return;
         if (cur.invoiceId && !confirm('Une facture existe déjà pour ce devis. En créer une autre ?')) return;
         const inv = await makeInvoice(cur);
         toast(`Facture ${inv.number} créée`); go('#/doc/' + inv.id);

@@ -2,6 +2,7 @@
 //   budget  = ce que les devis signés du chantier prévoient : heures (lignes de main d'œuvre en heures) et coûts (prix d'achat des lignes)
 //   réel    = ce que le chantier a consommé : heures saisies, sorties de stock, charges, main d'œuvre (voir finance.siteMargin)
 import { num } from './util.js';
+import { fmtHM } from './hours.js';
 import { r2, isOpt, hasCost, lineCost, lineHt } from './vat.js';
 import { hasCompo, priceOf, OUV_CAT } from './ouvrage.js';
 
@@ -73,7 +74,7 @@ export function compare(budget, real, { progress = '', assigned = 0 } = {}) {
   const hp = budget.hours, hd = num(real.hours), matP = r2(budget.mat + budget.sub), matR = r2(num(real.matieres) + num(real.charges)), moP = budget.mo, moR = num(real.mo);
   const totP = budget.total, totR = r2(matR + moR);
   const hPct = hp > 0 ? Math.round(hd / hp * 100) : null, tPct = totP > 0 ? Math.round(totR / totP * 100) : null;
-  const flags = [], fmtH = h => String(Math.round(h * 100) / 100).replace('.', ',') + ' h';
+  const flags = [], fmtH = h => fmtHM(h);
   if (hp > 0) {
     if (hd > hp + 0.005) flags.push({ key: 'hours-over', tone: 'bad', label: 'Heures dépassées', text: `Heures dépassées : ${fmtH(hd)} faites pour ${fmtH(hp)} prévues au devis.` });
     else if (hPct >= 85 && (prog === null || prog < hPct - 10)) flags.push({ key: 'hours-near', tone: 'warn', label: 'Heures presque épuisées', text: `${fmtH(hd)} faites sur ${fmtH(hp)} prévues (${hPct} %)${prog !== null ? ` alors que les travaux sont à ${Math.round(prog)} %` : ''} : il ne reste que ${fmtH(hp - hd)}.` });

@@ -39,6 +39,7 @@ label.f{display:block;margin-bottom:9px}
 label.f>span{display:block;font-size:12px;color:var(--mut);margin-bottom:2px}
 .cols{display:grid;gap:0 10px;grid-template-columns:1fr 1fr}
 .cols .full{grid-column:1/-1}
+.cols[hidden]{display:none}
 .item{display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.94);border:1px solid var(--bd);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;cursor:pointer}
 .item .main{flex:1;min-width:0}
 .item .t{font-weight:600;overflow:hidden;text-overflow:ellipsis}
@@ -663,6 +664,17 @@ span.tbadge{cursor:default}
 .rleg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin:6px 0}.rleg span{display:inline-flex;align-items:center;gap:5px}.rleg i{width:9px;height:9px}
 .rname{font:inherit;font-weight:600;color:var(--p);background:none;border:0;padding:2px 0;cursor:pointer;text-align:left;text-decoration:underline dotted}
 .rtab tr.rk td{color:var(--mut)}
+.tl-x{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:30px}.tl-hm{font-size:12.5px}
+.rlock{margin:10px 0;padding:10px 12px;border:1px solid var(--bd);border-radius:var(--r);background:#f3f7fd;font-size:13.5px}
+.rlock.closed{border-color:var(--p2);background:#e7f0fc}
+.rlock .rwarn{margin-top:6px;padding:6px 8px;border-radius:8px;background:#fff4e0;color:#8a5200}
+.rlog{margin-top:6px;font-size:12.5px;color:var(--mut)}.rlog summary{cursor:pointer}
+.cx{display:block;font-size:10.5px;font-weight:700;border-radius:6px;padding:0 3px;margin-top:1px;white-space:nowrap}
+.cx.over{background:#fff1d9;color:var(--warn)}.cx.short{background:#e8eef7;color:var(--p)}
+.rctr td.lateW{background:#eef1f6;color:var(--mut);font-size:11px}.rctr td.lateW small{display:block}
+.rctr td.edgeW{box-shadow:0 0 0 1px var(--p2) inset}
+.ovr{color:var(--warn)}.shr{color:var(--p)}
+.rctr td{min-width:64px;vertical-align:top}
 .rwk{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:12px 0 4px;padding:4px 8px;background:#eaf1fb;border-radius:8px;font-weight:600;color:var(--p)}.rwk span{font-weight:400;color:var(--tx)}
 .tday.ro{cursor:default}
 /* impression comptable */
@@ -719,3 +731,24 @@ fieldset.ouvmode input[type=radio]{width:auto;margin:3px 0 0;flex:none}
 .pcr .pcrf{margin-top:8px;padding:7px 10px;border-radius:8px;font-size:14px}
 .pcr .pcrf.bad{background:#fde5e5;color:var(--bad)}.pcr .pcrf.warn{background:#fff1d9;color:var(--warn)}
 .item.need .s{white-space:normal}
+/* ---- Étiquettes code-barres (M10) ---- */
+.llist{max-height:260px;overflow:auto;border:1px solid var(--bd);border-radius:10px;padding:4px 8px}
+.lrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #eef1f6}.lrow:last-child{border-bottom:0}
+.lrow .lt{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;text-overflow:ellipsis}.lrow .lt small{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lrow input{width:72px;flex:none;text-align:right}
+.lprev{margin-top:4px;overflow:auto}
+.lblpage{position:relative;width:210mm;height:296mm;overflow:hidden;background:#fff;page-break-after:always;break-after:page}
+.lblpage:last-child{page-break-after:auto;break-after:auto}
+.lblpage.prev{height:auto;border:1px dashed var(--bd);page-break-after:auto;margin-top:4px}
+.lbl{position:absolute;box-sizing:border-box;padding:1.2mm 1.5mm;display:flex;flex-direction:column;align-items:stretch;overflow:hidden;font:var(--nf,8pt)/1.15 Arial,Helvetica,sans-serif;color:#000;background:#fff}
+.lblpage.prev .lbl{position:relative}
+.lbl.ctr{outline:.2mm solid #999;outline-offset:-.2mm}
+.lbl .ln{font-weight:700;font-size:var(--nf);line-height:1.1;display:-webkit-box;-webkit-line-clamp:var(--nl);-webkit-box-orient:vertical;overflow:hidden;flex:none;word-break:break-word}
+.lbl .lb{flex:1;min-height:5mm;margin:.6mm 0;display:flex}.lbl .lb svg{width:100%;height:100%;display:block}
+.lbl .lh{font-family:'Courier New',monospace;font-size:var(--hf);text-align:center;letter-spacing:.04em;flex:none;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.lbl .lr{font-size:var(--hf);text-align:center;flex:none;white-space:nowrap;overflow:hidden}
+/* ---- Avoir partiel (B4) ---- */
+.crwrap{max-height:280px;overflow:auto;border:1px solid var(--bd);border-radius:10px;padding:2px 8px;margin-bottom:8px}
+.crl{display:grid;grid-template-columns:1fr 84px auto;gap:6px 8px;align-items:center;padding:6px 0;border-bottom:1px solid #eef1f6}.crl:last-child{border-bottom:0}
+.crl .crk{display:flex;gap:8px;align-items:flex-start;margin:0}.crl .crk span{display:flex;flex-direction:column;min-width:0}.crl .crk small{font-size:11.5px}
+.crl input[data-q]{width:100%;box-sizing:border-box;text-align:right}

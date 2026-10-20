@@ -20,6 +20,7 @@ export const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n
 const monday = s => { const d = parse(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); };
 const JOURS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const monthName = d => `${MOIS[+d.slice(5, 7) - 1]} ${d.slice(0, 4)}`;
 
 /* L'affectation couvre-t-elle ce jour ? (week-ends exclus sauf option) */
 export const covers = H.covers; // (calcul partagé avec le récapitulatif mensuel, voir hours.js)
@@ -64,7 +65,7 @@ export function memberModal(m) {
     ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
     ${F('Type de contrat de travail', 'contract', m.contract || '', { type: 'select', options: [['', '— non renseigné —'], ...CONTRACTS.map(c => [c, c])] })}
     ${F('Date de naissance', 'birthDate', m.birthDate || '', { type: 'date' })}${F('Date d\'embauche', 'hireDate', m.hireDate || '', { type: 'date' })}
-    ${F('Date de sortie', 'exitDate', m.exitDate || '', { type: 'date' })}<span></span>
+    ${F('Date de sortie', 'exitDate', m.exitDate || '', { type: 'date' })}${F('Heures par semaine (contrat)', 'weekHours', m.weekHours ?? '', { type: 'number', step: '0.25', ph: String(H.WEEK_BASE) })}
     ${colorField('Couleur (planning)', 'color', m.color, 'full')}
     ${F('Téléphone', 'phone', m.phone, { type: 'tel' })}${F('E-mail', 'email', m.email, { type: 'email' })}
     ${F('Coût horaire HT (€/h) – coût pour l\'entreprise', 'rate', m.rate, { type: 'number', step: '0.01' })}
@@ -87,7 +88,7 @@ export function memberModal(m) {
       if (o.access && pin) m.pinHash = await auth.hashPin(pin, m.id);
       if (!o.access) delete m.pinHash;
       const habs = $$('.hab', f).map(r => ({ label: $('[data-h=label]', r).value.trim(), expiry: $('[data-h=expiry]', r).value })).filter(h => h.label);
-      Object.assign(m, o, { photo, habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate), billRate: o.billRate === '' ? '' : num(o.billRate) });
+      Object.assign(m, o, { photo, habs, active: o.active !== '0', rate: o.rate === '' ? '' : num(o.rate), billRate: o.billRate === '' ? '' : num(o.billRate), weekHours: num(o.weekHours) > 0 ? num(o.weekHours) : '' });
       await db.put('members', m);
       if (firstAdmin && m.pinHash) auth.setUser(m.id); // active la protection sans verrouiller son auteur
       toast('Membre enregistré'); refresh();
@@ -114,7 +115,8 @@ export function memberModal(m) {
 
 /* ---------- Affectation (membre(s) → chantier, dates, heures) ---------- */
 export async function assignModal(t, preset = {}) {
-  const [sites, members, tasks, allContacts, times] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts'), db.all('times')]);
+  const [sites, members, tasks, allContacts, times, closedRec] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts'), db.all('times'), db.get('settings', 'hoursClosed')]);
+  const closed = closedRec?.value || null;
   const moes = allContacts.filter(c => c.kind === 'moe').sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const isNew = !t; t = t || { siteId: preset.siteId || '', memberId: preset.memberId || '', start: preset.date || today(), end: preset.date || today(), hours: 7, weekend: false, done: '', note: '' };
   const act = members.filter(m => m.active !== false || m.id === t.memberId).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -137,6 +139,10 @@ export async function assignModal(t, preset = {}) {
     <p class="muted full" id="calc"></p></div>`,
     async (o, f) => {
       if (o.end < o.start) { alert('La date de fin est avant la date de début.'); return false; }
+      /* l'ancien total « réalisées » compte dans le mois du début : s'il est clôturé, on n'y touche plus */
+      const hadDone = !isNew && t.done !== '' && t.done != null, doneNow = o.done === '' ? '' : num(o.done);
+      const lockedMonth = [!isNew ? t.start : '', o.start].find(d => d && H.isClosedDate(closed, d));
+      if (lockedMonth && ((hadDone && (o.start.slice(0, 7) !== t.start.slice(0, 7) || doneNow !== num(t.done))) || (!hadDone && doneNow !== ''))) { alert(`Les heures de ${monthName(lockedMonth)} sont clôturées : le total « réalisées » ne peut plus être modifié. Rouvrez le mois dans Planning › Heures si besoin.`); return false; }
       const base = { siteId: o.siteId, start: o.start, end: o.end, hours: num(o.hours), weekend: !!o.weekend, done: o.done === '' ? '' : num(o.done), note: o.note, extId: o.extId || '' };
       const ids = isNew ? $$('[name=mem]:checked', f).map(i => i.value) : [o.memberId];
       if (!ids.length) { alert('Cochez au moins un membre.'); return false; }
@@ -150,15 +156,18 @@ export async function assignModal(t, preset = {}) {
       toast(warn.length ? 'Enregistré – ⚠ ' + warn.join(' ; ') : 'Affectation enregistrée'); refresh();
     },
     {
-      del: isNew ? null : async () => { await db.del('tasks', t.id); refresh(); },
+      del: isNew ? null : async () => {
+        if (t.done !== '' && t.done != null && H.isClosedDate(closed, t.start)) { alert(`Cette affectation porte des heures de ${monthName(t.start)}, mois clôturé : elle ne peut pas être supprimée. Rouvrez le mois dans Planning › Heures si besoin.`); return; }
+        await db.del('tasks', t.id); refresh();
+      },
       onOpen: f => {
         const calc = () => {
           const a = { start: $('[name=start]', f).value, end: $('[name=end]', f).value, hours: $('[name=hours]', f).value, weekend: $('[name=weekend]', f).checked };
-          const n = daysOf(a).length; $('#calc', f).textContent = n ? `${n} jour(s) travaillé(s) · ${plannedHours(a)} h prévues par membre` : '';
+          const n = daysOf(a).length; $('#calc', f).textContent = n ? `${n} jour(s) travaillé(s) · ${H.fmtHM(plannedHours(a))} prévues par membre` : '';
         };
         f.addEventListener('input', calc); calc();
         const dh = H.doneBySite(t.siteId, [], times)[t.memberId];
-        if (!isNew && dh) $('#donehint', f).innerHTML = `⚠ Des heures saisies par jour existent pour ce membre sur ce chantier (<b>${dh} h</b>) : elles priment sur ce total.`;
+        if (!isNew && dh) $('#donehint', f).innerHTML = `⚠ Des heures saisies par jour existent pour ce membre sur ce chantier (<b>${H.fmtHM(dh)}</b>) : elles priment sur ce total.`;
       }
     });
 }
@@ -170,79 +179,113 @@ function conflicts(rec, others) {
 }
 
 /* ---------- Saisie des heures d'une journée (salarié : ses propres jours ; gestionnaire : tous) ---------- */
+const capFirst = t => t.charAt(0).toUpperCase() + t.slice(1);
 const dayLabel = d => `${JOURS[(parse(d).getDay() + 6) % 7]} ${dateFr(d)}`;
 export function timeModal(m, date, env) {
-  const { sites, tasks, times, me } = env;
+  const { sites, tasks, times, me, closed } = env;
+  if (H.isClosedDate(closed, date)) { toast(`${capFirst(monthName(date))} est clôturé : les heures ne se modifient plus. Un gestionnaire peut rouvrir le mois.`); return; }
   const planned = tasks.filter(t => t.memberId === m.id && covers(t, date));
   const mine = H.dayTimes(times, m.id, date);
   const plannedIds = new Set(planned.map(t => t.siteId));
   const used = new Set(mine.map(x => x.siteId).filter(Boolean));
   const open = sites.filter(s => !['paid', 'lost'].includes(s.status) || plannedIds.has(s.id) || used.has(s.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   /* lignes de départ : les saisies existantes, sinon le planning du jour (heures prévues, à vérifier) */
-  const seed = mine.length ? mine.map(x => ({ id: x.id, kind: x.kind, siteId: x.siteId, hours: x.hours, note: x.note }))
+  const seed = mine.length ? mine.map(x => ({ id: x.id, kind: x.kind, siteId: x.siteId, hours: x.hours, note: x.note, absType: x.absType || '' }))
     : planned.map(t => ({ id: '', kind: 'site', siteId: t.siteId, hours: num(t.hours), note: '' }));
-  if (!seed.length) seed.push({ id: '', kind: 'site', siteId: '', hours: '', note: '' });
+  if (!seed.length) seed.push({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: 'cp' });
+  const dayH = H.dayHoursOf(m);
   const siteOpts = sel => `<option value="">— choisir le chantier —</option>${plannedIds.size ? '<optgroup label="Prévus ce jour">' + open.filter(s => plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('') + '</optgroup><optgroup label="Autres chantiers">' : ''}${open.filter(s => !plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('')}${plannedIds.size ? '</optgroup>' : ''}`;
+  const absOpts = l => `${l.kind === 'absence' && l.id && !l.absType ? `<option value="" selected>Absence (type non précisé)</option>` : ''}${H.ABS_TYPES.map(([k, n]) => `<option value="${k}" ${k === (l.absType || (l.id && l.kind === 'absence' ? '' : 'cp')) ? 'selected' : ''}>${e(n)}</option>`).join('')}`;
   const line = l => `<div class="tl" data-id="${e(l.id || '')}"><select data-f="kind" aria-label="Activité">${H.KINDS.map(([k, n]) => `<option value="${k}" ${k === l.kind ? 'selected' : ''}>${e(n)}</option>`).join('')}</select>
-    <input data-f="hours" type="number" step="0.25" min="0" max="${H.DAY_LIMIT}" inputmode="decimal" value="${l.hours === '' ? '' : num(l.hours)}" placeholder="h" aria-label="Heures"><button type="button" class="btn sm" data-rm aria-label="Supprimer la ligne">✕</button>
+    <input data-f="hours" type="text" inputmode="decimal" autocomplete="off" value="${l.hours === '' ? '' : H.fmtH(l.hours)}" placeholder="h" aria-label="Heures (7,5 ou 7h30)"><button type="button" class="btn sm" data-rm aria-label="Supprimer la ligne">✕</button>
     <select data-f="site" class="tl-w" aria-label="Chantier" ${l.kind === 'site' ? '' : 'hidden'}>${siteOpts(l.siteId)}</select>
-    <input data-f="note" class="tl-w" maxlength="120" value="${e(l.note || '')}" placeholder="Travail effectué (facultatif)" autocomplete="off"></div>`;
+    <select data-f="abs" class="tl-w" aria-label="Type d'absence" ${l.kind === 'absence' ? '' : 'hidden'}>${absOpts(l)}</select>
+    <input data-f="note" class="tl-w" maxlength="120" value="${e(l.note || '')}" placeholder="Travail effectué (facultatif)" autocomplete="off">
+    <div class="tl-x tl-w"><span class="tl-hm muted" data-f="hm"></span><button type="button" class="btn sm" data-full title="Complète la journée avec les heures restantes">Journée complète</button></div></div>`;
   const who = me && me.id === m.id ? 'Mes heures' : `Heures de ${m.name}`;
   modal(`${who} · ${dayLabel(date)}`,
-    `${planned.length ? `<p class="muted" style="margin-top:0">Prévu : ${planned.map(t => `<b>${e(sites.find(s => s.id === t.siteId)?.name || '')}</b> ${num(t.hours)} h`).join(' · ')}${mine.length ? '' : '. Heures préremplies d\'après le planning : changez-les si besoin.'}</p>` : '<p class="muted" style="margin-top:0">Rien de prévu ce jour : ajoutez ce que vous avez fait.</p>'}
+    `${planned.length ? `<p class="muted" style="margin-top:0">Prévu : ${planned.map(t => `<b>${e(sites.find(s => s.id === t.siteId)?.name || '')}</b> ${H.fmtHM(t.hours)}`).join(' · ')}${mine.length ? '' : '. Heures préremplies d\'après le planning : changez-les si besoin.'}</p>` : '<p class="muted" style="margin-top:0">Rien de prévu ce jour : ajoutez ce que vous avez fait.</p>'}
     <div id="tls">${seed.map(line).join('')}</div>
     <button type="button" class="btn sm" id="tladd">＋ Ajouter une ligne (autre chantier, atelier…)</button>
     <p id="tltot" class="muted" style="margin-bottom:0"></p>`,
     async (o, f) => {
       const val = (r, k) => $(`[data-f=${k}]`, r).value;
-      const chk = H.checkDay($$('.tl', f).map(r => ({ id: r.dataset.id, kind: val(r, 'kind'), siteId: val(r, 'site'), hours: val(r, 'hours'), note: val(r, 'note') })));
+      const hv = t => (t.trim() === '' ? '' : (H.parseHM(t) ?? NaN));
+      const rows = $$('.tl', f).map(r => ({ id: r.dataset.id, kind: val(r, 'kind'), siteId: val(r, 'site'), hours: hv(val(r, 'hours')), note: val(r, 'note'), absType: val(r, 'abs') }));
+      if (rows.some(r => Number.isNaN(r.hours))) { alert('Une durée est illisible : écrivez par exemple 7,5 ou 7h30.'); return false; }
+      const chk = H.checkDay(rows);
       if (chk.error) { alert(chk.error); return false; }
       const keep = new Set(chk.lines.map(l => l.id).filter(Boolean));
       for (const x of mine) if (!keep.has(x.id)) await db.del('times', x.id);
       for (const l of chk.lines) {
         const old = mine.find(x => x.id === l.id);
-        await db.put('times', { ...(old || {}), ...(l.id ? { id: l.id } : {}), memberId: m.id, date, kind: l.kind, siteId: l.siteId, hours: l.hours, note: l.note, by: me?.id || '' });
+        await db.put('times', { ...(old || {}), ...(l.id ? { id: l.id } : {}), memberId: m.id, date, kind: l.kind, siteId: l.siteId, hours: l.hours, note: l.note, absType: l.absType, by: me?.id || '' });
       }
       toast(chk.lines.length ? 'Heures enregistrées' : 'Journée effacée'); refresh();
     },
     {
       submitLabel: 'Enregistrer',
       onOpen: f => {
+        const num2 = r => { const t = $('[data-f=hours]', r).value; return t.trim() === '' ? 0 : H.parseHM(t); };
         const tot = () => {
-          const rows = $$('.tl', f).map(r => ({ kind: $('[data-f=kind]', r).value, hours: $('[data-f=hours]', r).value }));
+          const rows = $$('.tl', f).map(r => ({ kind: $('[data-f=kind]', r).value, hours: num2(r) ?? 0 }));
+          $$('.tl', f).forEach(r => { const v = num2(r); $('[data-f=hm]', r).innerHTML = v === null ? '<span style="color:var(--bad)">durée illisible (ex : 7,5 ou 7h30)</span>' : v > 0 ? `= ${H.fmtHM(v)}` : ''; });
           const w = H.workedOf(rows), a = H.absenceOf(rows);
-          $('#tltot', f).innerHTML = `Total du jour : <b>${w} h</b> travaillées${a ? ` · ${a} h d'absence` : ''}`;
+          $('#tltot', f).innerHTML = `Total du jour : <b>${H.fmtHM(w)}</b> travaillées${a ? ` · ${H.fmtHM(a)} d'absence` : ''} <span class="muted">· journée type ${H.fmtHM(dayH)}</span>`;
         };
         f.addEventListener('input', tot);
-        f.addEventListener('change', ev => { const k = ev.target.closest('[data-f=kind]'); if (k) { $('[data-f=site]', k.closest('.tl')).hidden = k.value !== 'site'; } tot(); });
+        f.addEventListener('change', ev => { const k = ev.target.closest('[data-f=kind]'); if (k) { const r = k.closest('.tl'); $('[data-f=site]', r).hidden = k.value !== 'site'; $('[data-f=abs]', r).hidden = k.value !== 'absence'; } tot(); });
         f.addEventListener('click', ev => {
-          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: 'site', siteId: '', hours: '', note: '' })); tot(); }
+          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: 'cp' })); tot(); }
           const rm = ev.target.closest('[data-rm]'); if (rm) { rm.closest('.tl').remove(); tot(); }
+          const full = ev.target.closest('[data-full]');
+          if (full) {
+            const row = full.closest('.tl'), others = H.round2($$('.tl', f).filter(r => r !== row).reduce((a, r) => a + (num2(r) || 0), 0)), left = H.round2(dayH - others);
+            if (left <= 0) toast(`La journée est déjà complète (${H.fmtHM(others)}).`); else { $('[data-f=hours]', row).value = H.fmtH(left); tot(); }
+          }
         });
         tot();
       }
     });
 }
 
+/* ---------- Clôture d'un mois d'heures (M8) ----------
+   Le mois envoyé au comptable est verrouillé : plus de saisie ni de correction tant qu'il n'est pas rouvert. Les clôtures et réouvertures sont notées (qui, quand).
+   Stockage : enregistrement de réglages « hoursClosed » (synchronisé comme le reste, sans toucher aux réglages principaux). */
+const stamp = () => { const d = new Date(); return `${today()}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+export const closeMonthFn = me => async (month, R, { confirmed = false } = {}) => {
+  if (!confirmed && !confirm(`${month >= today().slice(0, 7) ? 'Ce mois n\'est pas terminé.\n\n' : ''}Clôturer ${monthName(month + '-01')} ?\n\nPlus aucune heure ne pourra être saisie ni modifiée pour ce mois, par personne, tant que vous ne le rouvrez pas : le récapitulatif remis au comptable restera ainsi identique.`)) return;
+  const rec = await db.get('settings', 'hoursClosed');
+  await db.put('settings', { id: 'hoursClosed', value: H.closeMonthValue(rec?.value, month, { by: me?.name || '', at: stamp(), snap: H.snapshotOf(R) }) });
+  toast('Mois clôturé'); refresh();
+};
+export const reopenMonthFn = me => async month => {
+  if (!confirm(`Rouvrir ${monthName(month + '-01')} ?\n\nLes heures pourront de nouveau être modifiées. La réouverture est notée dans l'historique.`)) return;
+  const rec = await db.get('settings', 'hoursClosed');
+  await db.put('settings', { id: 'hoursClosed', value: H.reopenMonthValue(rec?.value, month, { by: me?.name || '', at: stamp() }) });
+  toast('Mois rouvert'); refresh();
+};
+
 /* ---------- Page Planning (semaine / mois / équipe) ---------- */
 export async function renderPlanning(el, tab = 'week', arg) {
-  const [sites, members, tasks0, ctc, times0] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts'), db.all('times')]);
+  const [sites, members, tasks0, ctc, times0, closedRec] = await Promise.all([db.all('sites'), db.all('members'), db.all('tasks'), db.all('contacts'), db.all('times'), db.get('settings', 'hoursClosed')]);
+  const closed = closedRec?.value || null; // mois d'heures clôturés (M8)
   const S = Object.fromEntries(sites.map(s => [s.id, s]));
   const EXT = Object.fromEntries(ctc.filter(c => c.kind === 'moe').map(c => [c.id, c]));
   const seeAll = auth.can('planning.all'), edit = auth.can('planning.edit'), hoursOk = auth.can('planning.hours'), me = auth.currentUser();
   const tasks = seeAll ? tasks0 : tasks0.filter(t => t.memberId === me?.id); // un compagnon ne voit que son planning
   const times = seeAll ? times0 : times0.filter(t => t.memberId === me?.id);
-  const canEnter = (m, d) => !!m && (edit || (hoursOk && !!me && m.id === me.id && d <= today())); // le salarié saisit ses propres jours (jusqu'à aujourd'hui), le gestionnaire ceux de tous
-  const env = { sites, tasks: tasks0, times: times0, me };
+  const canEnter = (m, d) => !!m && !H.isClosedDate(closed, d) && (edit || (hoursOk && !!me && m.id === me.id && d <= today())); // le salarié saisit ses propres jours (jusqu'à aujourd'hui), le gestionnaire ceux de tous ; un mois clôturé est verrouillé pour tous
+  const env = { sites, tasks: tasks0, times: times0, me, closed };
   if (tab === 'hours' && !seeAll) tab = 'week'; // le récapitulatif de toute l'équipe est réservé à ceux qui voient tout le planning
   const TABS_ = [['week', 'Semaine'], ['month', 'Mois'], ...(seeAll ? [['hours', 'Heures']] : []), ...(auth.can('team') ? [['team', 'Équipe']] : [])];
   const head = `<h2>${seeAll ? 'Planning' : 'Mon planning'}</h2>${tabs('#/planning', TABS_, tab)}`;
-  const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}${EXT[t.extId] ? ' — avec ' + e(EXT[t.extId].name) : ''}">${e(s.name)}<small>${num(t.hours)} h${EXT[t.extId] ? ' · 🏛 ' + e(EXT[t.extId].name) : ''}</small></button>` : ''; };
+  const chip = t => { const s = S[t.siteId]; return s ? `<button class="pchip" data-t="${t.id}" style="background:${e(s.color || '#2f7ad6')}" title="${e(s.name)}${EXT[t.extId] ? ' — avec ' + e(EXT[t.extId].name) : ''}">${e(s.name)}<small>${H.fmtHM(t.hours)}${EXT[t.extId] ? ' · 🏛 ' + e(EXT[t.extId].name) : ''}</small></button>` : ''; };
   const act = members.filter(m => m.active !== false && (seeAll || m.id === me?.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 
   if (tab === 'hours') { // récapitulatif mensuel des heures de tous (feuille de pointage, impression comptable)
     const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(arg || '') ? arg : today().slice(0, 7);
-    renderRecap(el, { head, month, members, sites, tasks: tasks0, times: times0, canEnter, openDay: (m, d) => timeModal(m, d, env) });
+    renderRecap(el, { head, month, members, sites, tasks: tasks0, times: times0, canEnter, openDay: (m, d) => timeModal(m, d, env), closed, canClose: edit, closeMonth: closeMonthFn(me), reopenMonth: reopenMonthFn(me) });
     return;
   }
 
@@ -254,7 +297,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
         return `<div class="item" data-m="${m.id}" ${m.active === false ? 'style="opacity:.55"' : ''}><span class="avatar" style="background:${e(m.color)}">${e(initials(m.name))}</span><div class="main"><div class="t">${e(m.name)} <small class="muted">${e(ROLE[m.role] || '')}${m.active === false ? ' · inactif' : ''}</small></div>
           <div class="s">${[m.phone, m.email, m.rate !== '' && m.rate != null ? 'coût ' + num(m.rate) + ' €/h HT' : '', m.billRate !== '' && m.billRate != null ? 'facturé ' + num(m.billRate) + ' €/h HT' : ''].filter(Boolean).map(e).join(' · ')}</div>
           <div>${(m.habs || []).map(h => `<span class="chip ${soon(h)}">${e(h.label)}${h.expiry ? ' · ' + dateFr(h.expiry) : ''}</span>`).join('')}</div></div>
-          <div class="r"><div class="s">ce mois</div><b>${done} h</b>${mo.absence ? `<div class="s">absence ${mo.absence} h</div>` : ''}</div></div>`;
+          <div class="r"><div class="s">ce mois</div><b>${H.fmtHM(done)}</b>${mo.absence ? `<div class="s">absence ${H.fmtHM(mo.absence)}</div>` : ''}</div></div>`;
       }).join('') || '<div class="empty">Ajoutez les membres de l\'équipe (vous-même, ouvriers, apprentis, sous-traitants).</div>'}`;
     if (auth.can('team.edit')) {
       $('#addm', el).onclick = () => memberModal();
@@ -287,11 +330,17 @@ export async function renderPlanning(el, tab = 'week', arg) {
   const wn = Math.ceil(((parse(days[3]) - new Date(parse(days[3]).getFullYear(), 0, 1)) / 864e5 + 1) / 7);
   const nav = `<div class="row"><a class="btn" href="#/planning/week/${addDays(w0, -7)}">‹</a><b style="flex:1;text-align:center">Semaine ${wn} · ${dateFr(days[0])} – ${dateFr(days[6])}</b><a class="btn" href="#/planning/week/${addDays(w0, 7)}">›</a>
     <a class="btn" href="#/planning/week">Aujourd'hui</a>${seeAll ? `<a class="btn" href="#/planning/hours/${days[3].slice(0, 7)}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>`;
+  /* compteur de la semaine : « +3 h 30 / 35 h » (au-delà de la base) ou, semaine terminée, « −2 h / 35 h » */
+  const weekCtr = (m, ds, worked, block = false) => {
+    const base = H.baseOf(m), over = H.round2(worked - base), past = ds[6] < today();
+    const t = over > 0 ? `<span class="cx over">+${H.fmtHM(over, true)} / ${H.fmtHM(base, true)}</span>` : past && worked > 0 && over < 0 ? `<span class="cx short">${H.fmtHM(over, true)} / ${H.fmtHM(base, true)}</span>` : '';
+    return t ? (block ? `<div>${t}</div>` : ` · ${t}`) : '';
+  };
   const plannedOf = (m, d) => tasks.filter(t => t.memberId === m.id && covers(t, d));
   /* pastille d'heures saisies d'un jour */
   const badge = (m, d) => {
     const l = H.dayTimes(times, m.id, d), w = H.workedOf(l), ab = H.absenceOf(l), ok = canEnter(m, d);
-    const txt = [w ? `${w} h` : '', ab ? `abs. ${ab} h` : ''].filter(Boolean).join(' · ');
+    const txt = [w ? H.fmtHM(w, true) : '', ab ? `abs. ${H.fmtHM(ab, true)}` : ''].filter(Boolean).join(' · ');
     if (!txt && !(ok && d <= today())) return '';
     return ok ? `<button type="button" class="tbadge ${txt ? 'on' : ''}" data-tm="${m.id}" data-td="${d}">${txt ? '⏱ ' + e(txt) : '⏱ saisir'}</button>` : `<span class="tbadge on">⏱ ${e(txt)}</span>`;
   };
@@ -302,16 +351,16 @@ export async function renderPlanning(el, tab = 'week', arg) {
     const worked = H.weekOf(m.id, days, times), plan = round2(days.reduce((a, d) => a + plannedOf(m, d).reduce((x, t) => x + num(t.hours), 0), 0));
     const shown = days.filter((d, i) => i < 5 || plannedOf(m, d).length || H.dayTimes(times, m.id, d).length);
     el.innerHTML = `${head}${nav}
-      <div class="card" style="margin:8px 0"><b>${worked} h</b> saisies cette semaine <span class="muted">· ${plan} h prévues</span></div>
+      <div class="card" style="margin:8px 0"><b>${H.fmtHM(worked)}</b> saisies cette semaine <span class="muted">· ${H.fmtHM(plan)} prévues${weekCtr(m, days, worked)}</span></div>
       ${hoursOk ? '<button class="btn primary" id="today" style="width:100%;margin-bottom:8px">⏱ Saisir mes heures d\'aujourd\'hui</button>' : ''}
       ${shown.map((d, i) => {
         const pl = plannedOf(m, d), l = H.dayTimes(times, m.id, d), w = H.workedOf(l), ab = H.absenceOf(l);
-        const state = l.length ? `<span class="chip ok">✔ ${[w ? w + ' h' : '', ab ? 'absence ' + ab + ' h' : ''].filter(Boolean).join(' · ')}</span>` : d <= today() ? (pl.length ? '<span class="chip warn">à saisir</span>' : '<span class="chip">—</span>') : '<span class="chip">à venir</span>';
-        const lines = l.length ? l.map(x => `${x.kind === 'site' ? e(S[x.siteId]?.name || 'Chantier') : e(H.KIND_LABEL[x.kind])} ${num(x.hours)} h`).join(' · ') : pl.map(t => `${e(S[t.siteId]?.name || '')} ${num(t.hours)} h`).join(' · ');
+        const state = l.length ? `<span class="chip ok">✔ ${[w ? H.fmtHM(w) : '', ab ? 'absence ' + H.fmtHM(ab) : ''].filter(Boolean).join(' · ')}</span>` : d <= today() ? (pl.length ? '<span class="chip warn">à saisir</span>' : '<span class="chip">—</span>') : '<span class="chip">à venir</span>';
+        const lines = l.length ? l.map(x => `${x.kind === 'site' ? e(S[x.siteId]?.name || 'Chantier') : e(x.kind === 'absence' && H.ABS_LABEL[x.absType] ? 'Absence · ' + H.ABS_LABEL[x.absType] : H.KIND_LABEL[x.kind])} ${H.fmtHM(x.hours)}`).join(' · ') : pl.map(t => `${e(S[t.siteId]?.name || '')} ${H.fmtHM(t.hours)}`).join(' · ');
         return `<div class="item tday ${d === today() ? 'today' : ''}" data-d="${d}"><div class="main"><div class="t">${dayLabel(d)}${d === today() ? ' <small class="muted">aujourd\'hui</small>' : ''}</div><div class="s">${lines || 'Rien de prévu'}</div></div><div class="r">${state}</div></div>`;
       }).join('')}
       <p class="muted">Touchez un jour pour saisir vos heures : chantier prévu, autre chantier, atelier, déplacement ou absence. Vous pouvez corriger un jour déjà saisi.</p>`;
-    const open = d => (!hoursOk ? toast('Votre profil ne permet pas de saisir des heures.') : canEnter(m, d) ? timeModal(m, d, env) : toast('Vous pourrez saisir ce jour-là à partir de la date du jour.'));
+    const open = d => (!hoursOk ? toast('Votre profil ne permet pas de saisir des heures.') : H.isClosedDate(closed, d) ? toast(`${capFirst(monthName(d))} est clôturé : les heures ne se modifient plus. Demandez au gérant de rouvrir le mois.`) : canEnter(m, d) ? timeModal(m, d, env) : toast('Vous pourrez saisir ce jour-là à partir de la date du jour.'));
     $$('.tday', el).forEach(n => n.onclick = () => open(n.dataset.d));
     const tb = $('#today', el); if (tb) tb.onclick = () => open(today());
     return;
@@ -326,7 +375,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
           return `<td data-m="${m.id}" data-d="${d}" class="${h > DAY_MAX ? 'over' : ''}">${l.map(chip).join('')}${h > DAY_MAX ? '<span title="Plus de ' + DAY_MAX + ' h ce jour">⚠</span>' : ''}${badge(m, d)}</td>`;
         }).join('');
         const wk = H.weekOf(m.id, days, times);
-        return `<tr><th class="who"><span class="avatar sm" style="background:${e(m.color)}">${e(initials(m.name))}</span> ${e(m.name)}</th>${tds}<td class="tot"><b>${wk} h</b><small class="muted" style="display:block">/ ${round2(tot)} h prévues</small></td></tr>`;
+        return `<tr><th class="who"><span class="avatar sm" style="background:${e(m.color)}">${e(initials(m.name))}</span> ${e(m.name)}</th>${tds}<td class="tot"><b>${H.fmtHM(wk)}</b><small class="muted" style="display:block">/ ${H.fmtHM(round2(tot))} prévues</small>${weekCtr(m, days, wk, true)}</td></tr>`;
       }).join('')}</tbody></table></div><p class="muted">${edit ? 'Touchez une case vide pour affecter, une pastille de chantier pour modifier l\'affectation, la pastille ⏱ pour saisir ou corriger les heures réellement faites ce jour-là.' : ''}</p>`
       : '<div class="empty">Aucun membre actif. <a href="#/planning/team">Ajouter l\'équipe</a></div>'}`;
   if (edit) $('#add', el).onclick = () => assignModal(null);
@@ -345,7 +394,7 @@ export function siteTeamHtml(siteId, tasks, members, { edit = true, money = true
   const h = siteHours(siteId, tasks, members, times);
   return `<h3>Équipe &amp; heures</h3>
     ${h.rows.map(r => `<div class="item" data-mem="${r.member.id}"><span class="avatar sm" style="background:${e(r.member.color)}">${e(initials(r.member.name))}</span><div class="main"><div class="t">${e(r.member.name)}</div><div class="s">${e(ROLE[r.member.role] || '')}</div></div>
-      <div class="r"><div>${r.done} h <small class="muted">/ ${r.planned} h prévues</small></div></div></div>`).join('') || '<p class="muted">Personne n\'est encore affecté.</p>'}
-    ${h.rows.length ? `<p class="muted">Total : <b>${h.done} h</b> réalisées sur ${h.planned} h prévues${h.cost && money ? ` · coût main-d'œuvre ${h.cost.toFixed(2).replace('.', ',')} €` : ''}</p>` : ''}
+      <div class="r"><div>${H.fmtHM(r.done)} <small class="muted">/ ${H.fmtHM(r.planned)} prévues</small></div></div></div>`).join('') || '<p class="muted">Personne n\'est encore affecté.</p>'}
+    ${h.rows.length ? `<p class="muted">Total : <b>${H.fmtHM(h.done)}</b> réalisées sur ${H.fmtHM(h.planned)} prévues${h.cost && money ? ` · coût main-d'œuvre ${h.cost.toFixed(2).replace('.', ',')} €` : ''}</p>` : ''}
     ${edit ? '<button class="btn sm" id="assign">+ Affecter des membres</button> ' : ''}${auth.can('planning') ? '<a class="btn sm" href="#/planning/week">Voir le planning</a>' : ''}`;
 }

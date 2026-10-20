@@ -7,7 +7,7 @@ import { totals } from './docs.js';
 import { buyRate } from './vat.js';
 import { opOf } from './efact.js';
 import { purchaseOf, vatEvents, vatOnInvoice, inR, sign } from './finance.js';
-import { KIND_LABEL } from './hours.js';
+import { KIND_LABEL, ABS_LABEL } from './hours.js';
 import { e, num, round2, today, dateFr, cname, modal, toast, downloadFile, $ } from './util.js';
 
 /* ---------- mise en forme ---------- */
@@ -125,7 +125,7 @@ export function buildExport(range, d) {
   /* 5. Heures : pointages jour par jour (absences comprises) */
   const hrs = [['Date', 'Salarié', 'Fonction', 'Activité', 'Chantier', 'Heures', 'Heures (h min)', 'Note']];
   times.filter(t => inR(t.date, range)).sort((a, b) => (a.date + (M[a.memberId]?.name || '')).localeCompare(b.date + (M[b.memberId]?.name || ''))).forEach(t => {
-    hrs.push([frDate(t.date), M[t.memberId]?.name || '', ({ gerant: 'Gérant', chef: 'Chef de chantier', ouvrier: 'Ouvrier', apprenti: 'Apprenti', soustraitant: 'Sous-traitant', autre: 'Autre' })[M[t.memberId]?.role] || '', KIND_LABEL[t.kind] || t.kind || '', t.kind === 'site' ? (ST[t.siteId]?.name || '') : '', money(num(t.hours)), hm(num(t.hours)), t.note || '']);
+    hrs.push([frDate(t.date), M[t.memberId]?.name || '', ({ gerant: 'Gérant', chef: 'Chef de chantier', ouvrier: 'Ouvrier', apprenti: 'Apprenti', soustraitant: 'Sous-traitant', autre: 'Autre' })[M[t.memberId]?.role] || '', (t.kind === 'absence' && ABS_LABEL[t.absType] ? KIND_LABEL.absence + ' – ' + ABS_LABEL[t.absType] : KIND_LABEL[t.kind]) || t.kind || '', t.kind === 'site' ? (ST[t.siteId]?.name || '') : '', money(num(t.hours)), hm(num(t.hours)), t.note || '']);
   });
 
   const colN = r => Math.max(0, r.length - 1);

@@ -8,6 +8,8 @@ import { OUV_CAT, hasCompo, priceOf } from './ouvrage.js';
 import { compoHtml, bindCompo } from './ouvrage-ui.js';
 import { avgBuy, deltaPct, isHike, fmtDelta } from './pricing.js';
 import { isStocked, isService, reservations, shortages } from './plan.js';
+import { labelsModal } from './labels.js';
+import { internalCode } from './barcode.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
@@ -92,7 +94,8 @@ function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, o
     <button class="btn primary" id="scanb">▦ Scanner</button>
     <button class="btn" id="add">+ Produit</button>
     <button class="btn" id="imp">Importer</button>
-    <button class="btn" id="clf" title="Ranger les produits existants dans les catégories des devis">🏷 Classer${toClassify(products) ? ` (${toClassify(products)})` : ''}</button></div>
+    <button class="btn" id="clf" title="Ranger les produits existants dans les catégories des devis">🏷 Classer${toClassify(products) ? ` (${toClassify(products)})` : ''}</button>
+    <button class="btn" id="lblb" title="Imprimer des étiquettes code-barres sur une planche d'étiquettes autocollantes">🖨 Étiquettes</button></div>
     <div class="row"><button class="btn primary" id="recv">📦 Réception colis</button><button class="btn primary" id="sout">🏗 Sortie chantier</button><button class="btn" id="spdf" title="Facture, bon de livraison, bon de commande, devis d'un fournisseur (PDF), ou facture électronique Factur-X / UBL">📄 Document fournisseur (PDF / Factur-X)</button></div>
     ${filterBar(FC)}
     <div id="list"></div>`;
@@ -127,6 +130,7 @@ function productsTab(body, products, locs, contacts, photos = {}, ouvCtx = {}, o
   $('#add', body).onclick = () => productModal(null, locs, contacts, products);
   $('#imp', body).onclick = () => importModal(products);
   $('#clf', body).onclick = () => classifyModal(products);
+  $('#lblb', body).onclick = () => labelsModal(products.filter(isStocked));
   $('#scanb', body).onclick = lookupScan;
   $('#recv', body).onclick = () => receptionModal(products, locs);
   $('#sout', body).onclick = () => siteOutModal(products, locs);
@@ -145,7 +149,8 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
   const body = `<div class="cols">
     ${F('Désignation', 'name', p.name, { req: true, cls: 'full' })}
     ${F('Référence', 'ref', p.ref)}
-    <div><label class="f"><span>Code-barres</span><div style="display:flex;gap:6px"><input name="barcode" value="${e(p.barcode)}" inputmode="text"><button type="button" class="btn" data-scan>▦</button></div></label></div>
+    <div><label class="f"><span>Code-barres</span><div style="display:flex;gap:6px"><input name="barcode" value="${e(p.barcode)}" inputmode="text"><button type="button" class="btn" data-scan title="Scanner le code avec la caméra">▦</button></div></label></div>
+    <div class="full row" style="margin:-2px 0 6px"><button type="button" class="btn sm" data-gen title="Crée un code interne (EAN-13 commençant par 20), à coller sur le produit">＋ Créer un code interne</button>${isNew ? '' : '<button type="button" class="btn sm" data-lbl title="Imprimer des étiquettes code-barres de ce produit">🖨 Étiquettes</button>'}</div>
     ${F('Catégorie', 'category', p.category || '', { type: 'select', options: [['', '— aucune —'], ...CATS.map(([c, i]) => [c, `${i} ${c}`]), ...(p.category && !CAT_NAMES.includes(p.category) ? [[p.category, `${p.category} (ancienne catégorie)`]] : [])] })}
     ${F('Type d\'article', 'kind', p.kind || 'sale', { type: 'select', options: [['sale', 'Vendu aux clients'], ['internal', 'Usage interne (non vendu : encre, papier, consommables…)']], cls: 'full' })}
     ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: UNITS.map(u => [u, u]) })}
@@ -203,6 +208,16 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
       };
       $('#pdel', f).onclick = () => { newPhoto = ''; showPhoto(''); $('#pinfo', f).textContent = 'Photo retirée à l\'enregistrement'; };
       f.querySelector('[data-scan]').onclick = () => scan(c => { f.elements.barcode.value = c; });
+      f.querySelector('[data-gen]').onclick = () => {
+        const cur = f.elements.barcode.value.trim();
+        if (cur && !confirm(`Remplacer le code « ${cur} » par un nouveau code interne ?`)) return;
+        f.elements.barcode.value = internalCode(products.filter(x => x.id !== p.id).map(x => x.barcode));
+      };
+      const lb = f.querySelector('[data-lbl]');
+      if (lb) lb.onclick = () => {
+        if (f.elements.barcode.value.trim() !== String(p.barcode || '').trim()) return alert('Le code-barres a été modifié : enregistrez d\'abord le produit, puis imprimez les étiquettes.');
+        closeModal(); labelsModal(products.filter(isStocked), { preset: [{ id: p.id, qty: 1 }] });
+      };
       f.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => { closeModal(); moveModal(products, locs, { product: p.id, type: b.dataset.mv }); });
     }
   });
@@ -571,6 +586,7 @@ export async function receptionModal(products, locs) {
     ${F('Ranger dans', 'to', locs[0]?.id, { type: 'select', options: lopt, cls: 'full' })}</div>
     <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button></div>
     <div id="ll"></div>
+    <label class="f full"><span><input type="checkbox" name="labels"> Préparer des étiquettes code-barres pour les produits reçus (choix du nombre à l'étape suivante)</span></label>
     <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible). À la validation, le prix d'achat de la fiche passe au <b>prix moyen</b> du stock en place et de la quantité reçue ; une hausse de plus de 5 % est signalée.</p>`,
     async o => {
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
@@ -582,6 +598,7 @@ export async function receptionModal(products, locs) {
         if (isHike(before, price)) hikes.push(`${p.name} ${fmtDelta(deltaPct(before, price))}`);
       }
       toast(`${ok.length} produit(s) reçu(s)${hikes.length ? ' · hausse de prix : ' + hikes.join(', ') : ''}`); refresh();
+      if (o.labels) { labelsModal((await db.all('products')).filter(isStocked), { preset: ok.map(l => ({ id: l.pid, qty: 1 })) }); return false; } // la fenêtre des étiquettes remplace celle-ci
     }, { wide: true, submitLabel: 'Valider la réception', onOpen: f => lineEditor(f, products, lines, { price: true }) });
 }
 
