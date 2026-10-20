@@ -3,6 +3,7 @@
 import { e, today, modal, F, toast, $, $$ } from './util.js';
 import * as H from './hours.js';
 import { getS } from './defaults.js';
+import { LIM } from './limits.js';
 
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const JOURS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -15,8 +16,8 @@ const dayName = d => `${JOURS[dowIdx(d)]} ${dShort(d)}`;
 const hm = (v, short) => H.fmtHM(v, short); // « 7 h 30 » (court : « 7h30 », pour les cases étroites)
 const atTxt = at => (at ? `${dFr(at.slice(0, 10))}${at.length > 10 ? ' à ' + at.slice(11, 16).replace(':', ' h ') : ''}` : '');
 /* « congé payé 7 h · maladie 14 h » : détail des absences par type (le type vide = anciennes saisies sans précision) */
-const ABS_ORDER = [...H.ABS_TYPES.map(t => t[0]), ''];
-export const absTxt = (byType, f = hm) => ABS_ORDER.filter(t => (byType || {})[t] > 0).map(t => `${(t ? H.ABS_LABEL[t] : 'Absence').toLowerCase()} ${f(byType[t])}`).join(' · ');
+const absOrder = () => [...Object.keys(H.ABS_LABEL), '']; // types dans l'ordre de la liste (Réglages › Listes de choix), puis « non précisé »
+export const absTxt = (byType, f = hm) => absOrder().filter(t => (byType || {})[t] > 0).map(t => `${(t ? H.ABS_LABEL[t] : 'Absence').toLowerCase()} ${f(byType[t])}`).join(' · ');
 const sumOf = rows => {
   const T = { worked: 0, site: 0, atelier: 0, trajet: 0, absence: 0, missing: 0, over: 0, short: 0, absByType: {} };
   rows.forEach(r => {
@@ -83,7 +84,7 @@ export function renderRecap(el, ctx) {
     if (w.short) bits.push(`<span class="cx short">−${hm(w.short, true)}</span>`);
     return `<td class="${w.early ? 'edgeW' : ''}" ${w.early ? `title="Semaine commencée le mois précédent (${dShort(w.monday)}) : comptée ici car elle se termine le ${dShort(w.sunday)}"` : ''}>${bits.join('') || '<span class="muted">—</span>'}</td>`;
   };
-  const counter = R.rows.length && wk0 ? `<h3>Compteur hebdomadaire <small class="muted">(base ${hm(H.WEEK_BASE)} par semaine, réglable sur la fiche de chaque salarié)</small></h3>
+  const counter = R.rows.length && wk0 ? `<h3>Compteur hebdomadaire <small class="muted">(base ${hm(LIM.weekHours)} par semaine, réglable sur la fiche de chaque salarié)</small></h3>
     <div class="wscroll"><table class="rtab sum rctr"><thead><tr><th class="who"></th>${wk0.map(w => `<th>S${w.number}<br><small>${dShort(w.monday)}–${dShort(w.sunday)}</small></th>`).join('')}<th>Au-delà de la base</th><th>Il manque</th></tr></thead><tbody>
       ${R.rows.map(r => `<tr><th class="who">${e(r.member.name)}<br><small class="muted">base ${hm(r.counter.base)}</small></th>${r.counter.weeks.map(counterCell).join('')}<td class="n">${r.counter.over ? `<b class="ovr">+${hm(r.counter.over)}</b>` : '<span class="muted">—</span>'}</td><td class="n">${r.counter.short ? `<b class="shr">${hm(r.counter.short)}</b>` : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">Une semaine (lundi → dimanche) est comptée dans le mois où elle se termine. Les absences ne sont pas des heures travaillées : elles évitent seulement d'afficher un « il manque ». Seules les heures saisies jour par jour sont comptées.</p>` : '';
@@ -106,7 +107,7 @@ export function renderRecap(el, ctx) {
     ${lockBar}
     <div class="rcards"><div class="rc"><b>${hm(T.worked)}</b><span>travaillées</span><small>chantiers ${hm(T.site)} · atelier ${hm(T.atelier)} · déplacements ${hm(T.trajet)}</small></div>
       <div class="rc"><b>${hm(T.absence)}</b><span>congés / absences</span>${T.absence ? `<small>${e(absTxt(T.absByType))}</small>` : ''}</div>
-      <div class="rc ${T.over ? 'warn' : ''}"><b>${hm(T.over)}</b><span>au-delà de la base</span><small>${T.short ? `il manque ${hm(T.short)} ailleurs · ` : ''}base ${hm(H.WEEK_BASE)} / semaine</small></div>
+      <div class="rc ${T.over ? 'warn' : ''}"><b>${hm(T.over)}</b><span>au-delà de la base</span><small>${T.short ? `il manque ${hm(T.short)} ailleurs · ` : ''}base ${hm(LIM.weekHours)} / semaine</small></div>
       <div class="rc ${T.missing ? 'warn' : ''}"><b>${T.missing}</b><span>jour(s) à compléter</span><small>prévus au planning, sans heures</small></div></div>
     ${R.rows.length ? `<h3>Synthèse par salarié</h3><div class="wscroll"><table class="rtab sum"><thead><tr><th class="who"></th><th>Chantiers</th><th>Atelier</th><th>Déplac.</th><th>Travaillé</th><th>Au-delà</th><th>Absences</th><th>À compléter</th></tr></thead><tbody>${sumRows}
       <tr class="gt"><th class="who">Total</th><td class="n">${hm(T.site)}</td><td class="n">${hm(T.atelier)}</td><td class="n">${hm(T.trajet)}</td><td class="n"><b>${hm(T.worked)}</b></td><td class="n">${T.over ? '+' + hm(T.over) : ''}</td><td class="n">${hm(T.absence)}</td><td class="n">${T.missing ? T.missing + ' j' : ''}</td></tr></tbody></table></div>` : ''}
@@ -175,10 +176,12 @@ export function recapPrintHtml(R, { company = '', S = {}, who = '', sites = true
   const T = sumOf(rows);
   const anyMissing = T.missing > 0, anyOver = T.over > 0;
   const dash = v => (v ? f(v) : '—');
+  const absCols = (() => { const ids = H.ABS_TYPES.map(t => t[0]); for (const t of Object.keys(T.absByType || {})) if (t && !ids.includes(t)) ids.push(t); if (!ids.includes('autre')) ids.push('autre'); return ids; })(); // une colonne par type d'absence proposé (et par type masqué qui a servi ce mois-ci)
+  const absHead = t => (t === 'autre' && H.ABS_LABEL.autre === 'Autre absence' ? 'Autres absences' : t === 'cp' && H.ABS_LABEL.cp === 'Congé payé' ? 'Congés payés' : H.ABS_LABEL[t] || t); // en-têtes d'origine tant que les libellés ne sont pas renommés
   const ab = (r, t) => (t === 'autre' ? H.round2((r.absByType.autre || 0) + (r.absByType[''] || 0)) : r.absByType[t] || 0);
-  const summary = `<h2>Synthèse du mois</h2><table><thead><tr><th style="text-align:left">Salarié</th><th class="n">Chantiers</th><th class="n">Atelier</th><th class="n">Déplacements</th><th class="n">Total travaillé</th>${anyOver ? '<th class="n">Dont au-delà de la base</th>' : ''}<th class="n">Congés payés</th><th class="n">Maladie</th><th class="n">Autres absences</th>${anyMissing ? '<th class="n">Jours non saisis</th>' : ''}</tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${e(r.member.name)}</td><td class="n">${dash(r.siteTotal)}</td><td class="n">${dash(r.atelier)}</td><td class="n">${dash(r.trajet)}</td><td class="n"><b>${f(r.worked)}</b></td>${anyOver ? `<td class="n">${dash(r.counter.over)}</td>` : ''}<td class="n">${dash(ab(r, 'cp'))}</td><td class="n">${dash(ab(r, 'maladie'))}</td><td class="n">${dash(ab(r, 'autre'))}</td>${anyMissing ? `<td class="n">${r.missing || '—'}</td>` : ''}</tr>`).join('')}
-    <tr class="t"><td>Total${who ? '' : ' équipe'}</td><td class="n">${dash(T.site)}</td><td class="n">${dash(T.atelier)}</td><td class="n">${dash(T.trajet)}</td><td class="n">${f(T.worked)}</td>${anyOver ? `<td class="n">${dash(T.over)}</td>` : ''}<td class="n">${dash(rows.reduce((a, r) => a + ab(r, 'cp'), 0))}</td><td class="n">${dash(rows.reduce((a, r) => a + ab(r, 'maladie'), 0))}</td><td class="n">${dash(rows.reduce((a, r) => a + ab(r, 'autre'), 0))}</td>${anyMissing ? `<td class="n">${T.missing}</td>` : ''}</tr></tbody></table>
+  const summary = `<h2>Synthèse du mois</h2><table><thead><tr><th style="text-align:left">Salarié</th><th class="n">Chantiers</th><th class="n">Atelier</th><th class="n">Déplacements</th><th class="n">Total travaillé</th>${anyOver ? '<th class="n">Dont au-delà de la base</th>' : ''}${absCols.map(t => `<th class="n">${e(absHead(t))}</th>`).join('')}${anyMissing ? '<th class="n">Jours non saisis</th>' : ''}</tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${e(r.member.name)}</td><td class="n">${dash(r.siteTotal)}</td><td class="n">${dash(r.atelier)}</td><td class="n">${dash(r.trajet)}</td><td class="n"><b>${f(r.worked)}</b></td>${anyOver ? `<td class="n">${dash(r.counter.over)}</td>` : ''}${absCols.map(t => `<td class="n">${dash(ab(r, t))}</td>`).join('')}${anyMissing ? `<td class="n">${r.missing || '—'}</td>` : ''}</tr>`).join('')}
+    <tr class="t"><td>Total${who ? '' : ' équipe'}</td><td class="n">${dash(T.site)}</td><td class="n">${dash(T.atelier)}</td><td class="n">${dash(T.trajet)}</td><td class="n">${f(T.worked)}</td>${anyOver ? `<td class="n">${dash(T.over)}</td>` : ''}${absCols.map(t => `<td class="n">${dash(rows.reduce((a, r) => a + ab(r, t), 0))}</td>`).join('')}${anyMissing ? `<td class="n">${T.missing}</td>` : ''}</tr></tbody></table>
     <p class="small">${fmt === 'dec' ? 'Heures en décimal (7,5 = 7 h 30).' : 'Heures et minutes (7 h 30 = 7,5 h).'} Heures travaillées = chantiers + atelier + déplacements / approvisionnement ; les congés et absences sont comptés à part.</p>`;
 
   /* compteur hebdomadaire : une ligne par salarié, une colonne par semaine (semaine comptée dans le mois où elle se termine) */

@@ -5,10 +5,11 @@ import { num } from './util.js';
 import { fmtHM } from './hours.js';
 import { r2, isOpt, hasCost, lineCost, lineHt } from './vat.js';
 import { hasCompo, priceOf, OUV_CAT } from './ouvrage.js';
+import { isServiceCat } from './lists.js';
 
 export const MO = 'Main d\'œuvre', SOUS = 'Sous-traitance';
 /* Catégories qui ne se stockent pas : la main d'œuvre et la sous-traitance restent au catalogue pour les devis, mais n'ont ni stock ni seuil (B5) */
-export const isService = p => !!p && (p.category === MO || p.category === SOUS);
+export const isService = p => !!p && (p.category === MO || p.category === SOUS || isServiceCat(p.category)); // + catégories cochées « service » (Réglages › Listes de choix)
 /* Produit géré en stock : ni service, ni ouvrage */
 export const isStocked = p => !!p && !isService(p) && p.category !== OUV_CAT;
 const isHour = u => /^(h|hr|heure|heures)$/i.test(String(u || '').trim());

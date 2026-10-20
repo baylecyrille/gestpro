@@ -3,6 +3,7 @@
 import * as db from './db.js';
 import { e, eur, num, modal, $, $$ } from './util.js';
 import { getS } from './defaults.js';
+import { isServiceCat } from './lists.js';
 import { OUV_CAT, hasCompo, priceOf, compoLines, snapshot, asLine, asDetail, coefOf, COEF } from './ouvrage.js';
 
 const r2n = v => Math.round((v + Number.EPSILON) * 100) / 100;
@@ -62,7 +63,7 @@ export async function bindCompo(f, p, products) {
     const on = cat.value === OUV_CAT;
     panel.hidden = !on;
     for (const n of ['buy', 'min', 'supplierId', 'tvaBuy', 'kind']) hide(n, on);
-    const svc = cat.value === 'Main d\'œuvre' || cat.value === 'Sous-traitance'; // services : ni stock ni seuil d'alerte (B5)
+    const svc = isServiceCat(cat.value); // services : ni stock ni seuil d'alerte (B5)
     hide('min', on || svc);
     const stk = $('#stkbox', f); if (stk) stk.hidden = on || svc;
     if (on) { drawRows(); calc(); }

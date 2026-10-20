@@ -35,7 +35,7 @@ input,select,textarea{font:inherit;width:100%;border:1px solid var(--bd);border-
 input[type=checkbox]{width:auto}
 textarea{resize:vertical}
 .search{flex:1;min-width:160px}
-label.f{display:block;margin-bottom:9px}
+label.f{display:block;margin-bottom:9px}label.f[hidden]{display:none}
 label.f>span{display:block;font-size:12px;color:var(--mut);margin-bottom:2px}
 .cols{display:grid;gap:0 10px;grid-template-columns:1fr 1fr}
 .cols .full{grid-column:1/-1}
@@ -173,7 +173,7 @@ dialog::backdrop{background:#0006}
 .sheet .cl{font-family:Arial,sans-serif;font-weight:700;font-size:var(--clfs,14px);white-space:pre-line}
 .sheet h1{font-size:var(--h1,19px);text-align:var(--h1al,left);margin:18px 0 4px}
 .sheet .dt{text-align:var(--dateal,left)}
-.sheet table.fx{table-layout:fixed}
+.sheet table.fx{table-layout:fixed;position:static;top:auto;right:auto;padding:0;line-height:inherit} /* « fx » sert aussi de style au bouton × (.fx plus bas) : on l'annule pour les tableaux à colonnes fixes */
 .sheet .sig .sph{height:var(--sigh,60px)}
 .sheet table{width:100%;border-collapse:collapse;margin-top:12px}
 .sheet th{background:#9dbbe3;border:1px solid #6d8fbf;padding:4px;font-weight:700}
@@ -752,3 +752,42 @@ fieldset.ouvmode input[type=radio]{width:auto;margin:3px 0 0;flex:none}
 .crl{display:grid;grid-template-columns:1fr 84px auto;gap:6px 8px;align-items:center;padding:6px 0;border-bottom:1px solid #eef1f6}.crl:last-child{border-bottom:0}
 .crl .crk{display:flex;gap:8px;align-items:flex-start;margin:0}.crl .crk span{display:flex;flex-direction:column;min-width:0}.crl .crk small{font-size:11.5px}
 .crl input[data-q]{width:100%;box-sizing:border-box;text-align:right}
+/* ---- Listes de choix et seuils (Réglages) ---- */
+details.lst{border:1px solid var(--bd);border-radius:10px;margin:0 0 8px;background:#fff}
+details.lst>summary{cursor:pointer;padding:9px 12px;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+details.lst>summary::-webkit-details-marker{display:none}
+details.lst>summary::before{content:'▸';color:var(--mut)}
+details.lst[open]>summary::before{content:'▾'}
+details.lst>:not(summary){margin-left:12px;margin-right:12px}
+details.lst>.row:last-child{margin-bottom:10px}
+.lrows{display:flex;flex-direction:column;gap:5px}
+.lr2{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;border:1px solid #eef1f6;border-radius:8px;background:#fafcff}
+.lr2.hid{opacity:.62}.lr2.hid .lr2-v{text-decoration:line-through}
+.lr2.lk{background:#f1f5fb}
+.lr2-mv{display:flex;gap:3px;flex:none}.lr2-mv .btn{padding:2px 8px;min-width:0}
+.lr2-ic{width:46px;flex:none;text-align:center}
+.lr2-v{flex:1 1 150px;min-width:110px}
+.lr2-o{display:flex;align-items:center;gap:4px;font-size:13px;margin:0;white-space:nowrap}
+.lr2-o input{width:auto;margin:0}
+.lr2-n{font-size:12px;flex:1 1 100%;order:9}
+.lr2-n:empty{display:none}
+.lr2 input[readonly]{background:#eef2f8;color:var(--mut)}
+/* ---- Absences dans le planning (M7) ---- */
+.pchip.abs{background:repeating-linear-gradient(135deg,#8a97ab 0 6px,#7a879b 6px 12px)}
+.mchip.abs{background:repeating-linear-gradient(135deg,#8a97ab 0 5px,#7a879b 5px 10px)}
+.wtab td.away{background:#f1f4f9}
+/* ---- Commandes fournisseurs (N5) ---- */
+.osg{border-top:1px solid #eef1f6;padding:4px 0}.osg:first-of-type{border-top:0}
+.osl{padding:1px 0 1px 8px}
+.ordro{width:100%;border-collapse:collapse;margin:6px 0}.ordro th,.ordro td{border-bottom:1px solid #eef1f6;padding:4px 6px;font-size:13px}.ordro .n{text-align:right;white-space:nowrap}
+.oacts{flex-wrap:wrap;gap:6px}
+.sheet.bco .co img{max-height:80px;width:auto;max-width:100%}.sheet.bco table{margin-top:14px}.sheet.bco .pay p{margin:6px 0}
+/* ---- Signature du devis sur tablette (N6) ---- */
+.sigpad{position:relative;margin:8px 0 2px}
+.sigpad canvas{display:block;width:100%;height:230px;border:2px dashed var(--p2);border-radius:12px;background:#fff;touch-action:none;cursor:crosshair}
+.sigpad .sigline{position:absolute;left:14px;right:14px;bottom:30px;border-top:1px solid #b9cdea;padding-top:2px;font-size:11.5px;color:var(--mut);pointer-events:none}
+@media(max-width:600px){.sigpad canvas{height:200px}}
+.invbanner.signok{border-color:#b7dcc5;border-left-color:var(--ok);background:#effaf3}
+.sheet .sgz{position:relative;height:100%;overflow:hidden}
+.sheet .sgz .sgs{position:absolute;left:0;right:0;top:1.7em;bottom:3.2mm;width:100%;height:calc(100% - 1.7em - 3.2mm)}
+.sheet .sgz .sgc{position:absolute;left:0;right:0;bottom:0;font:9px/1.1 Arial,sans-serif;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

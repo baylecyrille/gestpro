@@ -4,7 +4,8 @@ import { e, eur, num, today, cname, F, modal, closeModal, toast, refresh, $, $$ 
 import { parseSupplierInvoice, mapUnit } from './supplier-parse.js';
 import { matchLayout, buildResult, detectDocType, DOC_TYPES, docType } from './supplier-layout.js';
 import { openManual } from './supplier-manual.js';
-import { recordMove, locLabel, UNITS } from './stock.js';
+import { recordMove, locLabel } from './stock.js';
+import { unitOpts } from './lists.js';
 import { isHike, deltaPct, fmtDelta } from './pricing.js';
 import * as fl from './files.js';
 import { parseEInvoice, pickXml, decodeXml } from './efact-in.js';
@@ -187,7 +188,7 @@ function renderReview(f, out, r, products, locs, opts = {}, sites = [], contacts
     ${rows.map(x => `<tr data-i="${x.i}" ${x.pc ? 'data-pc="1"' : ''} ${x.on ? '' : 'style="opacity:.55"'}><td><input type="checkbox" data-on ${x.on ? 'checked' : ''}></td>
       <td><input data-k="ref" value="${e(x.ref)}" style="width:84px"></td><td><input data-k="name" value="${e(x.name)}" style="min-width:210px;width:100%"></td>
       <td><input data-k="qty" type="number" step="any" value="${x.qty}" style="width:64px"></td>
-      <td><select data-k="unit">${UNITS.map(u => `<option ${u === x.unitMapped ? 'selected' : ''}>${u}</option>`).join('')}</select></td>
+      <td><select data-k="unit">${unitOpts(x.unitMapped).map(([u, l]) => `<option value="${e(u)}" ${u === x.unitMapped ? 'selected' : ''}>${e(l)}</option>`).join('')}</select></td>
       <td><input data-k="price" type="number" step="0.01" value="${x.price}" style="width:80px"></td>
       ${doc ? '' : `<td><input data-k="dest" list="spdl" value="${e(x.dest)}" placeholder="chantier ou emplacement…" autocomplete="off" style="width:190px">${x.cmd ? `<small class="muted" style="display:block">cmd : ${e(x.cmd)}</small>` : ''}</td>`}
       <td data-chip>${chipOf(x, x.price, x.pc)}</td></tr>`).join('')}

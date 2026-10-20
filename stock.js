@@ -10,15 +10,14 @@ import { avgBuy, deltaPct, isHike, fmtDelta } from './pricing.js';
 import { isStocked, isService, reservations, shortages } from './plan.js';
 import { labelsModal } from './labels.js';
 import { internalCode } from './barcode.js';
+import { UNITS, CATS, CAT_NAMES, catIcon, unitOpts, catOpts as catPick } from './lists.js';
+import { LIM } from './limits.js';
 
 export const total = p => Object.values(p.stock || {}).reduce((a, b) => a + b, 0);
 export const locLabel = l => (l ? `${l.zone} › ${l.place}` : '—');
-export const UNITS = ['u', 'm', 'm²', 'm³', 'ml', 'kg', 'L', 'lot', 'h', 'forfait'];
 const TVAS = [['0', '0 %'], ['5.5', '5,5 %'], ['10', '10 %'], ['20', '20 %']];
-/* Catégories de produits (fiche produit, et menu « + Produit » des devis / factures) */
-export const CATS = [['Produit (fourniture)', '📦'], ['Matériel', '🛠'], ["Main d'œuvre", '👷'], ['Sous-traitance', '🤝'], ['Ouvrage', '🧩']];
-export const CAT_NAMES = CATS.map(c => c[0]);
-export const catIcon = c => (CATS.find(x => x[0] === c) || [])[1] || '';
+/* Unités et catégories de produits (fiche produit, menu « + Produit » des devis / factures) : listes modifiables dans Réglages › Listes de choix (lists.js) */
+export { UNITS, CATS, CAT_NAMES, catIcon };
 
 export async function ensureDefaultLocation() {
   const l = await db.all('locations');
@@ -66,9 +65,10 @@ export async function autoOut(lines, ref, siteId = '') {
 
 export async function renderStock(el, tab = 'products') {
   if (tab === 'scan') { await lookupScan(); tab = 'products'; }
-  el.innerHTML = `<h2>Stock</h2>${tabs('#/stock', [['products', 'Produits'], ['locations', 'Emplacements'], ['moves', 'Mouvements']], tab)}<div id="tb"></div>`;
+  el.innerHTML = `<h2>Stock</h2>${tabs('#/stock', [['products', 'Produits'], ['orders', 'Commandes'], ['locations', 'Emplacements'], ['moves', 'Mouvements']], tab)}<div id="tb"></div>`;
   const body = $('#tb', el);
   const [products, locs, contacts] = await Promise.all([db.all('products'), db.all('locations'), db.all('contacts')]);
+  if (tab === 'orders') return (await import('./orders-ui.js')).ordersTab(body, products, locs, contacts);
   if (tab === 'locations') return locationsTab(body, products, locs);
   if (tab === 'moves') return movesTab(body, products, locs);
   const photos = Object.fromEntries((await db.all('photos')).filter(x => x.data).map(x => [x.id, x.data]));
@@ -151,9 +151,9 @@ export function productModal(p, locs, contacts, products, preset = {}, onDone = 
     ${F('Référence', 'ref', p.ref)}
     <div><label class="f"><span>Code-barres</span><div style="display:flex;gap:6px"><input name="barcode" value="${e(p.barcode)}" inputmode="text"><button type="button" class="btn" data-scan title="Scanner le code avec la caméra">▦</button></div></label></div>
     <div class="full row" style="margin:-2px 0 6px"><button type="button" class="btn sm" data-gen title="Crée un code interne (EAN-13 commençant par 20), à coller sur le produit">＋ Créer un code interne</button>${isNew ? '' : '<button type="button" class="btn sm" data-lbl title="Imprimer des étiquettes code-barres de ce produit">🖨 Étiquettes</button>'}</div>
-    ${F('Catégorie', 'category', p.category || '', { type: 'select', options: [['', '— aucune —'], ...CATS.map(([c, i]) => [c, `${i} ${c}`]), ...(p.category && !CAT_NAMES.includes(p.category) ? [[p.category, `${p.category} (ancienne catégorie)`]] : [])] })}
+    ${F('Catégorie', 'category', p.category || '', { type: 'select', options: [['', '— aucune —'], ...catPick(p.category || '')] })}
     ${F('Type d\'article', 'kind', p.kind || 'sale', { type: 'select', options: [['sale', 'Vendu aux clients'], ['internal', 'Usage interne (non vendu : encre, papier, consommables…)']], cls: 'full' })}
-    ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: UNITS.map(u => [u, u]) })}
+    ${F('Unité', 'unit', p.unit || 'u', { type: 'select', options: unitOpts(p.unit || 'u') })}
     ${F('Prix d\'achat HT', 'buy', p.buy ?? '', { type: 'number', step: '0.01' })}
     ${F('Prix de vente HT', 'sell', p.sell ?? '', { type: 'number', step: '0.01' })}
     ${F('TVA de vente', 'tva', p.tva ?? 10, { type: 'select', options: TVAS })}
@@ -365,7 +365,7 @@ export function classifyModal(products) {
   const byId = new Map(list.map(p => [p.id, p]));
   const checked = new Set();
   let shown = [], last = null, changed = false;
-  const catOpts = (cur, none = '— aucune —') => `<option value="">${none}</option>${CATS.map(([c, i]) => `<option value="${e(c)}" ${cur === c ? 'selected' : ''}>${i} ${e(c)}</option>`).join('')}${cur && !CAT_NAMES.includes(cur) ? `<option value="${e(cur)}" selected>${e(cur)} (ancienne)</option>` : ''}`;
+  const catOpts = (cur, none = '— aucune —') => `<option value="">${none}</option>${catPick(cur).map(([c, l]) => `<option value="${e(c)}" ${cur === c ? 'selected' : ''}>${e(l)}</option>`).join('')}`;
   const body = `<p class="muted clf-intro">Rangez vos produits existants dans les catégories des devis. Filtrez ou cherchez, cochez les lignes, choisissez la catégorie puis <b>Classer</b> — ou changez la catégorie d'une ligne directement. Chaque changement est enregistré tout de suite, et <b>Annuler</b> revient en arrière.</p>
     <div class="clf-bar"><input class="search" id="cq" type="search" placeholder="Rechercher (nom, réf., ancienne catégorie…)"><select id="cf" aria-label="Afficher"></select></div>
     <div class="clf-act"><label class="clf-all"><input type="checkbox" id="call"> <span id="calll">Tout cocher</span></label><span class="muted" id="cn"></span><span class="sp"></span>
@@ -381,7 +381,7 @@ export function classifyModal(products) {
       const filterOpts = () => {
         const cur = sel.value || 'todo';
         sel.innerHTML = `<option value="todo">À classer (${count(p => !CAT_NAMES.includes(p.category))})</option><option value="all">Tous (${list.length})</option><option value="none">Sans catégorie (${count(p => !p.category)})</option>`
-          + `<optgroup label="Catégories des devis">${CATS.map(([c, i]) => `<option value="c:${e(c)}">${i} ${e(c)} (${count(p => p.category === c)})</option>`).join('')}</optgroup>`
+          + `<optgroup label="Catégories des devis">${CAT_NAMES.map(c => `<option value="c:${e(c)}">${catIcon(c) ? catIcon(c) + ' ' : ''}${e(c)} (${count(p => p.category === c)})</option>`).join('')}</optgroup>`
           + (legacy().length ? `<optgroup label="Anciennes catégories">${legacy().map(c => `<option value="c:${e(c)}">${e(c)} (${count(p => p.category === c)})</option>`).join('')}</optgroup>` : '');
         sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'todo';
       };
@@ -538,7 +538,7 @@ export function importModal(products) {
 
 /* ---------- Réception de colis et sorties pour un chantier ---------- */
 /* Éditeur de lignes (produit + quantité [+ prix]) avec ajout par scan */
-function lineEditor(f, products, lines, { price = false } = {}) {
+export function lineEditor(f, products, lines, { price = false, hint = true } = {}) {
   const P = Object.fromEntries(products.map(p => [p.id, p]));
   const box = $('#ll', f);
   /* Réception : écart avec le prix d'achat de la fiche et prix moyen qui en résulte (A8) */
@@ -554,7 +554,7 @@ function lineEditor(f, products, lines, { price = false } = {}) {
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${l.qty ?? ''}" placeholder="Qté" style="flex:1;min-width:70px">
       ${price ? `<input data-k="price" type="number" step="0.01" inputmode="decimal" value="${l.price ?? ''}" placeholder="Prix HT" style="flex:1;min-width:80px">` : ''}
       <button type="button" class="btn sm" data-rm>✕</button>
-      ${l.pid && P[l.pid] ? `<small class="muted" style="flex-basis:100%">${e(P[l.pid].unit || 'u')} · en stock : ${total(P[l.pid])}${l.note ? ' · ' + e(l.note) : ''}</small>` : ''}${price ? `<small class="hike" data-hk style="flex-basis:100%">${priceHint(l)}</small>` : ''}</div>`).join('') || '<p class="muted">Aucune ligne : scannez un produit ou ajoutez une ligne.</p>';
+      ${l.pid && P[l.pid] ? `<small class="muted" style="flex-basis:100%">${e(P[l.pid].unit || 'u')} · en stock : ${total(P[l.pid])}${l.note ? ' · ' + e(l.note) : ''}</small>` : ''}${price && hint ? `<small class="hike" data-hk style="flex-basis:100%">${priceHint(l)}</small>` : ''}</div>`).join('') || '<p class="muted">Aucune ligne : scannez un produit ou ajoutez une ligne.</p>';
   };
   box.addEventListener('input', ev => {
     const r = ev.target.closest('.ll'); if (r && ev.target.dataset.k !== 'pid') lines[+r.dataset.i][ev.target.dataset.k] = ev.target.value;
@@ -576,27 +576,30 @@ function lineEditor(f, products, lines, { price = false } = {}) {
   return { draw, add };
 }
 
-export async function receptionModal(products, locs) {
+/* opts (réception d'une commande fournisseur) : { lines: [{ pid, qty, price }] préremplies, bl: texte du bon, title, onReceived(items, bl) appelé après le rangement en stock } */
+export async function receptionModal(products, locs, opts = {}) {
   products = products.filter(isStocked); // la main d'œuvre, la sous-traitance et les ouvrages ne se stockent pas
   if (!products.length) return alert('Créez d\'abord des produits (ou importez-les).');
-  const lines = [];
+  const lines = (opts.lines || []).map(l => ({ ...l }));
   const lopt = locs.map(l => [l.id, locLabel(l)]);
-  modal('📦 Réception de colis',
-    `<div class="cols">${F('Fournisseur / n° de bon de livraison', 'bl', '', { cls: 'full', ph: 'ex : Point P – BL 45872' })}
+  modal(opts.title || '📦 Réception de colis',
+    `<div class="cols">${F('Fournisseur / n° de bon de livraison', 'bl', opts.bl || '', { cls: 'full', ph: 'ex : Point P – BL 45872' })}
     ${F('Ranger dans', 'to', locs[0]?.id, { type: 'select', options: lopt, cls: 'full' })}</div>
     <div class="row"><button type="button" class="btn primary" data-scanl>▦ Scanner un produit</button><button type="button" class="btn" data-addl>+ Ligne</button></div>
     <div id="ll"></div>
     <label class="f full"><span><input type="checkbox" name="labels"> Préparer des étiquettes code-barres pour les produits reçus (choix du nombre à l'étape suivante)</span></label>
-    <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible). À la validation, le prix d'achat de la fiche passe au <b>prix moyen</b> du stock en place et de la quantité reçue ; une hausse de plus de 5 % est signalée.</p>`,
+    <p class="muted">Le prix d'achat est repris du produit ; modifiez-le s'il a changé (il sert aux achats et à la TVA déductible). À la validation, le prix d'achat de la fiche passe au <b>prix moyen</b> du stock en place et de la quantité reçue ; une hausse de ${String(LIM.hikePct).replace('.', ',')} % ou plus est signalée.</p>`,
     async o => {
       const ok = lines.filter(l => l.pid && num(l.qty) > 0);
       if (!ok.length) { alert('Ajoutez au moins une ligne avec une quantité.'); return false; }
-      const hikes = [];
+      const hikes = [], got = [];
       for (const l of ok) {
         const p = products.find(x => x.id === l.pid), before = num(p.buy), price = l.price === '' || l.price === undefined ? before : num(l.price);
         await recordMove(p, { type: 'in', to: o.to, qty: num(l.qty), note: o.bl ? `Colis ${o.bl}` : 'Réception colis', purchase: true, tva: buyRate(p), unit: price });
+        got.push({ pid: l.pid, qty: num(l.qty), price });
         if (isHike(before, price)) hikes.push(`${p.name} ${fmtDelta(deltaPct(before, price))}`);
       }
+      if (opts.onReceived) await opts.onReceived(got, o.bl); // réception d'une commande fournisseur : met à jour la commande
       toast(`${ok.length} produit(s) reçu(s)${hikes.length ? ' · hausse de prix : ' + hikes.join(', ') : ''}`); refresh();
       if (o.labels) { labelsModal((await db.all('products')).filter(isStocked), { preset: ok.map(l => ({ id: l.pid, qty: 1 })) }); return false; } // la fenêtre des étiquettes remplace celle-ci
     }, { wide: true, submitLabel: 'Valider la réception', onOpen: f => lineEditor(f, products, lines, { price: true }) });

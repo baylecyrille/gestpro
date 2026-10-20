@@ -5,11 +5,12 @@
 // Un ouvrage sans composition reste un produit ordinaire (aucun changement pour les fiches existantes).
 import { num } from './util.js';
 import { r2 } from './vat.js';
+import { CAT_NAMES } from './lists.js';
 
 export const OUV_CAT = 'Ouvrage';
 export const COEF = 1.3;
 export const KINDS = [['p', 'Produit du catalogue'], ['l', 'Main d\'œuvre'], ['f', 'Autre coût']];
-const CATS_BASE = ['Produit (fourniture)', 'Matériel', 'Main d\'œuvre', 'Sous-traitance'];
+const CAT_PROD = 'Produit (fourniture)', CAT_MO = 'Main d\'œuvre'; // catégories de repli : celle d'un composant « produit » sans catégorie connue, et celle d'une ligne de main d'œuvre
 const r4 = v => Math.round((v + Number.EPSILON) * 10000) / 10000;
 const get = (m, id) => (!m || !id ? undefined : m instanceof Map ? m.get(id) : m[id]);
 
@@ -23,19 +24,19 @@ export const coefOf = (p, S) => (num(p && p.coef) > 0 ? num(p.coef) : num(S && S
    Le prix d'un produit et le coût horaire d'un membre sont relus à chaque calcul ; si le produit ou le membre n'existe plus, le dernier prix connu (c.uc) est gardé. */
 export function compoLines(p, ctx = {}) {
   return (p.compo || []).map(c => {
-    const qty = num(c.qty); let uc = num(c.uc), name = c.name || '', unit = c.unit || 'u', warn = '', cat = CATS_BASE[0], ref = '';
+    const qty = num(c.qty); let uc = num(c.uc), name = c.name || '', unit = c.unit || 'u', warn = '', cat = CAT_PROD, ref = '';
     if (c.k === 'p') {
       const q = get(ctx.products, c.pid);
-      if (q) { uc = num(q.buy); name = q.name; unit = q.unit || unit; ref = q.ref || ''; if (CATS_BASE.includes(q.category)) cat = q.category; if (!(uc > 0)) warn = 'Prix d\'achat non renseigné sur la fiche du produit'; }
+      if (q) { uc = num(q.buy); name = q.name; unit = q.unit || unit; ref = q.ref || ''; if (q.category !== OUV_CAT && CAT_NAMES.includes(q.category)) cat = q.category; if (!(uc > 0)) warn = 'Prix d\'achat non renseigné sur la fiche du produit'; }
       else warn = 'Produit supprimé du catalogue : dernier prix connu';
     } else if (c.k === 'l') {
-      cat = CATS_BASE[2]; unit = 'h'; name = c.name || 'Main d\'œuvre';
+      cat = CAT_MO; unit = 'h'; name = c.name || 'Main d\'œuvre';
       if (c.mid) {
         const m = get(ctx.members, c.mid);
         if (m) { uc = num(m.rate); if (!(uc > 0)) warn = 'Coût horaire du membre non renseigné (fiche Équipe)'; }
         else warn = 'Membre supprimé : dernier coût horaire connu';
       } else uc = num(c.rate);
-    } else { cat = CATS_BASE[3]; uc = num(c.cost); name = c.name || 'Autre coût'; }
+    } else { cat = 'Sous-traitance'; uc = num(c.cost); name = c.name || 'Autre coût'; }
     return { c, k: c.k, name, qty, unit, uc, cost: r2(qty * uc), cat, ref, warn };
   });
 }

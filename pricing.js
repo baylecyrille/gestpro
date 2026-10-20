@@ -1,8 +1,9 @@
 // Prix d'achat moyen pondéré (A8) : chaque réception recalcule le prix d'achat de la fiche produit. Fonctions pures.
 import { num } from './util.js';
+import { LIM } from './limits.js';
 
 const r4 = v => Math.round((v + Number.EPSILON) * 10000) / 10000;
-/* Seuil à partir duquel une hausse de prix est signalée (en %) */
+/* Seuil d'origine à partir duquel une hausse de prix est signalée (en %) ; la valeur en vigueur est LIM.hikePct (Réglages › Seuils et délais) */
 export const HIKE_PCT = 5;
 
 /* Nouveau prix d'achat après une réception : moyenne pondérée du stock en place (valorisé au prix de la fiche) et de la quantité reçue.
@@ -20,6 +21,6 @@ export function deltaPct(oldBuy, price) {
   return o > 0 && p > 0 ? Math.round((p - o) / o * 1000) / 10 : 0;
 }
 /* Hausse (ou baisse) à signaler : écart d'au moins `seuil` % */
-export const isHike = (oldBuy, price, seuil = HIKE_PCT) => deltaPct(oldBuy, price) >= seuil;
-export const isDrop = (oldBuy, price, seuil = HIKE_PCT) => deltaPct(oldBuy, price) <= -seuil;
+export const isHike = (oldBuy, price, seuil = LIM.hikePct) => deltaPct(oldBuy, price) >= seuil;
+export const isDrop = (oldBuy, price, seuil = LIM.hikePct) => deltaPct(oldBuy, price) <= -seuil;
 export const fmtDelta = d => `${d > 0 ? '+' : ''}${String(d).replace('.', ',')} %`;

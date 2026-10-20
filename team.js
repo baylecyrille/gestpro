@@ -4,13 +4,14 @@ import { compressImage, e, num, round2, dateFr, today, F, modal, toast, tabs, re
 import * as auth from './auth.js';
 import * as H from './hours.js';
 import { renderRecap } from './recap.js';
+import { CONTRACTS, ROLES, ROLE_LABEL, HABS, ABS_TYPES, roleOpts, contractOpts, absOpts as absTypeOpts } from './lists.js';
+import { LIM } from './limits.js';
+import { absOn, absentDays } from './absence.js';
+import { absenceModal } from './absence-ui.js';
 
-export const CONTRACTS = ['CDI', 'CDD', 'CDD saisonnier', 'CDI de chantier / d\'opération', 'Intérim (mission)', 'Contrat d\'apprentissage', 'Contrat de professionnalisation', 'Stage', 'Gérant / mandataire social', 'Sous-traitant / indépendant', 'Autre'];
-export const ROLES = [['gerant', 'Gérant'], ['chef', 'Chef de chantier'], ['ouvrier', 'Ouvrier'], ['apprenti', 'Apprenti'], ['soustraitant', 'Sous-traitant'], ['autre', 'Autre']];
-const ROLE = Object.fromEntries(ROLES);
-const HABS = ['SST (secouriste)', 'Travail en hauteur', 'Habilitation électrique', 'CACES nacelle', 'CACES chariot', 'Échafaudage (montage)', 'Amiante SS4', 'Permis B', 'Permis poids lourd'];
+export { CONTRACTS, ROLES }; // listes modifiables : Réglages › Listes de choix (lists.js)
+const ROLE = ROLE_LABEL;
 const COLORS = ['#2f7ad6', '#1b8a4b', '#c77700', '#c62f2f', '#7b4fd0', '#0f9aa8', '#d6479b', '#555d6b'];
-const DAY_MAX = 8; // heures/jour au-delà desquelles un conflit est signalé
 
 /* ---------- dates ---------- */
 const pad = n => String(n).padStart(2, '0');
@@ -62,8 +63,8 @@ export function memberModal(m) {
   modal(isNew ? 'Nouveau membre' : 'Fiche membre',
     `<div class="cols"><div class="full row" style="margin:0"><span id="mav">${avatar()}</span><label class="btn"><input type="file" id="mphoto" accept="image/*" hidden>📷 Photo</label><button type="button" class="btn" id="mphdel">Retirer</button></div>
     ${F('Nom et prénom', 'name', m.name, { req: true, cls: 'full' })}${F('Prénom affiché (« Bonjour … »)', 'first', m.first || '', { cls: 'full', ph: 'ex : Michael' })}
-    ${F('Fonction', 'role', m.role, { type: 'select', options: ROLES })}
-    ${F('Type de contrat de travail', 'contract', m.contract || '', { type: 'select', options: [['', '— non renseigné —'], ...CONTRACTS.map(c => [c, c])] })}
+    ${F('Fonction', 'role', m.role, { type: 'select', options: roleOpts(m.role) })}
+    ${F('Type de contrat de travail', 'contract', m.contract || '', { type: 'select', options: [['', '— non renseigné —'], ...contractOpts(m.contract || '')] })}
     ${F('Date de naissance', 'birthDate', m.birthDate || '', { type: 'date' })}${F('Date d\'embauche', 'hireDate', m.hireDate || '', { type: 'date' })}
     ${F('Date de sortie', 'exitDate', m.exitDate || '', { type: 'date' })}${F('Heures par semaine (contrat)', 'weekHours', m.weekHours ?? '', { type: 'number', step: '0.25', ph: String(H.WEEK_BASE) })}
     ${colorField('Couleur (planning)', 'color', m.color, 'full')}
@@ -150,7 +151,9 @@ export async function assignModal(t, preset = {}) {
       for (const mid of ids) {
         const rec = isNew ? { ...base, memberId: mid } : Object.assign(t, base, { memberId: mid });
         const clash = conflicts(rec, tasks.filter(x => x.id !== rec.id));
-        if (clash.length) warn.push(`${members.find(m => m.id === mid)?.name} : plus de ${DAY_MAX} h le ${dateFr(clash[0])}`);
+        if (clash.length) warn.push(`${members.find(m => m.id === mid)?.name} : plus de ${LIM.dayAlert} h le ${dateFr(clash[0])}`);
+        const away = absentDays(times, mid, daysOf(rec));
+        if (away.length) warn.push(`${members.find(m => m.id === mid)?.name} est en absence (${away[0].label}) le ${dateFr(away[0].date)}${away.length > 1 ? ` et ${away.length - 1} autre${away.length > 2 ? 's' : ''} jour${away.length > 2 ? 's' : ''}` : ''}`);
         await db.put('tasks', rec);
       }
       toast(warn.length ? 'Enregistré – ⚠ ' + warn.join(' ; ') : 'Affectation enregistrée'); refresh();
@@ -175,7 +178,7 @@ export async function assignModal(t, preset = {}) {
 /* jours où le total d'heures d'un membre dépasse la limite */
 function conflicts(rec, others) {
   const mine = others.filter(x => x.memberId === rec.memberId);
-  return daysOf(rec).filter(d => round2(num(rec.hours) + mine.filter(x => covers(x, d)).reduce((a, x) => a + num(x.hours), 0)) > DAY_MAX);
+  return daysOf(rec).filter(d => round2(num(rec.hours) + mine.filter(x => covers(x, d)).reduce((a, x) => a + num(x.hours), 0)) > LIM.dayAlert);
 }
 
 /* ---------- Saisie des heures d'une journée (salarié : ses propres jours ; gestionnaire : tous) ---------- */
@@ -192,10 +195,11 @@ export function timeModal(m, date, env) {
   /* lignes de départ : les saisies existantes, sinon le planning du jour (heures prévues, à vérifier) */
   const seed = mine.length ? mine.map(x => ({ id: x.id, kind: x.kind, siteId: x.siteId, hours: x.hours, note: x.note, absType: x.absType || '' }))
     : planned.map(t => ({ id: '', kind: 'site', siteId: t.siteId, hours: num(t.hours), note: '' }));
-  if (!seed.length) seed.push({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: 'cp' });
+  const defAbs = ABS_TYPES.some(t => t[0] === 'cp') ? 'cp' : (ABS_TYPES[0] || ['autre'])[0];
+  if (!seed.length) seed.push({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: defAbs });
   const dayH = H.dayHoursOf(m);
   const siteOpts = sel => `<option value="">— choisir le chantier —</option>${plannedIds.size ? '<optgroup label="Prévus ce jour">' + open.filter(s => plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('') + '</optgroup><optgroup label="Autres chantiers">' : ''}${open.filter(s => !plannedIds.has(s.id)).map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${e(s.name)}</option>`).join('')}${plannedIds.size ? '</optgroup>' : ''}`;
-  const absOpts = l => `${l.kind === 'absence' && l.id && !l.absType ? `<option value="" selected>Absence (type non précisé)</option>` : ''}${H.ABS_TYPES.map(([k, n]) => `<option value="${k}" ${k === (l.absType || (l.id && l.kind === 'absence' ? '' : 'cp')) ? 'selected' : ''}>${e(n)}</option>`).join('')}`;
+  const absOpts = l => `${l.kind === 'absence' && l.id && !l.absType ? `<option value="" selected>Absence (type non précisé)</option>` : ''}${absTypeOpts(l.absType || '').map(([k, n]) => `<option value="${k}" ${k === (l.absType || (l.id && l.kind === 'absence' ? '' : defAbs)) ? 'selected' : ''}>${e(n)}</option>`).join('')}`;
   const line = l => `<div class="tl" data-id="${e(l.id || '')}"><select data-f="kind" aria-label="Activité">${H.KINDS.map(([k, n]) => `<option value="${k}" ${k === l.kind ? 'selected' : ''}>${e(n)}</option>`).join('')}</select>
     <input data-f="hours" type="text" inputmode="decimal" autocomplete="off" value="${l.hours === '' ? '' : H.fmtH(l.hours)}" placeholder="h" aria-label="Heures (7,5 ou 7h30)"><button type="button" class="btn sm" data-rm aria-label="Supprimer la ligne">✕</button>
     <select data-f="site" class="tl-w" aria-label="Chantier" ${l.kind === 'site' ? '' : 'hidden'}>${siteOpts(l.siteId)}</select>
@@ -236,7 +240,7 @@ export function timeModal(m, date, env) {
         f.addEventListener('input', tot);
         f.addEventListener('change', ev => { const k = ev.target.closest('[data-f=kind]'); if (k) { const r = k.closest('.tl'); $('[data-f=site]', r).hidden = k.value !== 'site'; $('[data-f=abs]', r).hidden = k.value !== 'absence'; } tot(); });
         f.addEventListener('click', ev => {
-          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: 'cp' })); tot(); }
+          if (ev.target.closest('#tladd')) { $('#tls', f).insertAdjacentHTML('beforeend', line({ id: '', kind: 'site', siteId: '', hours: '', note: '', absType: defAbs })); tot(); }
           const rm = ev.target.closest('[data-rm]'); if (rm) { rm.closest('.tl').remove(); tot(); }
           const full = ev.target.closest('[data-full]');
           if (full) {
@@ -313,13 +317,14 @@ export async function renderPlanning(el, tab = 'week', arg) {
     const nextM = ymd(new Date(y, mo, 1)).slice(0, 7), prevM = ymd(new Date(y, mo - 2, 1)).slice(0, 7);
     const cells = [];
     for (let i = 0; i < 42; i++) { const d = addDays(gridStart, i); if (i >= 35 && d.slice(0, 7) !== base) break; cells.push(d); }
-    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a>${seeAll ? `<a class="btn" href="#/planning/hours/${base}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>
+    el.innerHTML = `${head}<div class="row"><a class="btn" href="#/planning/month/${prevM}">‹</a><b style="flex:1;text-align:center;text-transform:capitalize">${MOIS[mo - 1]} ${y}</b><a class="btn" href="#/planning/month/${nextM}">›</a>${seeAll ? `<a class="btn" href="#/planning/hours/${base}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button><button class="btn" id="addabs">+ Absence</button>' : ''}</div>
       <div class="mgrid">${JOURS.map(j => `<div class="mh">${j}</div>`).join('')}${cells.map(d => {
         const day = tasks.filter(t => covers(t, d) && members.find(m => m.id === t.memberId));
         const bySite = {}; day.forEach(t => (bySite[t.siteId] ||= []).push(t));
-        return `<div class="mc ${d.slice(0, 7) !== base ? 'out' : ''} ${d === today() ? 'today' : ''}" data-d="${d}"><div class="dn">${+d.slice(8)}</div>${Object.entries(bySite).map(([sid, l]) => S[sid] ? `<div class="mchip" style="background:${e(S[sid].color || '#2f7ad6')}" title="${e(S[sid].name)}">${e(S[sid].name)} <small>${l.map(t => initials(members.find(m => m.id === t.memberId)?.name)).join(' ')}</small></div>` : '').join('')}</div>`;
+        const gone = members.filter(m => (seeAll || m.id === me?.id) && absOn(times, m.id, d).length);
+        return `<div class="mc ${d.slice(0, 7) !== base ? 'out' : ''} ${d === today() ? 'today' : ''}" data-d="${d}"><div class="dn">${+d.slice(8)}</div>${gone.length ? `<div class="mchip abs" title="${e('Absent(s) : ' + gone.map(m => m.name).join(', '))}">Abs. <small>${gone.map(m => initials(m.name)).join(' ')}</small></div>` : ''}${Object.entries(bySite).map(([sid, l]) => S[sid] ? `<div class="mchip" style="background:${e(S[sid].color || '#2f7ad6')}" title="${e(S[sid].name)}">${e(S[sid].name)} <small>${l.map(t => initials(members.find(m => m.id === t.memberId)?.name)).join(' ')}</small></div>` : '').join('')}</div>`;
       }).join('')}</div>`;
-    if (edit) $('#add', el).onclick = () => assignModal(null);
+    if (edit) { $('#add', el).onclick = () => assignModal(null); $('#addabs', el).onclick = () => absenceModal(null); }
     $$('[data-d]', el).forEach(c => c.onclick = () => go(`#/planning/week/${c.dataset.d}`));
     return;
   }
@@ -329,21 +334,26 @@ export async function renderPlanning(el, tab = 'week', arg) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(w0, i));
   const wn = Math.ceil(((parse(days[3]) - new Date(parse(days[3]).getFullYear(), 0, 1)) / 864e5 + 1) / 7);
   const nav = `<div class="row"><a class="btn" href="#/planning/week/${addDays(w0, -7)}">‹</a><b style="flex:1;text-align:center">Semaine ${wn} · ${dateFr(days[0])} – ${dateFr(days[6])}</b><a class="btn" href="#/planning/week/${addDays(w0, 7)}">›</a>
-    <a class="btn" href="#/planning/week">Aujourd'hui</a>${seeAll ? `<a class="btn" href="#/planning/hours/${days[3].slice(0, 7)}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button>' : ''}</div>`;
+    <a class="btn" href="#/planning/week">Aujourd'hui</a>${seeAll ? `<a class="btn" href="#/planning/hours/${days[3].slice(0, 7)}">📊 Heures du mois</a>` : ''}${edit ? '<button class="btn primary" id="add">+ Affecter</button><button class="btn" id="addabs">+ Absence</button>' : ''}</div>`;
   /* compteur de la semaine : « +3 h 30 / 35 h » (au-delà de la base) ou, semaine terminée, « −2 h / 35 h » */
   const weekCtr = (m, ds, worked, block = false) => {
     const base = H.baseOf(m), over = H.round2(worked - base), past = ds[6] < today();
-    const t = over > 0 ? `<span class="cx over">+${H.fmtHM(over, true)} / ${H.fmtHM(base, true)}</span>` : past && worked > 0 && over < 0 ? `<span class="cx short">${H.fmtHM(over, true)} / ${H.fmtHM(base, true)}</span>` : '';
+    const abs = H.absenceOf((times || []).filter(x => x.memberId === m.id && ds.includes(x.date))), miss = H.round2(worked + abs - base); // les congés et absences comblent la base : ils ne comptent pas comme un manque
+    const t = over > 0 ? `<span class="cx over">+${H.fmtHM(over, true)} / ${H.fmtHM(base, true)}</span>` : past && worked > 0 && miss < 0 ? `<span class="cx short">${H.fmtHM(miss, true)} / ${H.fmtHM(base, true)}</span>` : '';
     return t ? (block ? `<div>${t}</div>` : ` · ${t}`) : '';
   };
   const plannedOf = (m, d) => tasks.filter(t => t.memberId === m.id && covers(t, d));
   /* pastille d'heures saisies d'un jour */
   const badge = (m, d) => {
     const l = H.dayTimes(times, m.id, d), w = H.workedOf(l), ab = H.absenceOf(l), ok = canEnter(m, d);
-    const txt = [w ? H.fmtHM(w, true) : '', ab ? `abs. ${H.fmtHM(ab, true)}` : ''].filter(Boolean).join(' · ');
+    const txt = w ? H.fmtHM(w, true) : ''; // l'absence a sa propre pastille (absChips)
+    if (!txt && ab) return ok && d <= today() ? `<button type="button" class="tbadge" data-tm="${m.id}" data-td="${d}" title="Ajouter des heures travaillées ce jour">⏱ +</button>` : '';
     if (!txt && !(ok && d <= today())) return '';
     return ok ? `<button type="button" class="tbadge ${txt ? 'on' : ''}" data-tm="${m.id}" data-td="${d}">${txt ? '⏱ ' + e(txt) : '⏱ saisir'}</button>` : `<span class="tbadge on">⏱ ${e(txt)}</span>`;
   };
+
+  /* pastilles d'absence d'un jour (congés, maladie…) : touchées, elles ouvrent la série (gestionnaire) ou la journée */
+  const absChips = (m, d) => absOn(times, m.id, d).map(x => `<button type="button" class="pchip abs" data-ab="${x.id}" title="${e(H.absLabel(x.absType))}${x.note ? ' – ' + e(x.note) : ''}">${e(H.absLabel(x.absType))}<small>${H.fmtHM(x.hours, true)}</small></button>`).join('');
 
   if (!seeAll) { // ----- salarié : sa semaine sous forme de liste, un jour par ligne
     const m = act[0];
@@ -355,7 +365,7 @@ export async function renderPlanning(el, tab = 'week', arg) {
       ${hoursOk ? '<button class="btn primary" id="today" style="width:100%;margin-bottom:8px">⏱ Saisir mes heures d\'aujourd\'hui</button>' : ''}
       ${shown.map((d, i) => {
         const pl = plannedOf(m, d), l = H.dayTimes(times, m.id, d), w = H.workedOf(l), ab = H.absenceOf(l);
-        const state = l.length ? `<span class="chip ok">✔ ${[w ? H.fmtHM(w) : '', ab ? 'absence ' + H.fmtHM(ab) : ''].filter(Boolean).join(' · ')}</span>` : d <= today() ? (pl.length ? '<span class="chip warn">à saisir</span>' : '<span class="chip">—</span>') : '<span class="chip">à venir</span>';
+        const state = l.length && d > today() && !w ? '<span class="chip">absence prévue</span>' : l.length ? `<span class="chip ok">✔ ${[w ? H.fmtHM(w) : '', ab ? 'absence ' + H.fmtHM(ab) : ''].filter(Boolean).join(' · ')}</span>` : d <= today() ? (pl.length ? '<span class="chip warn">à saisir</span>' : '<span class="chip">—</span>') : '<span class="chip">à venir</span>';
         const lines = l.length ? l.map(x => `${x.kind === 'site' ? e(S[x.siteId]?.name || 'Chantier') : e(x.kind === 'absence' && H.ABS_LABEL[x.absType] ? 'Absence · ' + H.ABS_LABEL[x.absType] : H.KIND_LABEL[x.kind])} ${H.fmtHM(x.hours)}`).join(' · ') : pl.map(t => `${e(S[t.siteId]?.name || '')} ${H.fmtHM(t.hours)}`).join(' · ');
         return `<div class="item tday ${d === today() ? 'today' : ''}" data-d="${d}"><div class="main"><div class="t">${dayLabel(d)}${d === today() ? ' <small class="muted">aujourd\'hui</small>' : ''}</div><div class="s">${lines || 'Rien de prévu'}</div></div><div class="r">${state}</div></div>`;
       }).join('')}
@@ -372,16 +382,23 @@ export async function renderPlanning(el, tab = 'week', arg) {
         let tot = 0;
         const tds = days.map(d => {
           const l = plannedOf(m, d); const h = round2(l.reduce((a, t) => a + num(t.hours), 0)); tot += h;
-          return `<td data-m="${m.id}" data-d="${d}" class="${h > DAY_MAX ? 'over' : ''}">${l.map(chip).join('')}${h > DAY_MAX ? '<span title="Plus de ' + DAY_MAX + ' h ce jour">⚠</span>' : ''}${badge(m, d)}</td>`;
+          const away = absOn(times, m.id, d).length > 0;
+          return `<td data-m="${m.id}" data-d="${d}" class="${h > LIM.dayAlert ? 'over' : ''}${away ? ' away' : ''}">${absChips(m, d)}${l.map(chip).join('')}${h > LIM.dayAlert ? '<span title="Plus de ' + LIM.dayAlert + ' h ce jour">⚠</span>' : ''}${away && l.length ? '<span title="Affecté(e) un jour d\'absence">⚠</span>' : ''}${badge(m, d)}</td>`;
         }).join('');
-        const wk = H.weekOf(m.id, days, times);
-        return `<tr><th class="who"><span class="avatar sm" style="background:${e(m.color)}">${e(initials(m.name))}</span> ${e(m.name)}</th>${tds}<td class="tot"><b>${H.fmtHM(wk)}</b><small class="muted" style="display:block">/ ${H.fmtHM(round2(tot))} prévues</small>${weekCtr(m, days, wk, true)}</td></tr>`;
+        const wk = H.weekOf(m.id, days, times), abw = H.absenceOf((times || []).filter(x => x.memberId === m.id && days.includes(x.date)));
+        return `<tr><th class="who"><span class="avatar sm" style="background:${e(m.color)}">${e(initials(m.name))}</span> ${e(m.name)}</th>${tds}<td class="tot"><b>${H.fmtHM(wk)}</b><small class="muted" style="display:block">/ ${H.fmtHM(round2(tot))} prévues</small>${abw ? `<small class="muted" style="display:block">+ ${H.fmtHM(abw, true)} d'absence</small>` : ''}${weekCtr(m, days, wk, true)}</td></tr>`;
       }).join('')}</tbody></table></div><p class="muted">${edit ? 'Touchez une case vide pour affecter, une pastille de chantier pour modifier l\'affectation, la pastille ⏱ pour saisir ou corriger les heures réellement faites ce jour-là.' : ''}</p>`
       : '<div class="empty">Aucun membre actif. <a href="#/planning/team">Ajouter l\'équipe</a></div>'}`;
-  if (edit) $('#add', el).onclick = () => assignModal(null);
+  if (edit) { $('#add', el).onclick = () => assignModal(null); $('#addabs', el).onclick = () => absenceModal(null); }
   $$('td[data-m]', el).forEach(td => td.onclick = ev => {
     const tm = ev.target.closest('[data-tm]');
     if (tm) { const m = members.find(x => x.id === tm.dataset.tm); if (m && canEnter(m, tm.dataset.td)) timeModal(m, tm.dataset.td, env); return; }
+    const ab = ev.target.closest('[data-ab]');
+    if (ab) {
+      const x = times.find(r => r.id === ab.dataset.ab); if (!x) return;
+      if (edit && x.grp) absenceModal(x.grp); else { const m = members.find(y => y.id === x.memberId); if (m && canEnter(m, x.date)) timeModal(m, x.date, env); else toast(`${H.absLabel(x.absType)} · ${dateFr(x.date)} · ${H.fmtHM(x.hours)}`); }
+      return;
+    }
     const c = ev.target.closest('[data-t]');
     const t = c && tasks.find(x => x.id === c.dataset.t);
     if (t) { if (edit) assignModal(t); }

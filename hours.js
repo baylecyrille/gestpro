@@ -2,17 +2,18 @@
 // Fonctions pures (testables hors navigateur). Une saisie = { id, memberId, date: 'aaaa-mm-jj', kind, siteId, hours, note }.
 // kind : 'site' (chantier, avec siteId : le chantier prévu OU un autre), 'atelier', 'trajet' (déplacement / approvisionnement), 'absence' (congés, absence).
 // L'ancien total « Heures réalisées » d'une affectation (task.done) reste valable tant qu'aucune saisie par jour n'existe pour ce membre sur ce chantier pendant les dates de l'affectation.
+import { ABS_TYPES, ABS_LABEL } from './lists.js';
+import { LIM } from './limits.js';
+export { ABS_TYPES, ABS_LABEL };
 const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 export const round2 = v => Math.round(v * 100) / 100;
 
 export const KINDS = [['site', 'Chantier'], ['atelier', 'Atelier'], ['trajet', 'Déplacement / approvisionnement'], ['absence', 'Congés / absence']];
 export const KIND_LABEL = Object.fromEntries(KINDS);
 /* Types d'absence (M8) : une saisie « Congés / absence » peut être classée ; sans type, elle reste « non précisée » */
-export const ABS_TYPES = [['cp', 'Congé payé'], ['maladie', 'Maladie'], ['autre', 'Autre absence']];
-export const ABS_LABEL = Object.fromEntries(ABS_TYPES);
 export const absLabel = t => ABS_LABEL[t] || 'Absence';
-export const WEEK_BASE = 35; // heures par semaine d'un contrat à temps plein (modifiable sur la fiche du membre)
-export const baseOf = m => (num(m && m.weekHours) > 0 ? num(m.weekHours) : WEEK_BASE);
+export const WEEK_BASE = 35; // base d'origine (réglable : Réglages › Seuils et délais ; modifiable sur la fiche du membre) — la valeur en vigueur est LIM.weekHours
+export const baseOf = m => (num(m && m.weekHours) > 0 ? num(m.weekHours) : LIM.weekHours);
 export const dayHoursOf = m => Math.round(baseOf(m) / 5 * 4) / 4; // journée type : un cinquième de la semaine (35 h → 7 h), au quart d'heure
 export const WORKED = ['site', 'atelier', 'trajet']; // heures travaillées (l'absence se compte à part)
 export const DAY_LIMIT = 24;

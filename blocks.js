@@ -2,7 +2,8 @@
 import { e, eur, num, F, modal, toast, COLOR_NAMES, $, $$ } from './util.js';
 import { getS } from './defaults.js';
 import * as db from './db.js';
-import { UNITS, pickProduct, productModal, total as stockOf, CATS, CAT_NAMES, catIcon } from './stock.js';
+import { pickProduct, productModal, total as stockOf, CATS, CAT_NAMES, catIcon } from './stock.js';
+import { unitOpts } from './lists.js';
 import { hasCompo } from './ouvrage.js';
 import { ouvrageInsertModal } from './ouvrage-ui.js';
 import { RATES, fmtRate, rateOf, hasOwnRate, multiRate, lineHt, grossHt, lineDisc, remOf, isOpt, hasCost, lineMargin, refOn } from './vat.js';
@@ -240,7 +241,7 @@ export function mountBlocks(box, d, { onChange, readHeader, view }) {
   const inner = b => {
     if (b.type === 'line') { const v = V(); return `<div class="ln"><div class="d">${v.photo ? '<span class="lth" data-th></span>' : ''}${v.ref ? `<input data-k="ref" class="lref" autocomplete="off" value="${e(b.ref ?? '')}" placeholder="Réf." title="Référence du produit">` : ''}<div class="dz" data-k="desig" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Désignation" spellcheck="true" data-ph="${b.cat ? e('Rechercher : ' + b.cat + '…') : 'Désignation'}">${desigHtml(b)}</div></div>
       <input data-k="qty" type="number" step="any" inputmode="decimal" value="${b.qty}" placeholder="Qté">
-      <select data-k="unit">${UNITS.map(u => `<option ${u === b.unit ? 'selected' : ''}>${u}</option>`).join('')}</select>
+      <select data-k="unit">${unitOpts(b.unit).map(([u, l]) => `<option value="${e(u)}" ${u === b.unit ? 'selected' : ''}>${e(l)}</option>`).join('')}</select>
       <input data-k="pu" type="number" step="0.01" inputmode="decimal" value="${b.pu}" placeholder="P.U. HT">
       <select data-k="tva" class="vat${hasOwnRate(b) ? '' : ' inh'}" title="Taux de TVA de cette ligne">${vatOpts(b)}</select>
       <div class="ex"><label class="rem" title="Remise accordée sur cette ligne"><span>Remise</span><input data-k="rem" type="number" step="any" min="0" max="100" inputmode="decimal" value="${remOf(b) || ''}" placeholder="Rem."><span>%</span></label>

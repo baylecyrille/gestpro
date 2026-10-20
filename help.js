@@ -91,7 +91,7 @@ export const TOPICS = {
         '<b>Numéro en double</b> : deux documents de même type portent le même numéro (voir plus bas)',
         '<b>Sauvegarde automatique en retard</b> : la dernière copie date de plus de 10 jours ou a échoué'])),
       S('Relancer les devis et les factures', `<p>Les lignes <b>Facture en retard</b> et <b>Devis à relancer</b> du panneau « À faire aujourd'hui » apparaissent quand il y a quelque chose à faire. Rien n'est envoyé tout seul : chaque ligne a un bouton <b>Relancer</b> qui ouvre un e-mail prêt à envoyer (PDF joint), que vous relisez et modifiez avant l'envoi.</p>${ul([
-        '<b>Devis envoyé</b> et sans réponse : proposé 10 jours après l\'envoi, puis tous les 7 jours, trois relances au plus',
+        '<b>Devis envoyé</b> et sans réponse : proposé 10 jours après l\'envoi, puis tous les 7 jours, trois relances au plus (nombre réglable dans Réglages › Seuils et délais)',
         '<b>Facture échue</b> et non soldée : proposée 3 jours après l\'échéance, puis tous les 7 jours. Le message rappelle le reste dû et le retard ; dès la 2<sup>e</sup> relance il ajoute les pénalités et l\'indemnité de 40 €. À partir de la 3<sup>e</sup> relance, l\'écran suggère d\'envisager une mise en demeure',
         'Les factures <b>en litige</b>, brouillons, annulées, réglées ou entièrement couvertes par un avoir ne sont jamais proposées',
         '<b>Relance faite autrement</b> (téléphone, courrier, sur place) : enregistre la relance dans l\'historique du document sans envoyer d\'e-mail'])}
@@ -102,7 +102,7 @@ export const TOPICS = {
       S('TVA collectée à l\'encaissement', `<p>Pour les prestations de services et les travaux, la TVA est due à l'<b>encaissement</b> : l'accueil compte la part de TVA de chaque règlement reçu (au prorata de la facture), les remboursements d'avoir étant déduits. Les <b>livraisons de biens</b> restent comptées à la date de la facture, ainsi que toutes les factures si vous cochez l'option <b>TVA sur les débits</b> (Réglages › Entreprise / Mentions légales). Le chiffre d'affaires, lui, reste celui des factures émises.</p>`),
       S('Numéro en double', `<p>Si deux appareils émettent chacun un document hors ligne, ils peuvent attribuer le même numéro. L'accueil affiche alors un bandeau nommant les deux documents, et une alerte est donnée une fois après la synchronisation. Ouvrez l'un des deux et corrigez son numéro avant tout envoi : la numérotation doit rester unique et continue.</p>`),
       S('Sauvegarde automatique', `<p>Quand le script Apps Script est relié (Drive ou OneDrive), l'application dépose chaque semaine, à l'ouverture, une copie datée de vos données dans le dossier <b>GestPro/Sauvegardes</b> ; les 8 dernières sont conservées. Si la copie échoue ou n'a pas eu lieu depuis plus de 10 jours, un rappel apparaît ici avec le bouton <b>Sauvegarder maintenant</b>. Détails dans Réglages.</p>`),
-      S('En un coup d\'œil', `<p>Quatre tuiles : <b>Devis en attente</b> (devis « Envoyé » datés de moins de 90 jours ; les plus anciens restent dans la liste des devis), <b>Chantiers ouverts</b> (Nouveau, Signé, En cours), <b>Stock bas / épuisé</b> et <b>Publications à faire</b> (Facebook).</p>
+      S('En un coup d\'œil', `<p>Quatre tuiles : <b>Devis en attente</b> (devis « Envoyé » datés de moins de 90 jours, durée réglable dans Réglages › Seuils et délais ; les plus anciens restent dans la liste des devis), <b>Chantiers ouverts</b> (Nouveau, Signé, En cours), <b>Stock bas / épuisé</b> et <b>Publications à faire</b> (Facebook).</p>
         <p>Tant que la configuration n'est pas terminée, la carte « Pour démarrer » propose cinq étapes ; « Masquer » la retire.</p>`)
     ]
   },
@@ -183,12 +183,18 @@ export const TOPICS = {
         'Cochez un ou plusieurs membres',
         'Indiquez les dates Du / Au et les heures prévues par jour ; le week-end n\'est compté que si « Inclure samedi et dimanche » est coché',
         'Au besoin, une tâche et un intervenant extérieur (architecte, maître d\'œuvre)'])}
-        <p>Au-delà de 8 heures un même jour (plusieurs chantiers cumulés), l'enregistrement a lieu mais un avertissement s'affiche et la case porte un ⚠.</p>`),
+        <p>Au-delà de 8 heures un même jour (seuil réglable dans Réglages › Seuils et délais ; plusieurs chantiers cumulés), l'enregistrement a lieu mais un avertissement s'affiche et la case porte un ⚠.</p>`),
       S('Saisir les heures réalisées, jour par jour', `<p><b>Chaque salarié saisit lui-même ses heures</b> : sur son téléphone, onglet Planning, bouton « ⏱ Saisir mes heures d'aujourd'hui » ou touche du jour concerné. La fenêtre est préremplie avec le chantier et les heures prévus : il suffit d'enregistrer, ou de corriger.</p>
         <p>Une journée peut avoir plusieurs lignes (« ＋ Ajouter une ligne ») : le chantier prévu, <b>un autre chantier</b> (au choix dans la liste), l'<b>atelier</b>, un <b>déplacement / approvisionnement</b> ou des <b>congés / absence</b>. Les heures d'un chantier comptent pour sa main-d'œuvre (heures × coût horaire du membre) ; l'atelier et le déplacement ne sont imputés à aucun chantier ; l'absence se compte à part.</p>
         <p>Les heures se tapent comme on les dit : <b>7,5</b>, <b>7h30</b>, <b>7:30</b> ou <b>7 h 30</b>, et s'affichent partout en « 7 h 30 ». Pour une absence, choisissez son type : <b>congé payé</b>, <b>maladie</b> ou <b>autre</b> ; « Journée complète » inscrit la journée type du salarié (sa base hebdomadaire ÷ 5 : 7 h pour 35 h) ou complète ce qui manque.</p>
         <p>Le salarié saisit et corrige ses jours, jusqu'à aujourd'hui (pas à l'avance). Le gestionnaire peut saisir ou corriger les heures de tous, avec la pastille ⏱ de la grille. Les saisies sont enregistrées dans l'onglet « Pointages » du classeur Google Sheets. Le total du mois de toute l'équipe se lit dans l'onglet « Heures » (voir plus bas).</p>
         <p>L'ancien champ « Heures réalisées (total) » de l'affectation reste disponible : il compte seulement tant qu'aucune heure n'a été saisie par jour pour ce membre sur ce chantier pendant les dates de l'affectation (jamais de doublon).</p>`),
+      S('Poser des congés ou une absence', `<p>Touchez <b>+ Absence</b> (Semaine ou Mois, réservé aux gestionnaires) pour poser des <b>congés payés, une maladie ou une autre absence</b> sur plusieurs jours d'un coup.</p>${ul([
+        'Cochez un ou plusieurs membres, choisissez le <b>type</b>, les dates <b>Du / Au (inclus)</b> ; samedi et dimanche ne sont comptés que si la case est cochée',
+        '<b>Durée par jour</b> : journée entière (selon l\'horaire de chaque personne : 7 h pour 35 h, 5 h 30 pour 28 h), demi-journée ou durée précise (3 h 30)',
+        'Chaque jour devient une ligne « congés / absence » des heures : elle compte dans le compteur hebdomadaire (elle comble la base de la semaine), dans le récapitulatif et le document du comptable'])}
+        <p>Dans la semaine, une pastille grise rayée (« Congé payé 7h ») s\'affiche sur chaque jour ; dans le mois, « Abs. » avec les initiales. <b>Touchez la pastille</b> pour modifier la période, le type ou la durée de toute la série, ou la supprimer. Si vous affectez à un chantier une personne en absence, l\'enregistrement a lieu mais un avertissement le signale (⚠ sur la case).</p>
+        <p>Les jours où des heures sont déjà saisies, ceux déjà en absence et ceux d\'un mois clôturé ne sont pas modifiés : l\'application les liste après l\'enregistrement. Un jour d\'absence peut recevoir des heures travaillées par la pastille « ⏱ + » (demi-journée).</p>`),
       S('Récapitulatif mensuel des heures (onglet « Heures »)', `<p>Réservé aux gestionnaires et administrateurs. Le bouton <b>📊 Heures du mois</b> (ou l'onglet « Heures ») ouvre le récapitulatif de <b>toute l'équipe</b> pour un mois ; « ‹ › » changent de mois.</p>${ul([
         '<b>Quatre cartes</b> en haut : heures travaillées, congés / absences (avec le détail congé payé, maladie, autre), heures au-delà de la base, jours à compléter',
         '<b>Synthèse par salarié</b> : heures sur chantiers, à l\'atelier, en déplacement / approvisionnement, total travaillé, heures au-delà de la base, congés / absences, et nombre de jours à compléter',
@@ -273,6 +279,24 @@ export const TOPICS = {
     ]
   },
 
+  orders: {
+    title: 'Stock : commandes', icon: '🛒', ok: () => auth.can('stock'),
+    intro: `L'onglet Commandes prépare vos achats chez les fournisseurs, de la liste « à commander » à la réception en stock.`,
+    sections: [
+      S('À commander', `<p>La carte du haut propose, par fournisseur, les produits <b>sous leur seuil d'alerte</b> (« stock 4 ≤ seuil 10 ») ou <b>manquants pour les devis signés</b> (« manque 5 pour les devis signés »), moins ce qui est déjà commandé. La quantité proposée couvre le matériel réservé et remonte au seuil d'alerte ; elle se modifie dans la commande. Les services (main d'œuvre, sous-traitance) et les ouvrages ne sont jamais proposés ; un produit sans fournisseur est regroupé à part (choisissez le fournisseur dans la fiche produit pour qu'il soit rangé avec lui).</p>
+        <p><b>Créer la commande</b> ouvre un brouillon prérempli (prix d'achat de la fiche) : rien n'est enregistré avant « Enregistrer ». <b>+ Nouvelle commande</b> en crée une à la main : fournisseur, date, livraison souhaitée, chantier à livrer (facultatif), produits (liste ou scan), note pour le fournisseur.</p>`),
+      S('Envoyer la commande', `<p>Dans la commande : <b>🖨 Imprimer / PDF</b> prépare un bon de commande A4 (numéro BC-aaaa-001, fournisseur, lignes, total HT, livraison souhaitée) ; <b>✉ E-mail</b> ouvre <b>votre</b> messagerie avec le texte de la commande (rien n'est envoyé par GestPro et rien ne passe par un autre service). Touchez ensuite <b>✔ Marquer comme envoyée</b> : la commande est alors « attendue » et n'est plus proposée dans « À commander ». Une commande dont la livraison souhaitée est dépassée porte la pastille « en retard ».</p>`),
+      S('Réceptionner', `<p>Sur une commande envoyée, <b>📦 Réceptionner</b> ouvre la réception de colis préremplie avec ce qui reste à recevoir (quantités et prix de la commande) : corrigez ce qui est réellement arrivé, rangez en stock, validez. Le stock, le prix d'achat moyen et les achats sont mis à jour comme pour une réception ordinaire, et la commande passe à <b>« Reçue en partie »</b> ou <b>« Reçue »</b>. La liste des réceptions (date, bon de livraison, quantités) reste dans la commande. <b>Solder la commande</b> clôt une commande partielle dont le reste ne viendra pas.</p>`),
+      S('États et suppression', table(['État', 'Signification'], [
+        ['Brouillon', 'En préparation : modifiable, supprimable'],
+        ['Envoyée', 'Attendue chez le fournisseur : lignes encore modifiables (confirmation par téléphone, par exemple)'],
+        ['Reçue en partie', 'Une partie est arrivée : lignes en lecture seule (commandé / reçu)'],
+        ['Reçue', 'Tout est arrivé (ou commande soldée)'],
+        ['Annulée', 'Plus attendue ; supprimable']])
+        + `<p>Les commandes sont synchronisées avec les autres données (onglet « Commandes_fournisseurs » de votre classeur Google Sheets).</p>`)
+    ]
+  },
+
   locations: {
     title: 'Stock : emplacements', icon: '🗄', ok: () => auth.can('stock'),
     intro: `Un emplacement a deux niveaux : une zone (Atelier, Dépôt, Camion) et un lieu précis (Rack A, étagère 3).`,
@@ -296,7 +320,7 @@ export const TOPICS = {
         + `<p>L'application refuse une sortie ou un transfert supérieur au stock disponible.</p>`),
       S('Les deux assistants', `<p><b>📦 Réception colis</b> : indiquez le fournisseur ou le bon de livraison et l'emplacement de rangement, ajoutez les produits (scan ou « + Ligne ») avec leur quantité, puis « Valider la réception » crée toutes les entrées d'un coup.</p>
         <p><b>🏗 Sortie chantier</b> : choisissez le chantier, ajoutez produits et quantités ; l'application prélève sur les emplacements les mieux fournis. « Reprendre les besoins du devis » remplit les lignes avec les produits des devis acceptés ou facturés du chantier, moins ce qui est déjà sorti.</p>
-        <p>À chaque réception (colis, mouvement d\'entrée ou facture fournisseur importée), le <b>prix d\'achat de la fiche passe au prix moyen</b> ; l\'écart avec le prix précédent s\'affiche avant de valider et une <b>hausse de plus de 5 %</b> est signalée (« ⚠ hausse de +8 % »), y compris dans le message qui suit la validation.</p>
+        <p>À chaque réception (colis, mouvement d\'entrée ou facture fournisseur importée), le <b>prix d\'achat de la fiche passe au prix moyen</b> ; l\'écart avec le prix précédent s\'affiche avant de valider et une <b>hausse de 5 % ou plus</b> (seuil réglable dans Réglages › Seuils et délais) est signalée (« ⚠ hausse de +8 % »), y compris dans le message qui suit la validation.</p>
         <p>Depuis une facture de vente <b>finale</b>, « Déduire du stock » sort d'un coup les produits de la facture, rattachés au chantier ; si du matériel est déjà sorti pour ce chantier, l\'application propose de ne déduire que le reste. Une <b>facture d\'acompte</b> ne livre rien : le bouton n\'y figure pas. La main d\'œuvre et la sous-traitance ne créent jamais de mouvement.</p>`)
     ]
   },
@@ -342,7 +366,7 @@ export const TOPICS = {
       S('Aperçu, mise en page, impression', `<p><b>✎ Éditeur</b> et <b>👁 Aperçu</b> basculent entre saisie et document imprimé (sur grand écran l'aperçu peut rester à côté, avec un mode « ⤢ Plein écran »). <b>🎨 Mise en page</b> règle zones, textes et couleurs. <b>Imprimer / PDF</b> ouvre l'impression ou l'enregistrement en PDF.</p>`),
       S('Statuts d\'un devis', table(['Statut', 'Signification'], [
         ['Brouillon', 'En préparation'],
-        ['Envoyé', 'Remis au client ; automatique à l\'envoi par e-mail. Compté dans « Devis en attente » pendant 90 jours'],
+        ['Envoyé', 'Remis au client ; automatique à l\'envoi par e-mail. Compté dans « Devis en attente » pendant 90 jours (réglable dans Réglages › Seuils et délais)'],
         ['Accepté', 'Le client a dit oui (« Marquer accepté ») : le chantier lié passe de Nouveau à Signé. Sans chantier, l\'application propose de le créer (client, adresse et devis déjà remplis). Le matériel du devis est alors réservé dans le stock ; un message signale ce qui manque'],
         ['Refusé', 'Le client a dit non'],
         ['Facturé', 'Le devis a été transformé en facture']])),
@@ -385,7 +409,13 @@ export const TOPICS = {
         'le délai de <b>7 jours avant tout paiement</b> : la date à partir de laquelle un acompte peut être demandé. Elle est rappelée dans la fenêtre « Facture d\'acompte », et un règlement daté avant ce jour demande une confirmation',
         'pour un devis signé <b>à distance</b> : seulement le délai de rétractation'])}
         <p>Les <b>travaux urgents d\'entretien ou de réparation demandés par le client</b> font exception : choisissez « Oui » dans la zone Signature pour supprimer ces rappels. Rien n'apparaît pour un client professionnel ni pour une signature dans vos locaux.</p>
-        <p class="warnnote">C'est une aide à la lecture des délais, à confirmer avec votre conseil. L'application ne joint pas de formulaire de rétractation au devis : si votre activité l'exige, ajoutez-le à vos conditions.</p>`)
+        <p class="warnnote">C'est une aide à la lecture des délais, à confirmer avec votre conseil. L'application ne joint pas de formulaire de rétractation au devis : si votre activité l'exige, ajoutez-le à vos conditions.</p>`),
+      S('Faire signer le devis sur tablette', `<p>Sur un devis, le bouton <b>✍ Faire signer</b> ouvre un cadre où le client signe <b>du doigt ou au stylet</b>. Indiquez le nom du signataire, <b>où le devis est signé</b> (dans vos locaux, chez le client, à distance : cela fixe les délais de rétractation et de paiement ci-dessus) et le lieu, faites cocher la déclaration, puis « Valider la signature » : le devis passe à « Accepté », la date de signature est enregistrée avec l'heure, et la signature s'imprime dans la zone « Bon pour accord » du devis, avec « Signé par … le … à … ».</p>${ul([
+        '<b>Confidentialité</b> : la signature est dessinée et gardée dans l\'application avec le devis (et dans votre classeur Google Sheets comme le reste) ; elle n\'est envoyée à aucun service de signature',
+        '<b>Empreinte du devis</b> : au moment de la signature, l\'application calcule une empreinte (SHA-256) du devis (numéro, date, client, textes, conditions, lignes, totaux). Si le devis est modifié ensuite, un bandeau le signale : faites-le signer de nouveau ou rétablissez-le',
+        '<b>Nouvelle signature</b> remplace la précédente ; <b>Retirer la signature</b> l\'efface sans changer l\'état du devis',
+        'Un devis déjà facturé ne se signe plus ; un devis dont la validité est dépassée demande confirmation'])}
+        <p class="warnnote">Il s'agit d'une signature électronique « simple » : elle matérialise l'accord du client et l'empreinte permet de voir si le devis a changé, mais ce n'est pas une signature qualifiée (certificat). Pour un marché important ou un litige, faites confirmer sa valeur probante par votre conseil.</p>`)
     ]
   },
 
@@ -419,6 +449,8 @@ export const TOPICS = {
         ['E-mails', 'Objet et message par défaut, avec un bouton d\'essai'],
         ['Relances', 'Délais (devis, factures, entre deux relances) et textes des relances de devis et de factures'],
         ['Couleurs et mise en page', 'Couleurs des lignes, mise en page commune des documents'],
+        ['Listes de choix', 'Unités, catégories de produits, modes de règlement, types de contrat, fonctions, types d\'absence et suggestions : ajoutez, renommez, réordonnez, masquez (voir ci-dessous)'],
+        ['Seuils et délais', 'Base hebdomadaire des salariés, alerte d\'heures par jour, hausse de prix signalée, nombre de relances, durée des devis « en attente »'],
         ['Accès des membres', 'État de la protection par code PIN, avec bouton pour la désactiver'],
         ['Google Sheets', 'Connexion, synchronisation, état de la dernière synchro'],
         ['Modèles de texte', 'Textes réutilisables à insérer dans les devis et factures'],
@@ -426,6 +458,14 @@ export const TOPICS = {
         ['Photos & fichiers (Drive ou OneDrive)', '« Tester le stockage » vérifie l\'envoi dans le dossier GestPro et indique où partent les fichiers'],
         ['Sauvegarde', 'Exporter (JSON), Restaurer, et sauvegarde automatique hebdomadaire dans Drive / OneDrive (liste des copies, téléchargement, « Sauvegarder maintenant »)']])
         + `<p>Les numéros sont attribués dans l'ordre : si vous reprenez un historique, réglez le « prochain numéro » avant d'émettre un document.</p>`),
+      S('Listes de choix', `<p>Les listes déroulantes de l'application se gèrent dans la carte <b>Listes de choix</b> (touchez une liste pour la déplier) : <b>unités</b>, <b>catégories de produits</b>, <b>modes de règlement</b>, <b>types de contrat</b>, <b>fonctions des membres</b>, <b>types d'absence</b>, et trois listes de <b>suggestions</b> (habilitations, civilités et formes juridiques, fonctions d'un maître d'œuvre ; la saisie y reste libre).</p>${ul([
+        '<b>Ajouter</b> une valeur, la <b>renommer</b>, la <b>déplacer</b> (↑ ↓) ou la <b>masquer</b> (case « proposée » décochée) : une valeur masquée n\'est plus proposée dans les menus, mais les fiches qui l\'utilisent la gardent',
+        '<b>Supprimer</b> : seulement une valeur que rien n\'utilise. Une valeur utilisée (« utilisée 3 fois ») ne se supprime pas ; masquez-la. Un texte enregistré tel quel (unité, catégorie, type de contrat) ne se renomme plus une fois utilisé, pour que les devis et factures déjà émis gardent leur texte ; un mode de règlement, une fonction ou un type d\'absence se renomment librement',
+        '<b>Valeurs protégées</b> (cadenassées, utilisées par l\'application) : unités u, h et forfait ; catégories Main d\'œuvre, Sous-traitance et Ouvrage ; type d\'absence « Autre absence »',
+        '<b>Catégorie « service »</b> : cochez-la pour une catégorie que vous ajoutez (livraison, étude…) : ses produits n\'ont ni stock ni seuil d\'alerte, comme la main d\'œuvre',
+        '<b>↺ Liste d\'origine</b> revient à la liste fournie avec l\'application ; rien ne change tant que vous ne modifiez pas une liste. Les listes sont enregistrées avec les réglages et partagées entre vos appareils'])}
+        <p class="warnnote">Une unité que vous ajoutez est envoyée comme « unité générique » (C62) dans la facture électronique ; les unités d'origine gardent leur code précis.</p>`),
+      S('Seuils et délais', `<p>La carte <b>Seuils et délais</b> règle cinq valeurs de calcul : la <b>base hebdomadaire</b> des salariés (35 h ; chaque fiche de membre peut avoir son horaire), l'<b>alerte d'heures par jour</b> du planning (8 h), la <b>hausse de prix d'achat</b> signalée à la réception (5 %), le <b>nombre de relances</b> d'un devis (3) et la durée pendant laquelle un devis envoyé est « <b>en attente</b> » sur l'accueil (90 jours). « Valeurs d'origine » les remet toutes ; seules les valeurs modifiées sont enregistrées. Les délais légaux (rétractation de 14 jours, 7 jours avant tout paiement) ne se changent pas.</p>`),
       S('Importer des devis et des factures', `<p>La carte ajoute à vos données le contenu d'un fichier d'import GestPro (clients, chantiers, produits, devis, factures, règlements) <b>sans rien remplacer ni modifier</b> : ce qui existe déjà est ignoré. Une confirmation indique d'abord ce qui sera ajouté.</p>
         <p>La même carte accepte un <b>fichier de correction des statuts</b> (devis et chantiers importés) : l'application annonce le nombre de modifications avant d'agir, conserve ce que vous avez changé à la main depuis l'import, et une seconde application ne change plus rien.</p>
         <p class="warnnote">Ces fichiers contiennent des données d'entreprise : gardez-les hors de tout dépôt public.</p>`),
@@ -465,7 +505,7 @@ export const TOPICS = {
 };
 
 /* Ordre d'affichage de la liste « Tous les sujets » */
-const ORDER = ['start', 'atoz', 'dashboard', 'sites', 'site', 'planning', 'team', 'stock', 'locations', 'moves', 'docs', 'doc', 'contacts', 'settings', 'facebook', 'faq'];
+const ORDER = ['start', 'atoz', 'dashboard', 'sites', 'site', 'planning', 'team', 'stock', 'orders', 'locations', 'moves', 'docs', 'doc', 'contacts', 'settings', 'facebook', 'faq'];
 
 /* ---------- Écran affiché → sujet d'aide ---------- */
 export async function currentTopic(hash = location.hash) {
@@ -474,7 +514,7 @@ export async function currentTopic(hash = location.hash) {
     case 'sites': return { id: 'sites' };
     case 'site': return { id: 'site' };
     case 'planning': return { id: a === 'team' ? 'team' : 'planning' };
-    case 'stock': return { id: a === 'locations' ? 'locations' : a === 'moves' ? 'moves' : 'stock' };
+    case 'stock': return { id: a === 'locations' ? 'locations' : a === 'moves' ? 'moves' : a === 'orders' ? 'orders' : 'stock' };
     case 'docs': return { id: 'docs' };
     case 'doc': {
       let type = '';

@@ -8,6 +8,7 @@ import { buyRate } from './vat.js';
 import { opOf } from './efact.js';
 import { purchaseOf, vatEvents, vatOnInvoice, inR, sign } from './finance.js';
 import { KIND_LABEL, ABS_LABEL } from './hours.js';
+import { METHOD_LABEL, ROLE_LABEL } from './lists.js';
 import { e, num, round2, today, dateFr, cname, modal, toast, downloadFile, $ } from './util.js';
 
 /* ---------- mise en forme ---------- */
@@ -61,7 +62,6 @@ export function exportRange(key, ref = today(), custom = {}) {
 }
 
 const DOC_STATUS = { draft: 'Brouillon', pending: 'À payer', sent: 'Envoyée', partial: 'Réglée partiellement', paid: 'Réglée', overdue: 'En retard', dispute: 'En litige', cancelled: 'Annulée', issued: 'Émis' };
-const METHOD = { especes: 'Espèces', cheque: 'Chèque', cb: 'Carte bleue', virement: 'Virement', autre: 'Autre', avoir: 'Avoir (imputation)' };
 const NATURE = { acompte: 'Acompte', avoir: 'Imputation d\'avoir', remboursement: 'Remboursement' };
 const OPNAME = { goods: 'Livraison de biens', services: 'Prestation de services', mixed: 'Biens et services' };
 const MAIN_RATES = [20, 10, 5.5, 0];
@@ -97,7 +97,7 @@ export function buildExport(range, d) {
   payments.filter(p => inR(p.date, range)).sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach(p => {
     const x = D[p.docId] || {}, t = x.id ? totals(x) : { ttc: 0, tva: 0, ht: 0 }, sg = p.kind === 'remboursement' ? -1 : 1, amt = sg * num(p.amount);
     const k = t.ttc > 0 ? amt / t.ttc : 0;
-    pay.push([frDate(p.date), x.number || '', x.id ? typeOf(x) : '', cname(C[x.clientId] || {}) || (C[x.clientId] || {}).company || '', money(amt), METHOD[p.method] || p.method || '', p.chequeNo || '', p.bank || '', NATURE[p.kind] || 'Règlement', real(p) ? 'oui' : 'non', real(p) ? money(t.tva * k) : '', real(p) ? money(t.ht * k) : '', p.note || '']);
+    pay.push([frDate(p.date), x.number || '', x.id ? typeOf(x) : '', cname(C[x.clientId] || {}) || (C[x.clientId] || {}).company || '', money(amt), METHOD_LABEL[p.method] || p.method || '', p.chequeNo || '', p.bank || '', NATURE[p.kind] || 'Règlement', real(p) ? 'oui' : 'non', real(p) ? money(t.tva * k) : '', real(p) ? money(t.ht * k) : '', p.note || '']);
   });
 
   /* 3. Achats : réceptions de stock et factures fournisseurs affectées à un chantier */
@@ -125,7 +125,7 @@ export function buildExport(range, d) {
   /* 5. Heures : pointages jour par jour (absences comprises) */
   const hrs = [['Date', 'Salarié', 'Fonction', 'Activité', 'Chantier', 'Heures', 'Heures (h min)', 'Note']];
   times.filter(t => inR(t.date, range)).sort((a, b) => (a.date + (M[a.memberId]?.name || '')).localeCompare(b.date + (M[b.memberId]?.name || ''))).forEach(t => {
-    hrs.push([frDate(t.date), M[t.memberId]?.name || '', ({ gerant: 'Gérant', chef: 'Chef de chantier', ouvrier: 'Ouvrier', apprenti: 'Apprenti', soustraitant: 'Sous-traitant', autre: 'Autre' })[M[t.memberId]?.role] || '', (t.kind === 'absence' && ABS_LABEL[t.absType] ? KIND_LABEL.absence + ' – ' + ABS_LABEL[t.absType] : KIND_LABEL[t.kind]) || t.kind || '', t.kind === 'site' ? (ST[t.siteId]?.name || '') : '', money(num(t.hours)), hm(num(t.hours)), t.note || '']);
+    hrs.push([frDate(t.date), M[t.memberId]?.name || '', ROLE_LABEL[M[t.memberId]?.role] || '', (t.kind === 'absence' && ABS_LABEL[t.absType] ? KIND_LABEL.absence + ' – ' + ABS_LABEL[t.absType] : KIND_LABEL[t.kind]) || t.kind || '', t.kind === 'site' ? (ST[t.siteId]?.name || '') : '', money(num(t.hours)), hm(num(t.hours)), t.note || '']);
   });
 
   const colN = r => Math.max(0, r.length - 1);

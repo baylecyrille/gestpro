@@ -1,4 +1,6 @@
 import * as db from './db.js';
+import { applyLists } from './lists.js';
+import { applyLimits } from './limits.js';
 
 // Valeurs par défaut des réglages (modifiables dans l'appli, stockées sur l'appareil).
 // Identité reprise des exemples de factures ; IBAN/BIC volontairement vides (à saisir dans Réglages).
@@ -73,7 +75,8 @@ export function lastNumber(S, type, y = new Date().getFullYear()) {
   return q.n > 1 ? fmtPrefix(q.pre, q.yr) + String(q.n - 1).padStart(q.pad, '0') : '';
 }
 
-export const getS = async () => normNumbering(await db.getSettings(DEFAULTS));
+/* Lit les réglages ; applique au passage les listes de choix et les seuils (Réglages › Listes de choix, Seuils et délais) pour tous les écrans */
+export const getS = async () => { const S = normNumbering(await db.getSettings(DEFAULTS)); applyLists(S); applyLimits(S); return S; };
 
 // Logo utilisé (personnalisé dans Réglages, sinon logo par défaut du dépôt)
 export const logoSrc = S => S.logo || 'logo.png';

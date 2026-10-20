@@ -2,6 +2,7 @@
 // Fonctions pures (testables hors navigateur) ; le message et l'envoi sont dans docmail.js (relanceModal).
 import { totals, counts, paidOf } from './docs.js';
 import { num, round2, today } from './util.js';
+import { LIM } from './limits.js';
 
 /* Délais par défaut, réglables dans Réglages › E-mails */
 export const REMIND = { quoteDays: 10, invDays: 3, every: 7, max: 3 };
@@ -44,7 +45,7 @@ export function remindList(docs, payments, S = {}, ref = today()) {
     if (!d.number) continue;
     const n = remindersOf(d).length, last = lastRemind(d);
     if (d.type === 'quote' && d.status === 'sent') {
-      if (n >= REMIND.max) continue;
+      if (n >= LIM.remindMax) continue;
       const base = last || sentOn(d); if (!base) continue;
       const age = daysBetween(sentOn(d), ref), wait = last ? every : quoteDays;
       if (daysBetween(base, ref) < wait) continue;

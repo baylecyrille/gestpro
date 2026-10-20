@@ -1,4 +1,5 @@
 // Utilitaires partagés : format, formulaires, fenêtres modales, scanner de codes-barres.
+import { CIVS } from './lists.js';
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const e = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -293,7 +294,7 @@ export function bindColors(f) {
 
 /* Nom complet d'un contact : civilité libre + nom */
 export const cname = c => [c?.civ, c?.name].filter(Boolean).join(' ');
-export const CIVS = ['Mr', 'Mme', 'Mlle', 'Mr et Mme', 'Mme et Mr', 'Mr et Mr', 'Mme et Mme', 'SARL', 'SAS', 'SASU', 'EURL', 'SCI', 'EARL', 'GAEC', 'SA', 'Association', 'Commune'];
+export { CIVS }; // civilités et formes proposées : liste modifiable (Réglages › Listes de choix, lists.js)
 const CIV_RE = /^((?:Mr|M\.?)\s*(?:et\s+)?Mme|Mme\s+(?:et\s+)?(?:Mr|M\.?)|Mr et Mr|Mme et Mme|Messieurs|Mesdames|Monsieur|Madame|Mlle|Mle|Melle|Mme|Mr|M|SARL|SASU|SAS|EURL|EARL|GAEC|SCI|SA)(?:\.\s*|\s+)(?=\S)/i;
 /* Sépare « Mr DUPONT Jean » en { civ: 'Mr', name: 'DUPONT Jean' } */
 export function splitCiv(name) { const m = String(name || '').trim().match(CIV_RE); return m ? { civ: m[1], name: String(name).trim().slice(m[0].length).trim() } : null; }

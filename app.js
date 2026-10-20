@@ -7,6 +7,9 @@ import { renderDocs, renderDoc, totals, paidOf, payState, zoneDefs, counts, quot
 import { renderFacebook } from './facebook.js';
 import { renderSites, renderSite, siteStats, siteGauges, gaugesHtml, SS } from './sites.js';
 import { renderPlanning, covers, habState, siteHours } from './team.js';
+import { ROLE_LABEL, MOE_FN } from './lists.js';
+import { LIM } from './limits.js';
+import { mountLists, mountLimits } from './lists-ui.js';
 import { PERIODS, periodRange, summary, monthly, siteMargin, weekDays } from './finance.js';
 import * as sheets from './sheets.js';
 import * as auth from './auth.js';
@@ -52,7 +55,7 @@ export function contactModal(c, kind, onSaved) {
     ${isNew ? simBoxHtml() : ''}
     ${F('Adresse', 'address', c.address, { cls: 'full' })}${F('Code postal', 'zip', c.zip)}${F('Ville', 'city', c.city)}
     ${F('Téléphone', 'phone', c.phone, { type: 'tel' })}${F('E-mail', 'email', c.email, { type: 'email' })}
-    ${c.kind === 'moe' ? `<label class="f"><span>Fonction</span><input name="fonction" value="${e(c.fonction || '')}" list="fonctions" placeholder="Architecte, maître d'œuvre…" autocomplete="off"><datalist id="fonctions">${['Architecte', 'Maître d\'œuvre', 'Bureau d\'études', 'Économiste', 'Conducteur de travaux', 'Coordinateur SPS', 'Autre'].map(x => `<option value="${x}">`).join('')}</datalist></label>` : ''}
+    ${c.kind === 'moe' ? `<label class="f"><span>Fonction</span><input name="fonction" value="${e(c.fonction || '')}" list="fonctions" placeholder="Architecte, maître d'œuvre…" autocomplete="off"><datalist id="fonctions">${MOE_FN.map(x => `<option value="${x}">`).join('')}</datalist></label>` : ''}
     ${F('SIRET', 'siret', c.siret, { cls: 'full' })}${F('Note', 'note', c.note, { type: 'textarea', rows: 2, cls: 'full' })}</div>${!isNew && c.kind === 'client' ? '<div class="rel" id="rel"></div>' : ''}`;
   modal(`${isNew ? 'Nouveau' : 'Fiche'} ${c.kind === 'supplier' ? 'fournisseur' : c.kind === 'moe' ? 'architecte / maître d\'œuvre' : 'client'}`, body, async o => {
     if (isNew) { // B3 : même e-mail, téléphone, SIRET ou même nom qu'une fiche existante → confirmation avant de créer le doublon
@@ -75,9 +78,9 @@ export function contactModal(c, kind, onSaved) {
 
 /* Équipe dans les contacts : mêmes fiches que « Équipe / planning » (une seule source) */
 async function renderTeamContacts(el) {
-  const { memberModal, ROLES } = await import('./team.js');
+  const { memberModal } = await import('./team.js');
   const members = (await db.all('members')).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  const R = Object.fromEntries(ROLES), edit = auth.can('team.edit') || auth.can('settings'), LK = await lock.allLocks();
+  const R = ROLE_LABEL, edit = auth.can('team.edit') || auth.can('settings'), LK = await lock.allLocks();
   el.innerHTML = `<h2>Contacts</h2>${tabs('#/contacts', [['client', 'Clients'], ['supplier', 'Fournisseurs'], ['moe', 'Architectes / MOE'], ['team', 'Équipe']], 'team')}
     <div class="row"><input class="search" id="q" type="search" placeholder="Rechercher…">${edit ? '<button class="btn primary" id="add">+ Membre</button>' : ''}</div><div id="list"></div>`;
   const draw = () => {
@@ -138,7 +141,7 @@ async function renderDashboard(el) {
   // « Reste à encaisser » de la tuile : ce qui reste dû, à ce jour, sur les factures émises pendant la période choisie
   const unpaidPer = unpaidList.filter(x => { const dt = (x.d.date || '').slice(0, 10); return dt >= range.from && dt <= range.to; });
   const unpaidPerSum = unpaidPer.reduce((a, x) => a + x.left, 0);
-  const recent = new Date(Date.parse(today()) - 90 * 864e5).toISOString().slice(0, 10); // « en attente » = envoyés depuis moins de 90 jours
+  const recent = new Date(Date.parse(today()) - LIM.pendingDays * 864e5).toISOString().slice(0, 10); // « en attente » = envoyés depuis moins de 90 jours (réglable : Réglages › Seuils et délais)
   const quotesPending = docs.filter(d => d.type === 'quote' && d.status === 'sent' && (d.date || '') >= recent);
   const nExpired = quotesPending.filter(d => quoteExpired(d)).length; // date de validité dépassée
   const toPost = posts.filter(p => p.status === 'scheduled' && p.date && p.date <= today());
@@ -307,7 +310,7 @@ async function renderSettings(el) {
     ${F('Objet des relances', 'relanceSubject', S.relanceSubject || '', { cls: 'full', ph: RELANCE_DEFAULTS.subject })}
     ${F('Message de relance d\'un devis', 'relanceQuote', S.relanceQuote || '', { type: 'textarea', rows: 5, cls: 'full', ph: RELANCE_DEFAULTS.quote })}
     ${F('Message de relance d\'une facture', 'relanceInvoice', S.relanceInvoice || '', { type: 'textarea', rows: 6, cls: 'full', ph: RELANCE_DEFAULTS.invoice })}
-    <p class="muted full">Le tableau de bord liste les relances à faire ; rien n'est envoyé sans votre validation. Un devis est relancé trois fois au plus. Laissez vide pour le texte conseillé (en gris). Jetons : <code>${e(RELANCE_TOKENS)}</code>.</p>
+    <p class="muted full">Le tableau de bord liste les relances à faire ; rien n'est envoyé sans votre validation. Un devis est relancé ${LIM.remindMax} fois au plus (réglable dans « Seuils et délais », plus bas). Laissez vide pour le texte conseillé (en gris). Jetons : <code>${e(RELANCE_TOKENS)}</code>.</p>
     <label class="f full"><span><input type="checkbox" name="mailBcc" ${S.mailBcc === false ? '' : 'checked'}> M'envoyer une copie cachée (Cci) de chaque e-mail envoyé</span></label>
     <div class="full row" style="margin:0"><button type="button" class="btn" id="mtest" ${sheets.scriptMode() ? '' : 'disabled'}>✉ Envoyer un e-mail de test à l'adresse de l'entreprise</button><span id="mtstat" class="muted"></span></div>
     <h3 class="full">Couleurs des lignes de devis / factures</h3>
@@ -316,6 +319,7 @@ async function renderSettings(el) {
     <p class="muted full">Ces couleurs s'appliquent par défaut ; chaque section ou texte peut ensuite avoir sa propre couleur.</p>
     <p class="muted full">Pour reprendre votre numérotation actuelle, mettez par exemple le préfixe « 026FAC87 » et le prochain numéro « 136 » avec 0 chiffre de remplissage.</p>
   </div><button class="btn primary">Enregistrer</button></form>
+  <div class="card" id="listcard"></div><div class="card" id="limcard"></div>
   <div class="card" id="zcard"><h3 style="margin-top:0">Mise en page des documents</h3>
     <p class="muted">Composez visuellement vos devis, factures et avoirs sur une page A4 : déplacez les blocs, agrandissez le logo, ajoutez des images ou des textes, modifiez tous les libellés. Le modèle s'applique à tous les documents du type choisi (un document peut ensuite faire exception depuis son aperçu).</p>
     <div class="row"><button type="button" class="btn primary" data-tpl="quote">🎨 Modifier les devis</button><button type="button" class="btn primary" data-tpl="invoice">🎨 Modifier les factures</button><button type="button" class="btn primary" data-tpl="credit">🎨 Modifier les avoirs</button></div></div>
@@ -415,6 +419,7 @@ async function renderSettings(el) {
   $('#camtest', el).onclick = () => scan(c => { toast('Code lu : ' + c); camInfo(); });
   $('#camreset', el).onclick = () => { resetCamera(); toast('Caméra automatique rétablie'); camInfo(); };
   bindColors($('#sf', el));
+  await Promise.all([mountLists($('#listcard', el)), mountLimits($('#limcard', el))]);
   let logo = S.logo;
   $('#logo', el).onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return;
@@ -438,7 +443,8 @@ async function renderSettings(el) {
     }
     const nowY2 = +today().slice(0, 4); // année passée : le compteur affiché (déjà remis à 1) appartient à l'année en cours
     for (const [pk, yk] of [['quotePrefix', 'quoteYear'], ['invPrefix', 'invYear'], ['creditPrefix', 'creditYear']]) if (yearTok(o[pk]) && nowY2 > (S[yk] ?? nowY2)) o[yk] = nowY2;
-    await db.saveSettings(normNumbering({ ...S, ...o, logo, logoV })); applyWallpaper({ ...S, ...o, logo }); toast('Réglages enregistrés'); refresh();
+    const cur = await getS(); // réglages à jour : les listes et les seuils enregistrés plus bas dans la page ne doivent pas être écrasés
+    await db.saveSettings(normNumbering({ ...cur, ...o, logo, logoV })); applyWallpaper({ ...cur, ...o, logo }); toast('Réglages enregistrés'); refresh();
   };
   $$('[data-tpl]', el).forEach(b => b.onclick = () => import('./docs.js').then(m => m.editTemplate(b.dataset.tpl)));
   $('#autobk', el)?.addEventListener('change', async ev => { await db.saveSettings({ ...(await getS()), autoBackup: ev.target.checked }); toast(ev.target.checked ? 'Sauvegarde automatique activée' : 'Sauvegarde automatique désactivée'); });
@@ -583,6 +589,7 @@ async function migrate58() {
 }
 
 async function route() {
+  await getS().catch(() => {}); // applique les listes de choix et les seuils réglés avant tout affichage
   await migrateCiv().catch(() => {});
   await migrate58().catch(() => {});
   const { active, user } = await auth.load();
@@ -618,6 +625,7 @@ sheets.onStatus(st => {
 });
 cloud.onclick = () => sheets.sync({ interactive: true }).then(r => r?.pulled && toast(`${r.pulled} élément(s) reçus`)).catch(err => toast(err.message));
 sheets.setOnPulled(() => {
+  getS().catch(() => {}); // listes et seuils reçus d'un autre appareil
   const editing = $('#modal').open || location.hash.startsWith('#/doc/') || location.hash.startsWith('#/site/') || $('.scanner') || $('#view :focus');
   if (!editing) refresh(); else toast('Nouvelles données reçues');
   /* M14 : deux documents de même numéro après la synchronisation ? On prévient une fois par numéro. */
